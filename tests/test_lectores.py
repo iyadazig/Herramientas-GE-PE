@@ -56,6 +56,23 @@ NATURGY = """
                                             A-08431090
 """
 
+# texto ordenado tal como sale del PDF: columnas mezcladas en la misma linea
+IBERDROLA = """
+Periodo de facturación 31/07/2026 - 31/08/2026
+Número de factura 00000000000000001
+Fecha de emisión de factura 14 de septiembre de 2026
+Identificación punto de suministro (CUPS): ES 0000 0000 0000 0000 XX
+Peaje de acceso a la red (ATR): 6.1TD
+P1 100 kW x 31 días x 0,080000 €/kW día 248,00 €
+Energía consumida
+48009 P3 10.000 kWh x 0,100000 €/kWh 1.000,00 € 61,2%
+P6 20.000 kWh x 0,050000 €/kWh 1.000,00 €Euskadi Energía 61,2%
+Plaza Restricciones técnicas y POS 30.000 kWh x 0,020000 €/kWh 600,00 € Peajes 11,0%
+social: Total 30000 kWh hasta 31/08/2026 2.600,00 € Impuestos 21,4%
+000000000 Energía activa P3 31/07/2026 1.000 31/08/2026 11.000 10.000 kWh
+IBERDROLA CLIENTES, S.A.U. - CIF A-95758389
+"""
+
 
 class Sinteticas(unittest.TestCase):
     def test_endesa(self):
@@ -88,6 +105,21 @@ class Sinteticas(unittest.TestCase):
         self.assertEqual((m.inicio, m.kwh, m.precio, m.importe),
                          (dt.date(2026, 5, 1), 25000, -0.001, -25.0))
         self.assertAlmostEqual(f.importe_ssaa, 125.0)
+
+    def test_iberdrola(self):
+        f = leer_texto(IBERDROLA)
+        self.assertEqual(f.lector, "Iberdrola")
+        self.assertEqual(f.numero, "00000000000000001")
+        self.assertEqual(f.fecha_emision, dt.date(2026, 9, 14))
+        self.assertEqual(f.cups, "ES0000000000000000XX")
+        self.assertEqual(f.tarifa, "6.1TD")
+        # la fecha inicial es la de la lectura anterior: el consumo empieza al dia siguiente
+        self.assertEqual((f.inicio, f.fin), (dt.date(2026, 8, 1), dt.date(2026, 8, 31)))
+        self.assertEqual(f.consumo_kwh, 30000)
+        self.assertEqual(len(f.lineas_ssaa), 1)
+        l = f.lineas_ssaa[0]
+        self.assertEqual((l.kwh, l.precio, l.importe, l.inicio), (30000, 0.02, 600.0, f.inicio))
+        self.assertEqual(f.avisos, [])
 
     def test_aviso_si_no_cuadra(self):
         f = leer_texto(ENDESA.replace("7,00", "9,00"))

@@ -177,6 +177,9 @@ COLS_PFM_TODOS = ("Restricciones", "Procesos OS", "Desvíos", "Pagos capacidad",
 # Suma que Naturgy indica en algunos contratos como coste total de los SSAA
 COLS_PFM_NATURGY = ("Restricciones", "Procesos OS", "Desvíos", "REER",
                     "Importe participación servicios")
+# RRTT_POS de Iberdrola grandes cuentas: restricciones tecnicas + procesos del OS
+# (gestion de desvios y servicios complementarios)
+COLS_PFM_IBERDROLA = ("Restricciones", "Procesos OS", "Desvíos")
 
 
 def pfmhoras(ini, fin, columnas=COLS_PFM_NATURGY, liquidacion=""):

@@ -8,7 +8,7 @@ los campos con los patrones de su maqueta, registrarla en LECTORES y, si se
 puede, anadir su CIF a base.CIF_COMERCIALIZADORAS.
 """
 
-from . import endesa, naturgy
+from . import endesa, iberdrola, naturgy
 from .base import (DatosFactura, LineaSSAA, lector_generico, texto_pdf,
                    detectar_comercializadora)
 
@@ -16,6 +16,7 @@ from .base import (DatosFactura, LineaSSAA, lector_generico, texto_pdf,
 LECTORES = {
     "Endesa": endesa.leer,
     "Naturgy": naturgy.leer,
+    "Iberdrola": iberdrola.leer,
 }
 
 

@@ -51,7 +51,7 @@ class Mecanismos(unittest.TestCase):
     def test_plantillas_validas(self):
         for nombre, valores in motor.PLANTILLAS.items():
             c = motor.Contrato.desde_dict(dict(valores, plantilla=nombre))
-            self.assertIn(c.mecanismo, motor.REGULARIZACIONES)
+            self.assertIn(c.mecanismo, motor.MECANISMOS)
             self.assertIn(nombre, motor.TEXTO_PLANTILLAS)
         self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="indexado", prima=1), 5), 6)
 
@@ -243,6 +243,25 @@ class MediasSAHReales(unittest.TestCase):
             r = motor.revisar(c, ini, fin, 1000, None)
             self.assertAlmostEqual(r.indice_medio, media, places=6)
             self.assertAlmostEqual(r.importe, max(media - 20.0, 0.0), places=6)
+
+
+@unittest.skipUnless((config.CARPETA_ESIOS / "2026_Historico_componentes_ESIOS.xlsx").exists(),
+                     "sin Excel de ESIOS")
+class IberdrolaRRTTPOS(unittest.TestCase):
+    """Indexado hora a hora: Σ Eh × (R + POS + Desvios)h × (1 + PERDh) × 1,015."""
+
+    def test_formula(self):
+        n = "Iberdrola grandes cuentas — indexado RRTT y POS"
+        c = motor.Contrato.desde_dict(dict(motor.PLANTILLAS[n], plantilla=n, tarifa="6.1TD"))
+        ini = fin = dt.date(2026, 4, 1)
+        # curva generica: mas consumo de dia que de noche
+        valores = {(ini, h): (50.0 if 9 <= h <= 20 else 10.0) for h in range(1, 25)}
+        r = motor.revisar(c, ini, fin, sum(valores.values()), None, curva(valores))
+        pfm, _ = esios.pfmhoras(ini, fin, esios.COLS_PFM_IBERDROLA)
+        perd = esios.perdidas_horarias(ini, fin, "6.1TD")
+        esperado = sum(kwh / 1000 * pfm[k] * (1 + perd[k] / 100) * 1.015
+                       for k, kwh in valores.items())
+        self.assertAlmostEqual(r.importe, esperado, places=6)
 
 
 if __name__ == "__main__":

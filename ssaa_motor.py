@@ -103,6 +103,11 @@ PLANTILLAS = {
         liquidacion_requerida="C2", periodo_calculo="mensual", regularizacion="trimestral",
         componentes_pfm=list(esios.COLS_PFM_NATURGY), componentes_pfm_contrato=False,
         prima=0.0),
+    "Iberdrola grandes cuentas — indexado RRTT y POS": dict(
+        comercializadora="Iberdrola", mecanismo="indexado", indice="pfm_ssaa",
+        agregacion="horaria", perdidas="liquicomun_h", factor=1.015,
+        componentes_pfm=list(esios.COLS_PFM_IBERDROLA), componentes_pfm_contrato=True,
+        periodo_calculo="mensual", prima=0.0),
 }
 # nombres anteriores de las plantillas (fichas guardadas antes de renombrarlas)
 ALIAS_PLANTILLAS = {"Endesa grandes cuentas — techo": "Endesa grandes cuentas — techo (PVPC)",
@@ -132,6 +137,12 @@ TEXTO_PLANTILLAS = {
         "PFMHORAS_COM (C2_PrecioFinal) de cada mes; indica abajo si el contrato dice qué "
         "componentes se suman. Pérdidas estándar 7 % AT / 17 % BT, Ap = 1,02, HL = 1,015. "
         "Consumo n = consumo del mes natural.",
+    "Iberdrola grandes cuentas — indexado RRTT y POS":
+        "RRTT_POS = Σ (RRTT_POS h × MWh h). RRTT_POS h = precio horario de restricciones "
+        "técnicas y procesos del OS (gestión de desvíos y servicios complementarios) "
+        "publicado por REE: Restricciones + Procesos OS + Desvíos del PFMHORAS_COM, con las "
+        "pérdidas horarias de la tarifa (liquicomún) y × 1,015 (tasa municipal). Necesita la "
+        "curva de consumo.",
 }
 
 
