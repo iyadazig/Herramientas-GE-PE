@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-LANZADOR DEL REVISOR DE SSAA (lo que ejecuta "Revisor SSAA.exe")
-================================================================
+LANZADOR DE HERRAMIENTAS GE&PE
+==============================
 Arranca la app de Streamlit solo para este equipo (localhost) y abre el
 navegador. Si ya estaba abierta, solo vuelve a abrir el navegador.
 Se cierra con el boton "Cerrar la aplicacion" de la barra lateral.
@@ -103,6 +103,9 @@ def main():
         PUERTO = int(_argumento("--puerto", 8501))
         URL = "http://localhost:%d" % PUERTO
         os.environ["SSAA_MODO_SERVIDOR"] = "1"
+        if en_marcha():
+            # p. ej. sigue en marcha el extractor de Gemweb antiguo en el mismo puerto
+            sys.exit("El puerto %d ya lo usa otro programa. Ciérralo o usa --puerto." % PUERTO)
     elif en_marcha():
         webbrowser.open(URL)
         return
@@ -136,7 +139,7 @@ def main():
     bootstrap.load_config_options(flag_options=opciones)
     if not servidor:
         threading.Thread(target=abrir_navegador_cuando_este_lista, daemon=True).start()
-    bootstrap.run(str(recursos / "app_revision_ssaa.py"), False, [], opciones)
+    bootstrap.run(str(recursos / "inicio.py"), False, [], opciones)
 
 
 if __name__ == "__main__":

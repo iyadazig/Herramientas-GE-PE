@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-REVISOR DE SSAA EN FACTURAS — app local
-=======================================
-    streamlit run app_revision_ssaa.py
-
-Abre http://localhost:8501. Todo se ejecuta en este PC: ni la factura ni la
-curva salen de el. Los datos de ESIOS se leen de los Excel historicos de
-config.CARPETA_ESIOS (proyecto Descarga_datos_ESIOS).
+REVISION DE SSAA EN FACTURAS — pagina de Herramientas GE&PE
+===========================================================
+La arranca inicio.py (acceso, navegacion y estilo comunes). Los datos de ESIOS se leen
+de los Excel historicos de config.CARPETA_ESIOS (proyecto Descarga_datos_ESIOS).
 """
 
 import datetime as dt
@@ -27,14 +24,8 @@ import paginas
 import ssaa_motor as motor
 from lectores_factura import leer_factura
 
-st.set_page_config(page_title="Revisión de SSAA · GE&PE",
-                   page_icon=str(estilo.ICONO) if estilo.ICONO.exists() else None,
-                   layout="wide", menu_items={})
-estilo.aplicar()
 ss = st.session_state
-usuario = paginas.acceso()          # inicio de sesion (detiene la pagina si no hay)
-
-SECCIONES = ["Revisar factura", "Historial de revisiones", "Fichas de contrato"] +     (["Usuarios"] if usuario["admin"] else [])
+usuario = ss.usuario        # inicio.py ya ha comprobado el acceso
 
 
 def opciones(dic, clave):
@@ -50,9 +41,6 @@ def fijar(prefijo, valores):
 
 # ================================================================ barra lateral
 with st.sidebar:
-    paginas.barra_usuario()
-    seccion = st.radio("Sección", SECCIONES, label_visibility="collapsed")
-    st.divider()
     st.header("Configuración")
     st.caption("Datos ESIOS en:")
     st.code(str(config.CARPETA_ESIOS), language=None)
@@ -65,53 +53,10 @@ with st.sidebar:
     st.code("python descarga_PVPC_diario_excel.py AAAA-MM-DD AAAA-MM-DD\n"
             "python descarga_componentes_precio_excel.py", language="bat")
 
-    if config.EJECUTABLE and not config.MODO_SERVIDOR:
-        st.header("Aplicación")
-        st.caption("Las fichas de contrato se guardan en %s" % config.FICHERO_CONTRATOS)
-        if st.button("Cerrar la aplicación", use_container_width=True):
-            st.success("Aplicación cerrada. Ya puedes cerrar esta pestaña del navegador.")
-            import os
-            import threading
-            threading.Timer(1.0, lambda: os._exit(0)).start()
-
-    st.header("Gemweb")
     cred, origen_cred = gemweb.cargar_credenciales()
-    if cred:
-        st.success("Credenciales: %s" % origen_cred)
-    else:
-        st.warning("Sin credenciales de Gemweb.")
-    # en el servidor las credenciales son comunes: solo las ve y cambia un administrador
-    if usuario["admin"]:
-        with st.expander("Configurar credenciales"):
-            st.caption("Se guardan cifradas en tu perfil de Windows (%APPDATA%\\ValidadorSSAA), "
-                       "nunca en la carpeta del programa ni en GitHub.")
-            nuevo_id = st.text_input("Identificador de cliente (client_id)")
-            nuevo_secreto = st.text_input("Clave secreta (client_secret)", type="password")
-            g1, g2 = st.columns(2)
-            if g1.button("Guardar", disabled=not (nuevo_id and nuevo_secreto)):
-                try:
-                    gemweb.ClienteGemweb(nuevo_id, nuevo_secreto).comprobar()
-                except gemweb.GemwebError as e:
-                    st.error(str(e))
-                else:
-                    gemweb.guardar_credenciales(nuevo_id, nuevo_secreto)
-                    st.rerun()
-            if g2.button("Probar conexión", disabled=not cred):
-                try:
-                    gemweb.ClienteGemweb(*cred).comprobar()
-                    st.success("Conexión correcta.")
-                except gemweb.GemwebError as e:
-                    st.error(str(e))
+    st.caption("Gemweb: %s" % ("credenciales de %s" % origen_cred if cred
+                               else "sin credenciales (las configura un administrador)"))
 
-
-if seccion != "Revisar factura":
-    estilo.cabecera("Revisión de servicios de ajuste en facturas",
-                    "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)")
-    {"Historial de revisiones": paginas.pagina_historial,
-     "Fichas de contrato": paginas.pagina_fichas,
-     "Usuarios": paginas.pagina_usuarios}[seccion]()
-    estilo.pie()
-    st.stop()
 
 estilo.cabecera("Revisión de servicios de ajuste en facturas",
                 "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)")
@@ -677,5 +622,3 @@ if ss.get("resultados"):
         if ss.get("revision_id"):
             b2.caption("Revisión nº %d guardada en el historial (sección «Historial de "
                        "revisiones»), con su informe." % ss.revision_id)
-
-estilo.pie()

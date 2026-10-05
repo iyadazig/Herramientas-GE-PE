@@ -145,6 +145,8 @@ TRADUCCIONES = {
     "fecha. Pulsa Escape para cerrarlo.",
     "Select a date.": "Elige una fecha.", "Running...": "Calculando…",
     "Save as SVG": "Guardar como SVG", "Save as PNG": "Guardar como PNG",
+    "Show password text": "Mostrar contraseña", "Hide password text": "Ocultar contraseña",
+    "View more": "Ver más", "View less": "Ver menos",
     "Click to view actions": "Opciones de la gráfica",
     "Mo": "Lu", "Tu": "Ma", "We": "Mi", "Th": "Ju", "Fr": "Vi", "Sa": "Sá", "Su": "Do",
 }
@@ -230,6 +232,6 @@ def veredicto(texto):
 
 def pie():
     traducir()
-    st.markdown('<div class="gp-pie">GE&amp;PE · Ingeniería y Gestión Energética — Revisión de '
-                'servicios de ajuste. Los datos se procesan en este equipo.</div>',
+    st.markdown('<div class="gp-pie">Herramientas GE&amp;PE · Ingeniería y Gestión Energética. '
+                'Uso interno: los datos se procesan en los equipos de GE&amp;PE.</div>',
                 unsafe_allow_html=True)

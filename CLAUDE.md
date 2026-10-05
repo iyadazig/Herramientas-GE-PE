@@ -10,6 +10,17 @@ contraseña. Secciones:
 **Coste cero**: todo corre en local. Nada de Streamlit Cloud, APIs de IA ni servicios de
 pago. La factura y la curva no salen del PC.
 
+## Estructura de la plataforma
+
+`inicio.py` es la entrada única: configuración de página, estilo, acceso
+(`paginas.acceso`), barra de usuario y menú `st.navigation` por grupos:
+- **Revisión de SSAA**: `app_revision_ssaa.py` (página de fichero, por defecto),
+  `paginas.pagina_historial`, `paginas.pagina_fichas`.
+- **Administración** (solo administradores): `paginas.pagina_usuarios`,
+  `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
+Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.
+Arranque: `python lanzador.py --servidor` (puerto 8501) o `streamlit run inicio.py`.
+
 ## Uso en equipo (servidor)
 
 Pensado para 9 compañeros en la oficina y por VPN: la app corre en un servidor
@@ -62,7 +73,8 @@ así los días de cambio de hora no necesitan zona horaria.
 
 | Fichero | Qué hace |
 |---|---|
-| `app_revision_ssaa.py` | Interfaz Streamlit: `streamlit run app_revision_ssaa.py` → localhost:8501 |
+| `inicio.py` | Entrada de la plataforma (acceso, menú, estilo) |
+| `app_revision_ssaa.py` | Página «Revisar factura» |
 | `ssaa_motor.py` | Cálculo: `Contrato` (índice, agregación, mecanismo, pérdidas, factor), `revisar()`, `diagnostico()` |
 | `ssaa_datos_esios.py` | Lectura de los Excel de ESIOS a series |
 | `curva_consumo.py` | Lectura de curvas CSV/XLSX/XLS (horaria o QH) y reparto de los días de cambio de hora |

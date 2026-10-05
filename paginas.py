@@ -11,6 +11,7 @@ import streamlit as st
 
 import almacen
 import estilo
+import gemweb
 import ssaa_motor as motor
 
 ss = st.session_state
@@ -26,7 +27,7 @@ def acceso():
             st.stop()
         return ss.usuario
 
-    estilo.cabecera("Revisión de servicios de ajuste en facturas", "Acceso para el equipo de GE&PE")
+    estilo.cabecera("Herramientas GE&PE", "Acceso para el equipo de GE&PE")
     _, centro, _ = st.columns([1, 1.3, 1])
     with centro:
         if not almacen.hay_usuarios():
@@ -114,7 +115,6 @@ def barra_usuario():
 
 # ------------------------------------------------------------------- historial
 def pagina_historial():
-    estilo.seccion("☰", "Historial de revisiones", "Todas las revisiones del equipo")
     filas = almacen.listar_revisiones(limite=5000)
     if not filas:
         st.info("Todavía no hay revisiones. Cada vez que se pulsa «Revisar SSAA» queda "
@@ -173,7 +173,6 @@ def estilo_num(v, d=2):
 
 # ------------------------------------------------------------------- fichas
 def pagina_fichas():
-    estilo.seccion("☰", "Fichas de contrato", "Condiciones de SSAA guardadas por CUPS")
     fichas = almacen.cargar_contratos()
     info = almacen.info_contratos()
     if not fichas:
@@ -220,7 +219,6 @@ def _referencias(c):
 
 # ------------------------------------------------------------------- usuarios
 def pagina_usuarios():
-    estilo.seccion("☰", "Usuarios", "Altas, contraseñas y permisos")
     if not ss.usuario["admin"]:
         st.warning("Solo los administradores pueden gestionar usuarios.")
         return
@@ -279,4 +277,39 @@ def pagina_usuarios():
                 almacen.actualizar_usuario(elegido, admin=not u["admin"])
                 st.rerun()
         except ValueError as e:
+            st.error(str(e))
+
+
+# ------------------------------------------------------------------- credenciales
+def pagina_credenciales():
+    if not ss.usuario["admin"]:
+        st.warning("Solo los administradores gestionan las credenciales.")
+        return
+    cred, origen = gemweb.cargar_credenciales()
+    if cred:
+        st.success("Credenciales en uso: %s (identificador de cliente %s)." % (origen, cred[0]))
+    else:
+        st.warning("No hay credenciales de Gemweb: las secciones de Gemweb y la descarga de "
+                   "curvas no funcionarán hasta configurarlas.")
+    st.caption("Se guardan cifradas en el perfil de Windows de la cuenta con la que se ejecuta "
+               "la plataforma (%APPDATA%\\ValidadorSSAA); nunca en la carpeta del programa ni en "
+               "GitHub. Si existen las variables de entorno GEMWEB_CLIENT_ID y "
+               "GEMWEB_CLIENT_SECRET, tienen prioridad.")
+    with st.form("credenciales_gemweb"):
+        nuevo_id = st.text_input("Identificador de cliente (client_id)")
+        nuevo_secreto = st.text_input("Clave secreta (client_secret)", type="password")
+        if st.form_submit_button("Comprobar y guardar", type="primary"):
+            try:
+                gemweb.ClienteGemweb(nuevo_id.strip(), nuevo_secreto.strip()).comprobar()
+            except gemweb.GemwebError as e:
+                st.error(str(e))
+            else:
+                gemweb.guardar_credenciales(nuevo_id.strip(), nuevo_secreto.strip())
+                st.success("Credenciales comprobadas y guardadas.")
+                st.rerun()
+    if cred and st.button("Probar la conexión con las credenciales en uso"):
+        try:
+            gemweb.ClienteGemweb(*cred).comprobar()
+            st.success("Conexión correcta con Gemweb.")
+        except gemweb.GemwebError as e:
             st.error(str(e))
