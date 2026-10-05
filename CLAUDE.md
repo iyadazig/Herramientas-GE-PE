@@ -16,6 +16,9 @@ pago. La factura y la curva no salen del PC.
 (`paginas.acceso`), barra de usuario y menú `st.navigation` por grupos:
 - **Revisión de SSAA**: `app_revision_ssaa.py` (página de fichero, por defecto),
   `paginas.pagina_historial`, `paginas.pagina_fichas`.
+- **Gemweb**: `gemweb_extractor/paginas.py`, convertido de `API_Gemweb/app.py` (una función por
+  operación: inventario, consumo por periodo, telelecturas, descarga masiva por CUPS,
+  coste/consumo mensual, optimización de potencia, incoherencias, factura calculada).
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.
@@ -87,6 +90,12 @@ así los días de cambio de hora no necesitan zona horaria.
 | `revisiones_ssaa/` | Informes guardados `AAAA-MM_CUPS_nºfactura.xlsx` |
 
 ## Gemweb
+
+Un solo cliente para toda la plataforma: `gemweb_extractor/cliente.py` (copia de
+`API_Gemweb/gemweb_client.py` con un candado al renovar el token). `gemweb.obtener_api()`
+devuelve un único objeto por credenciales; `gemweb.ClienteGemweb` (CUPS → suministro y curva
+cuartohoraria de la revisión de SSAA) trabaja sobre él. Verificado: mismas respuestas que el
+cliente original (inventario y telelecturas).
 
 `https://api.gemweb.es`, XML. Fechas con la hora de FIN del cuarto y siempre 96 cuartos
 por día: en marzo lo de las 02:xx se suma a la hora 3 de ESIOS y en octubre se reparte a

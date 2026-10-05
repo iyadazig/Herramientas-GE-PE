@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-API DE GEMWEB — curvas cuartohorarias
-=====================================
-Adaptado de estudio_potencia_cuartohorario/potencia/gemweb.py (que a su vez
-viene de API_Gemweb/gemweb_client.py). Solo dos operaciones:
-  get_inventory (subministraments): CUPS -> id interno y datos del suministro
-  get_metering  (quart-horari, consum): kWh de cada cuarto de hora
+API DE GEMWEB — credenciales y curvas para la revision de SSAA
+================================================================
+Usa el cliente comun de la plataforma (gemweb_extractor/cliente.py, el de las
+paginas de Gemweb), con un solo objeto por credenciales. Para la revision de SSAA:
+  buscar_suministro: CUPS -> id interno y datos del suministro (get_inventory)
+  curva:             kWh de cada cuarto de hora (get_metering, quart-horari, consum)
 
 Formato de la API: XML; fechas "AAAA-MM-DD  HH:MM" con la hora de FIN del
 cuarto (la primera del dia es 00:15) y 96 cuartos por dia tambien en los dias
@@ -21,25 +21,15 @@ CREDENCIALES (nunca en el repositorio). Se buscan por este orden:
 
 import base64
 import datetime as dt
+import hashlib
 import json
 import os
-import time
-import xml.etree.ElementTree as ET
+import threading
 from pathlib import Path
 
 import config
 import curva_consumo
-
-URL = "https://api.gemweb.es"
-TIMEOUT = 60
-TIMEOUT_METERING = 180
-REINTENTOS = 3
-ESPERAS_REINTENTO = [5, 15]
-DIAS_TRAMO = 31          # tramos de un mes para no saturar el servidor
-
-
-class GemwebError(Exception):
-    """Error devuelto por la API o de conexion."""
+from gemweb_extractor.cliente import GemwebClient, GemwebError   # noqa: F401 (se reexporta)
 
 
 # ---------------------------------------------------------------- credenciales
@@ -121,12 +111,26 @@ def cargar_credenciales():
 
 
 # ---------------------------------------------------------------------- cliente
+_apis = {}
+_candado_apis = threading.Lock()
+
+
+def obtener_api(client_id, client_secret):
+    """Cliente de la API (gemweb_extractor.cliente.GemwebClient) compartido por toda la
+    plataforma: un solo token por credenciales, aunque haya varios compañeros a la vez."""
+    clave = (client_id, hashlib.sha256(client_secret.encode("utf-8")).hexdigest())
+    with _candado_apis:
+        if clave not in _apis:
+            _apis[clave] = GemwebClient(client_id, client_secret)
+        return _apis[clave]
+
+
 class ClienteGemweb:
-    def __init__(self, client_id, client_secret):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self._token = None
-        self._caduca = None
+    """Operaciones que usa la revision de SSAA (CUPS -> suministro, curva cuartohoraria)
+    sobre el cliente comun de la API."""
+
+    def __init__(self, client_id=None, client_secret=None, api=None):
+        self.api = api or obtener_api(client_id, client_secret)
 
     @classmethod
     def desde_configuracion(cls):
@@ -135,57 +139,15 @@ class ClienteGemweb:
             raise GemwebError("No hay credenciales de Gemweb configuradas.")
         return cls(*cred)
 
-    def _token_valido(self):
-        return bool(self._token) and dt.datetime.now() < self._caduca - dt.timedelta(minutes=5)
-
-    def _renovar_token(self):
-        import requests
-        try:
-            r = requests.post(URL, data={"request": "get_token", "client_id": self.client_id,
-                                         "client_secret": self.client_secret,
-                                         "grant_type": "client_credentials"}, timeout=TIMEOUT)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            raise GemwebError("No se ha podido conectar con Gemweb: %s" % e) from e
-        raiz = ET.fromstring(r.text)
-        if raiz.find("error") is not None:
-            raise GemwebError("Credenciales de Gemweb no válidas: %s" % raiz.findtext("error"))
-        token = raiz.findtext("access_token")
-        if not token:
-            raise GemwebError("Gemweb no ha devuelto el token de acceso.")
-        self._token = token
-        self._caduca = dt.datetime.now() + dt.timedelta(
-            seconds=int(raiz.findtext("expires_in", default="3600")))
-
-    def _post(self, peticion, timeout=TIMEOUT, **parametros):
-        import requests
-        for intento in range(1, REINTENTOS + 1):
-            if not self._token_valido():
-                self._renovar_token()
-            datos = {"request": peticion, "access_token": self._token}
-            datos.update({k: v for k, v in parametros.items() if v not in (None, "")})
-            try:
-                r = requests.post(URL, data=datos, timeout=timeout)
-                r.raise_for_status()
-                break
-            except (requests.Timeout, requests.ConnectionError) as e:
-                if intento == REINTENTOS:
-                    raise GemwebError("Gemweb no responde (%s) tras %d intentos."
-                                      % (peticion, REINTENTOS)) from e
-                time.sleep(ESPERAS_REINTENTO[intento - 1])
-            except requests.RequestException as e:
-                raise GemwebError("Error de Gemweb (%s): %s" % (peticion, e)) from e
-        try:
-            raiz = ET.fromstring(r.text)
-        except ET.ParseError as e:
-            raise GemwebError("Gemweb ha devuelto una respuesta no válida (%s)." % peticion) from e
-        if raiz.find("error") is not None:
-            raise GemwebError(raiz.findtext("error") or "Error de Gemweb (%s)" % peticion)
-        return raiz
-
     def comprobar(self):
         """Pide un token para validar las credenciales."""
-        self._renovar_token()
+        import requests
+        try:
+            self.api._renovar_token()
+        except requests.RequestException as e:
+            raise GemwebError("No se ha podido conectar con Gemweb: %s" % e) from e
+        except GemwebError as e:
+            raise GemwebError("Credenciales de Gemweb no válidas: %s" % e) from e
 
     def buscar_suministro(self, cups):
         """Datos del suministro en el inventario de Gemweb (dict) o None."""
@@ -193,8 +155,9 @@ class ClienteGemweb:
         candidatos = [cups] + ([cups[:20]] if len(cups) > 20 else [])
         for c in candidatos:
             try:
-                raiz = self._post("get_inventory", category="subministraments",
-                                  search_by="subministraments.cups", search_values=c, limit=5)
+                raiz = self.api.get_inventory(category="subministraments",
+                                              search_by="subministraments.cups",
+                                              search_values=c, limit=5)
             except GemwebError as e:
                 if "no se han encontrado" in str(e).lower():
                     continue
@@ -209,32 +172,17 @@ class ClienteGemweb:
 
     def descargar(self, id_suministro, desde, hasta, al_avanzar=None):
         """[(fecha 'AAAA-MM-DD HH:MM' fin del cuarto, kWh)] y tramos fallidos."""
-        tramos, ini = [], desde
-        while True:
-            fin = min(ini + dt.timedelta(days=DIAS_TRAMO), hasta)
-            tramos.append((ini, fin))
-            if fin >= hasta:
-                break
-            ini = fin          # los tramos se solapan un dia: no se pierde ningun cuarto
-        valores, fallidos = {}, []
-        for n, (a, b) in enumerate(tramos, 1):
-            if al_avanzar:
-                al_avanzar(n, len(tramos), a, b)
-            try:
-                raiz = self._post("get_metering", timeout=TIMEOUT_METERING, id=int(id_suministro),
-                                  date_from=a.isoformat(), date_to=b.isoformat(),
-                                  data_source="comptador", period="quart-horari",
-                                  field="consum", language="es")
-            except GemwebError as e:
-                fallidos.append("%s – %s: %s" % (a.strftime("%d/%m/%Y"), b.strftime("%d/%m/%Y"), e))
-                continue
-            for sub in raiz.findall(".//subministrament"):
-                unidades = (sub.findtext("units") or "kWh").strip().lower()
-                factor = {"kwh": 1.0, "wh": 0.001, "mwh": 1000.0}.get(unidades, 1.0)
-                for v in sub.findall(".//value"):
-                    fecha = " ".join((v.get("date") or "").split())
-                    if fecha:
-                        valores[fecha] = float(v.text or 0) * factor   # sin duplicar solapes
+        df, fallidos = self.api.get_metering_por_tramos(
+            id=int(id_suministro), date_from=desde.isoformat(), date_to=hasta.isoformat(),
+            data_source="comptador", period="quart-horari", field="consum",
+            al_avanzar=al_avanzar)
+        valores = {}
+        for fila in df.itertuples(index=False) if len(df) else []:
+            fecha = " ".join(str(fila.fecha or "").split())
+            if fecha:
+                factor = {"kwh": 1.0, "wh": 0.001, "mwh": 1000.0}.get(
+                    str(fila.unidades or "kWh").strip().lower(), 1.0)
+                valores[fecha] = float(fila.valor) * factor        # sin duplicar solapes
         return sorted(valores.items()), fallidos
 
     def curva(self, cups, desde, hasta, al_avanzar=None):

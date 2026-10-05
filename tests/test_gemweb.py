@@ -11,16 +11,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import curva_consumo
 import gemweb
+from gemweb_extractor.cliente import GemwebClient
 
 MARZO, OCTUBRE = dt.date(2026, 3, 29), dt.date(2026, 10, 25)
 
 
-class ApiFalsa(gemweb.ClienteGemweb):
+class ApiFalsa(GemwebClient):
     """Responde como Gemweb: hora de FIN del cuarto y 96 cuartos por dia siempre."""
 
     def __init__(self):
         super().__init__("usuario", "clave")
         self.peticiones = []
+
+    def curva(self, *a, **k):
+        """Atajo de las pruebas: la curva por el cliente de la revision de SSAA."""
+        return gemweb.ClienteGemweb(api=self).curva(*a, **k)
 
     def _post(self, peticion, timeout=None, **p):
         self.peticiones.append((peticion, p))

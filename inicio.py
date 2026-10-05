@@ -6,8 +6,8 @@ HERRAMIENTAS GE&PE — entrada unica de la plataforma
     streamlit run inicio.py                (pruebas en local)
 
 Acceso con usuario y contrasena (paginas.acceso), imagen corporativa (estilo) y menu por
-secciones (st.navigation). Cada pagina es un fichero o una funcion; las de Gemweb se
-anaden en gemweb_extractor.
+secciones (st.navigation). Cada pagina es un fichero o una funcion; las de Gemweb estan
+en gemweb_extractor/paginas.py.
 """
 
 import functools
@@ -16,6 +16,7 @@ import streamlit as st
 
 import estilo
 import paginas
+from gemweb_extractor import paginas as gw
 
 st.set_page_config(page_title="Herramientas GE&PE",
                    page_icon=str(estilo.ICONO) if estilo.ICONO.exists() else None,
@@ -37,12 +38,24 @@ def _pagina(funcion, titulo, subtitulo, ruta):
 
 
 SUB_SSAA = "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)"
+SUB_GEMWEB = "Consultas a la API de Gemweb"
 menu = {
     "Revisión de SSAA": [
         st.Page("app_revision_ssaa.py", title="Revisar factura", url_path="revisar",
                 default=True),
         _pagina(paginas.pagina_historial, "Historial de revisiones", SUB_SSAA, "historial"),
         _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas"),
+    ],
+    "Gemweb": [
+        _pagina(funcion, titulo, SUB_GEMWEB, ruta) for funcion, titulo, ruta in (
+            (gw.pagina_inventario, "Inventario", "gemweb-inventario"),
+            (gw.pagina_consumo_periodo, "Consumo por periodo", "gemweb-consumo-periodo"),
+            (gw.pagina_telelecturas, "Telelecturas", "gemweb-telelecturas"),
+            (gw.pagina_descarga_masiva, "Descarga masiva por CUPS", "gemweb-descarga-masiva"),
+            (gw.pagina_coste_consumo, "Coste y consumo mensual", "gemweb-coste-consumo"),
+            (gw.pagina_optimizacion, "Optimización de potencia", "gemweb-optimizacion"),
+            (gw.pagina_incoherencias, "Incoherencias en facturas", "gemweb-incoherencias"),
+            (gw.pagina_factura_calculada, "Factura calculada", "gemweb-factura-calculada"))
     ],
 }
 if usuario["admin"]:
