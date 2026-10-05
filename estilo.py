@@ -146,6 +146,8 @@ TRADUCCIONES = {
     "Select a date.": "Elige una fecha.", "Running...": "Calculando…",
     "Save as SVG": "Guardar como SVG", "Save as PNG": "Guardar como PNG",
     "Show password text": "Mostrar contraseña", "Hide password text": "Ocultar contraseña",
+    "Press Enter to submit form": "Pulsa Intro para enviar",
+    "Press Enter to apply": "Pulsa Intro para aplicar",
     "View more": "Ver más", "View less": "Ver menos",
     "Click to view actions": "Opciones de la gráfica",
     "Mo": "Lu", "Tu": "Ma", "We": "Mi", "Th": "Ju", "Fr": "Vi", "Sa": "Sá", "Su": "Do",

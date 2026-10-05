@@ -35,7 +35,7 @@ def acceso():
             st.caption("Todavía no hay usuarios. Crea el usuario administrador, que podrá dar de "
                        "alta al resto del equipo desde la sección «Usuarios».")
             with st.form("primer_admin"):
-                usuario = st.text_input("Usuario (por ejemplo, nlibrero)")
+                usuario = st.text_input("Usuario")
                 nombre = st.text_input("Nombre y apellidos")
                 c1 = st.text_input("Contraseña", type="password",
                                    help="Al menos 10 caracteres, con letras y números.")
