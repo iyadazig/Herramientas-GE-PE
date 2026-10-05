@@ -1,14 +1,14 @@
 <#
-INSTALACION DEL REVISOR DE SSAA EN EL SERVIDOR
-==============================================
+INSTALACION DE HERRAMIENTAS GE&PE EN EL PC DE LA OFICINA
+=========================================================
 Ejecutar en el servidor, en PowerShell COMO ADMINISTRADOR (ver GUIA_SERVIDOR.md):
 
     powershell -ExecutionPolicy Bypass -File servidor\instalar_servidor.ps1 `
-        -Subredes "192.168.0.0/24,10.8.0.0/24" -Usuario "GEYPE\svc_revisor"
+        -Subredes "192.168.0.0/24,10.8.0.0/24" -Usuario "GEYPE\svc_herramientas"
 
 Crea (o sustituye):
   1. Regla del cortafuegos: puerto de la app solo desde las subredes indicadas (oficina y VPN).
-  2. Tarea "Revisor SSAA - servidor": arranca la app al encender el servidor y la reinicia
+  2. Tarea "Herramientas GEYPE - servidor": arranca la plataforma al encender el servidor y la reinicia
      si se cae.
   3. Tareas de datos: descarga diaria del PVPC, mensual de componentes de ESIOS y copia de
      seguridad diaria de la base de datos.
@@ -43,8 +43,23 @@ $clave = Read-Host -AsSecureString
 $claveTexto = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($clave))
 
+# 0. instalacion anterior y extractor antiguo -----------------------------------------
+Get-ScheduledTask -TaskName "Revisor SSAA - *" -ErrorAction SilentlyContinue | ForEach-Object {
+    Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false
+    Write-Host "Quitada tarea antigua: $($_.TaskName)"
+}
+Get-NetFirewallRule -DisplayName "Revisor SSAA (puerto *" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+$ocupado = Get-NetTCPConnection -LocalPort $Puerto -State Listen -ErrorAction SilentlyContinue
+if ($ocupado) {
+    $proc = Get-Process -Id ($ocupado | Select-Object -First 1).OwningProcess -ErrorAction SilentlyContinue
+    Write-Warning ("El puerto $Puerto lo usa ahora '$($proc.ProcessName)' (PID $($proc.Id)), " +
+                   "seguramente el extractor de Gemweb antiguo. Ciérralo y quita su arranque " +
+                   "automático (GUIA_SERVIDOR.md, punto 0) antes de seguir.")
+    throw "Puerto $Puerto ocupado."
+}
+
 # 1. cortafuegos ------------------------------------------------------------------------
-$nombreRegla = "Revisor SSAA (puerto $Puerto)"
+$nombreRegla = "Herramientas GEYPE (puerto $Puerto)"
 Get-NetFirewallRule -DisplayName $nombreRegla -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName $nombreRegla -Direction Inbound -Protocol TCP -LocalPort $Puerto `
     -RemoteAddress $redes -Action Allow -Profile Domain, Private | Out-Null
@@ -65,18 +80,18 @@ function Registrar($nombre, $programa, $argumentos, $carpeta, $disparador, $rein
     Write-Host "Tarea: $nombre"
 }
 
-Registrar "Revisor SSAA - servidor" $Python "lanzador.py --servidor --puerto $Puerto" $CarpetaApp `
+Registrar "Herramientas GEYPE - servidor" $Python "lanzador.py --servidor --puerto $Puerto" $CarpetaApp `
     (New-ScheduledTaskTrigger -AtStartup) $true
-Registrar "Revisor SSAA - descarga PVPC diaria" $Python "descarga_PVPC_diario_excel.py" $CarpetaEsios `
+Registrar "Herramientas GEYPE - descarga PVPC diaria" $Python "descarga_PVPC_diario_excel.py" $CarpetaEsios `
     (New-ScheduledTaskTrigger -Daily -At "08:30") $false
 $semanal = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Monday -At "09:00"
-Registrar "Revisor SSAA - descarga componentes ESIOS" $Python "descarga_componentes_precio_excel.py" `
+Registrar "Herramientas GEYPE - descarga componentes ESIOS" $Python "descarga_componentes_precio_excel.py" `
     $CarpetaEsios $semanal $false
-Registrar "Revisor SSAA - copia de seguridad" $Python "almacen.py --copia `"$CarpetaCopias`" --conservar 30" `
+Registrar "Herramientas GEYPE - copia de seguridad" $Python "almacen.py --copia `"$CarpetaCopias`" --conservar 30" `
     $CarpetaApp (New-ScheduledTaskTrigger -Daily -At "23:00") $false
 
 $claveTexto = $null
-Start-ScheduledTask -TaskName "Revisor SSAA - servidor"
+Start-ScheduledTask -TaskName "Herramientas GEYPE - servidor"
 Write-Host ""
-Write-Host "Listo. En unos 20 segundos la app estará en http://$($env:COMPUTERNAME):$Puerto"
+Write-Host "Listo. En unos 20 segundos la plataforma estará en http://$($env:COMPUTERNAME):$Puerto"
 Write-Host "El primer usuario que entre creará el administrador."

@@ -1,16 +1,18 @@
-# Revisor de SSAA — instalación en el servidor
+# Herramientas GE&PE — instalación en el PC de la oficina
 
-Guía para dejar la aplicación de revisión de servicios de ajuste (SSAA) funcionando en un
-servidor de la oficina, de forma que los 9 compañeros la usen desde el navegador, en la
-oficina o por VPN, sin instalar nada en sus ordenadores.
+Guía para dejar la plataforma **Herramientas GE&PE** (revisión de servicios de ajuste y
+consultas a Gemweb) funcionando en el PC de la oficina que está siempre encendido, de forma
+que los 9 compañeros la usen desde el navegador, en la oficina o por VPN, con su usuario y
+contraseña y sin instalar nada en sus ordenadores. Sustituye al extractor de Gemweb que hoy
+funciona en ese mismo PC.
 
 ```
  Oficina (red local)            Teletrabajo (VPN)
   navegador ──┐                  navegador ──┐
-              ├──  http://SERVIDOR:8501  ────┤
+              ├──  http://PC-OFICINA:8501  ────┤
          ┌────┴──────────────────────────────┴────┐
-         │ Servidor (siempre encendido)           │
-         │  · App (Python + Streamlit)            │
+         │ PC de la oficina (siempre encendido)   │
+         │  · Plataforma (Python + Streamlit)     │
          │  · Base de datos revisor_ssaa.db       │
          │    (usuarios, fichas, historial)       │
          │  · Excel de ESIOS y sus descargas      │
@@ -20,13 +22,31 @@ oficina o por VPN, sin instalar nada en sus ordenadores.
 
 Coste: ninguno. Todo es software libre (Python, Streamlit, SQLite) y corre en el servidor.
 
+## 0. Retirar el extractor de Gemweb antiguo
+
+La plataforma usa el mismo puerto (8501) que el extractor de Gemweb que funciona hoy en el
+PC de la oficina, y lo incluye entero (sección «Gemweb»). Antes de instalar:
+
+1. Ver qué programa usa el puerto:
+   ```powershell
+   Get-NetTCPConnection -LocalPort 8501 -State Listen | ForEach-Object { Get-Process -Id $_.OwningProcess }
+   ```
+2. Cerrarlo (la ventana de consola donde corre `streamlit run app.py`, o
+   `Stop-Process -Id <PID>`).
+3. Quitar su arranque automático, según cómo se arranque hoy: acceso directo en la carpeta
+   de Inicio (`shell:startup`), tarea del Programador de tareas o fichero `.bat`.
+4. **No borrar** la carpeta `API_Gemweb`: su `.streamlit\secrets.toml` sirve a la plataforma
+   como credenciales de Gemweb de respaldo si se deja al lado de `Herramientas_GEYPE`.
+
+El script de instalación se niega a seguir si el puerto 8501 sigue ocupado.
+
 ## 1. Requisitos
 
 - Windows (servidor o PC) **siempre encendido**, en la red de la oficina.
 - **Python 3.11 o posterior** (desarrollado con 3.13), instalado para todos los usuarios.
 - Unos 2 GB libres de disco.
 - Salida a internet hacia `api.esios.ree.es` (datos de REE) y `api.gemweb.es` (curvas).
-- Una **cuenta de Windows para el servicio** (por ejemplo `GEYPE\svc_revisor`), sin
+- Una **cuenta de Windows para el servicio** (por ejemplo `GEYPE\svc_herramientas`), sin
   privilegios de administrador, con lectura y escritura en las carpetas del punto 2.
 
 ## 2. Carpetas
@@ -73,22 +93,24 @@ En PowerShell **como administrador**, desde `Herramientas_GEYPE`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File servidor\instalar_servidor.ps1 `
-    -Subredes "192.168.0.0/24,10.8.0.0/24" -Usuario "GEYPE\svc_revisor"
+    -Subredes "192.168.0.0/24,10.8.0.0/24" -Usuario "GEYPE\svc_herramientas"
 ```
 
 - `-Subredes`: la red de la oficina **y** el rango de direcciones de la VPN. Solo esas
   direcciones podrán abrir la app; desde internet no es accesible.
 - `-Usuario`: la cuenta del servicio (pedirá su contraseña).
+- Si había una instalación anterior del revisor de SSAA (tareas «Revisor SSAA - …»), el
+  script la sustituye.
 - Opcionales: `-Puerto 8501`, `-Python "C:\ruta\python.exe"`, `-CarpetaEsios`, `-CarpetaCopias`.
 
 El script crea:
 
 | Tarea programada | Cuándo | Qué hace |
 |---|---|---|
-| Revisor SSAA - servidor | Al encender (y se reinicia si se cae) | La app en el puerto 8501 |
-| Revisor SSAA - descarga PVPC diaria | Todos los días, 08:30 | Total SAH del PVPC_DETALLE |
-| Revisor SSAA - descarga componentes ESIOS | Lunes, 09:00 | Componentes, PFMHORAS_COM (y su C2), pérdidas |
-| Revisor SSAA - copia de seguridad | Todos los días, 23:00 | Copia de la base de datos (se guardan 30) |
+| Herramientas GEYPE - servidor | Al encender (y se reinicia si se cae) | La plataforma en el puerto 8501 |
+| Herramientas GEYPE - descarga PVPC diaria | Todos los días, 08:30 | Total SAH del PVPC_DETALLE |
+| Herramientas GEYPE - descarga componentes ESIOS | Lunes, 09:00 | Componentes, PFMHORAS_COM (y su C2), pérdidas |
+| Herramientas GEYPE - copia de seguridad | Todos los días, 23:00 | Copia de la base de datos (se guardan 30) |
 
 ## 6. VPN
 
@@ -97,14 +119,14 @@ hay que permitir en la VPN el tráfico **TCP 8501** hacia el servidor. Comprobac
 equipo conectado por VPN:
 
 ```powershell
-Test-NetConnection SERVIDOR -Port 8501
+Test-NetConnection PC-OFICINA -Port 8501
 ```
 
 (`TcpTestSucceeded : True`).
 
 ## 7. Primer acceso y usuarios
 
-1. Abrir `http://SERVIDOR:8501` (en el servidor, `http://localhost:8501`).
+1. Abrir `http://PC-OFICINA:8501` (en el servidor, `http://localhost:8501`).
 2. La primera vez la app pide **crear el administrador** (usuario, nombre y contraseña).
 3. El administrador da de alta al resto en **Usuarios**: la app genera una contraseña
    provisional que hay que darles en persona o por teléfono; al entrar, cada uno la cambia.
@@ -112,7 +134,7 @@ Test-NetConnection SERVIDOR -Port 8501
    usuario queda bloqueado 15 minutos. Un administrador puede restablecer contraseñas y
    desactivar usuarios (por ejemplo, si alguien deja la empresa).
 
-A cada compañero basta con darle el enlace `http://SERVIDOR:8501` para guardarlo en
+A cada compañero basta con darle el enlace `http://PC-OFICINA:8501` para guardarlo en
 favoritos.
 
 ## 8. Comprobar que todo funciona
@@ -131,8 +153,8 @@ fichas, lectura de PDF).
 cd D:\GEyPE\Herramientas_GEYPE
 git pull
 python -m pip install -r requirements.txt
-schtasks /End /TN "Revisor SSAA - servidor"
-schtasks /Run /TN "Revisor SSAA - servidor"
+schtasks /End /TN "Herramientas GEYPE - servidor"
+schtasks /Run /TN "Herramientas GEYPE - servidor"
 ```
 
 Los compañeros solo tienen que recargar la página.
@@ -154,8 +176,8 @@ uno autofirmado) en formato PEM:
 
 1. Definir para la cuenta del servicio las variables `SSAA_SSL_CERT` (ruta del certificado)
    y `SSAA_SSL_KEY` (ruta de la clave privada).
-2. Reiniciar la tarea «Revisor SSAA - servidor».
-3. La dirección pasa a ser `https://SERVIDOR:8501`.
+2. Reiniciar la tarea «Herramientas GEYPE - servidor».
+3. La dirección pasa a ser `https://PC-OFICINA:8501`.
 
 ## 12. Problemas frecuentes
 
