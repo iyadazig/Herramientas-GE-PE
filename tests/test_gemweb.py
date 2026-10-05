@@ -79,6 +79,15 @@ class Gemweb(unittest.TestCase):
         self.assertGreater(len([p for p in api.peticiones if p[0] == "get_metering"]), 2)
         self.assertEqual(len(c.valores), 91 * 96)
 
+    def test_progreso_con_fechas(self):
+        # la barra de progreso de la revision formatea las fechas con strftime
+        avisos = []
+        ApiFalsa().curva("ES0000000000000000XX", dt.date(2026, 4, 1), dt.date(2026, 5, 31),
+                         lambda n, t, a, b: avisos.append(
+                             (n, t, a.strftime("%d/%m/%Y"), b.strftime("%d/%m/%Y"))))
+        self.assertGreater(len(avisos), 1)
+        self.assertEqual(avisos[0][2], "01/04/2026")
+
     def test_suministro_sin_curva(self):
         class SinDatos(ApiFalsa):
             def _post(self, peticion, timeout=None, **p):

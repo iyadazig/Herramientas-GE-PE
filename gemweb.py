@@ -171,11 +171,19 @@ class ClienteGemweb:
         return None
 
     def descargar(self, id_suministro, desde, hasta, al_avanzar=None):
-        """[(fecha 'AAAA-MM-DD HH:MM' fin del cuarto, kWh)] y tramos fallidos."""
+        """[(fecha 'AAAA-MM-DD HH:MM' fin del cuarto, kWh)] y tramos fallidos.
+
+        al_avanzar(n, total, ini, fin) recibe las fechas de cada tramo como date (el
+        cliente comun las da como texto 'AAAA-MM-DD')."""
+        avance = None
+        if al_avanzar:
+            def avance(n, total, ini, fin):
+                al_avanzar(n, total, dt.date.fromisoformat(str(ini)[:10]),
+                           dt.date.fromisoformat(str(fin)[:10]))
         df, fallidos = self.api.get_metering_por_tramos(
             id=int(id_suministro), date_from=desde.isoformat(), date_to=hasta.isoformat(),
             data_source="comptador", period="quart-horari", field="consum",
-            al_avanzar=al_avanzar)
+            al_avanzar=avance)
         valores = {}
         for fila in df.itertuples(index=False) if len(df) else []:
             fecha = " ".join(str(fila.fecha or "").split())
