@@ -51,7 +51,7 @@ AGREGACIONES = {"media_aritmetica": "Media aritmética del periodo",
                 "horaria": "Hora a hora (indexado puro)"}
 MECANISMOS = {"techo": "Techo: cargo si los SSAA superan la referencia",
               "banda": "Banda: cargo por encima y abono por debajo",
-              "indexado": "Indexado (índice + prima)",
+              "indexado": "Indexado (coste real de SSAA)",
               "indexado_techo": "Indexado con precio máximo",
               "indexado_suelo_techo": "Indexado con precio mínimo y máximo",
               "fijo": "Precio fijo"}

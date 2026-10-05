@@ -266,7 +266,9 @@ with k2:
     if mec == "fijo":
         st.number_input("Precio fijo €/MWh", format="%.3f", key="c_precio_fijo")
     if mec in ("indexado", "indexado_techo", "indexado_suelo_techo"):
-        st.number_input("Prima / fee €/MWh", format="%.3f", key="c_prima")
+        st.number_input("Prima / fee €/MWh (opcional)", format="%.3f", key="c_prima",
+                        help="Margen fijo que algunos contratos suman al índice. Déjalo en 0 "
+                             "si el contrato traslada el coste real sin prima.")
     st.number_input("Apuntamiento Ap (1 si el contrato no lo tiene)", format="%.4f",
                     step=0.01, key="c_apuntamiento")
     st.number_input("Factor final (1,015 = impuesto municipal / HL)", format="%.4f",
