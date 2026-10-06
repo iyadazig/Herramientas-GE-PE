@@ -212,8 +212,8 @@ def actualizar_usuario(usuario, admin=None, activo=None, nombre=None):
             con.execute("UPDATE usuarios SET admin=? WHERE usuario=?", (int(admin), usuario))
         if activo is not None:
             con.execute("UPDATE usuarios SET activo=? WHERE usuario=?", (int(activo), usuario))
-        if not con.execute("SELECT COUNT(*) FROM usuarios WHERE admin=1 AND activo=1"
-                           ).fetchone()[0]:
+        if (admin is not None or activo is not None) and not con.execute(
+                "SELECT COUNT(*) FROM usuarios WHERE admin=1 AND activo=1").fetchone()[0]:
             raise ValueError("Tiene que quedar al menos un administrador activo.")
 
 
