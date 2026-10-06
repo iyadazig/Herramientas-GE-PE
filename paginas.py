@@ -234,8 +234,10 @@ def pagina_usuarios():
 
     if ss.get("clave_mostrada"):
         u, clave = ss.clave_mostrada
-        st.success("Contraseña provisional de **%s**: `%s` — dásela en persona o por teléfono. "
-                   "Tendrá que cambiarla al entrar. No se volverá a mostrar." % (u, clave))
+        st.success("Contraseña provisional del usuario **%s** (cópiala con el botón del "
+                   "recuadro). Dásela en persona o por teléfono; tendrá que cambiarla al "
+                   "entrar. No se volverá a mostrar." % u)
+        st.code(clave, language=None)
         if st.button("Ya la he anotado"):
             del ss["clave_mostrada"]
             st.rerun()

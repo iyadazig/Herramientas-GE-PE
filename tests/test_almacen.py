@@ -50,6 +50,18 @@ class Almacen(unittest.TestCase):
         with self.assertRaises(ValueError):
             almacen.crear_usuario("ana", "Repetida", "clave-segura-2")
 
+    def test_alta_con_clave_provisional(self):
+        clave = almacen.clave_temporal()
+        self.assertIsNone(almacen.validar_clave(clave))
+        self.assertFalse(set(clave) & set("lI1O0_"))         # nada que se confunda al dictarla
+        almacen.crear_usuario("Marta", "Marta Ruiz", clave, cambiar_clave=True)
+        u = almacen.comprobar("marta", clave)
+        self.assertEqual(u["cambiar_clave"], 1)              # primer acceso: debe cambiarla
+        almacen.cambiar_clave("marta", "nueva-clave-22")
+        self.assertEqual(almacen.comprobar("marta", "nueva-clave-22")["cambiar_clave"], 0)
+        with self.assertRaises(ValueError):
+            almacen.comprobar("marta", clave)
+
     def test_bloqueo_tras_cinco_fallos(self):
         almacen.crear_usuario("luis", "Luis", "clave-segura-1")
         for _ in range(5):

@@ -213,9 +213,18 @@ def actualizar_usuario(usuario, admin=None, activo=None):
             raise ValueError("Tiene que quedar al menos un administrador activo.")
 
 
+# sin caracteres que se confunden al dictarla o copiarla (l, I, 1, O, 0)
+_LETRAS_CLAVE = "abcdefghjkmnpqrstuvwxyz"
+_CIFRAS_CLAVE = "23456789"
+
+
 def clave_temporal():
-    """Contrasena provisional para altas y reseteos (se obliga a cambiarla al entrar)."""
-    return "Ssaa-" + secrets.token_urlsafe(6) + str(secrets.randbelow(90) + 10)
+    """Contrasena provisional para altas y reseteos (se obliga a cambiarla al entrar):
+    'Geype-' + dos bloques de 4, p. ej. Geype-k7mp-3xha."""
+    while True:
+        cuerpo = "".join(secrets.choice(_LETRAS_CLAVE + _CIFRAS_CLAVE) for _ in range(8))
+        if any(c in _CIFRAS_CLAVE for c in cuerpo):
+            return "Geype-%s-%s" % (cuerpo[:4], cuerpo[4:])
 
 
 # ------------------------------------------------------------------- contratos

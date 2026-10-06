@@ -169,6 +169,14 @@ def traducir():
     components.html("""<script>
     const T = %s, EN = %s, ES = %s, OCULTAR = %s;
     const doc = window.parent.document;
+    // la pagina ya esta en espanol: que el navegador no la traduzca (altera contrasenas y datos)
+    doc.documentElement.lang = "es";
+    doc.documentElement.setAttribute("translate", "no");
+    doc.documentElement.classList.add("notranslate");
+    if (!doc.querySelector('meta[name="google"]')) {
+        const m = doc.createElement("meta");
+        m.name = "google"; m.content = "notranslate"; doc.head.appendChild(m);
+    }
     const reMes = new RegExp("^(" + EN.join("|") + ")( \\\\d{4})?$");
     function nodo(n) {
         const t = n.nodeValue.trim();
