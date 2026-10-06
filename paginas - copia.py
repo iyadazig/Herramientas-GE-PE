@@ -35,12 +35,11 @@ def acceso():
             st.caption("Todavía no hay usuarios. Crea el usuario administrador, que podrá dar de "
                        "alta al resto del equipo desde la sección «Usuarios».")
             with st.form("primer_admin"):
-                usuario = st.text_input("Usuario", autocomplete="username")
-                nombre = st.text_input("Nombre y apellidos", autocomplete="name")
-                c1 = st.text_input("Contraseña", type="password", autocomplete="new-password",
+                usuario = st.text_input("Usuario")
+                nombre = st.text_input("Nombre y apellidos")
+                c1 = st.text_input("Contraseña", type="password",
                                    help="Al menos 10 caracteres, con letras y números.")
-                c2 = st.text_input("Repite la contraseña", type="password",
-                                   autocomplete="new-password")
+                c2 = st.text_input("Repite la contraseña", type="password")
                 if st.form_submit_button("Crear administrador", type="primary"):
                     if c1 != c2:
                         st.error("Las contraseñas no coinciden.")
@@ -56,9 +55,8 @@ def acceso():
         else:
             st.markdown("### Iniciar sesión")
             with st.form("acceso"):
-                usuario = st.text_input("Usuario", autocomplete="username")
-                clave = st.text_input("Contraseña", type="password",
-                                      autocomplete="current-password")
+                usuario = st.text_input("Usuario")
+                clave = st.text_input("Contraseña", type="password")
                 if st.form_submit_button("Entrar", type="primary", use_container_width=True):
                     try:
                         ss.usuario = almacen.comprobar(usuario, clave)
@@ -82,12 +80,10 @@ def _cambio_obligatorio():
 
 def _formulario_clave(obligatorio=False):
     with st.form("cambio_clave_%s" % ("obl" if obligatorio else "vol")):
-        actual = st.text_input("Contraseña actual (o la provisional)", type="password",
-                               autocomplete="current-password")
-        c1 = st.text_input("Contraseña nueva", type="password", autocomplete="new-password",
+        actual = st.text_input("Contraseña actual (o la provisional)", type="password")
+        c1 = st.text_input("Contraseña nueva", type="password",
                            help="Al menos 10 caracteres, con letras y números.")
-        c2 = st.text_input("Repite la contraseña nueva", type="password",
-                           autocomplete="new-password")
+        c2 = st.text_input("Repite la contraseña nueva", type="password")
         if st.form_submit_button("Cambiar contraseña", type="primary"):
             try:
                 almacen.comprobar(ss.usuario["usuario"], actual)
@@ -113,17 +109,7 @@ def barra_usuario():
         for k in list(ss.keys()):
             del ss[k]
         st.rerun()
-    with c2.popover("Mi cuenta", use_container_width=True):
-        with st.form("mi_nombre"):
-            nuevo = st.text_input("Nombre y apellidos", value=u["nombre"], autocomplete="name")
-            if st.form_submit_button("Guardar nombre"):
-                try:
-                    almacen.actualizar_usuario(u["usuario"], nombre=nuevo)
-                except ValueError as e:
-                    st.error(str(e))
-                else:
-                    u["nombre"] = nuevo.strip()
-                    st.rerun()
+    with c2.popover("Contraseña", use_container_width=True):
         _formulario_clave()
 
 
@@ -260,10 +246,8 @@ def pagina_usuarios():
     with c1:
         st.markdown("### Dar de alta")
         with st.form("alta_usuario", clear_on_submit=True):
-            # sin autocompletar: el navegador rellenaria los datos de quien da el alta
-            usuario = st.text_input("Usuario (por ejemplo, la parte del correo antes de la @)",
-                                    autocomplete="off")
-            nombre = st.text_input("Nombre y apellidos", autocomplete="off")
+            usuario = st.text_input("Usuario (por ejemplo, la parte del correo antes de la @)")
+            nombre = st.text_input("Nombre y apellidos")
             admin = st.checkbox("Administrador (puede gestionar usuarios)")
             if st.form_submit_button("Dar de alta", type="primary"):
                 clave = almacen.clave_temporal()
@@ -279,18 +263,6 @@ def pagina_usuarios():
         nombres = {u["usuario"]: "%s (%s)" % (u["nombre"], u["usuario"]) for u in usuarios}
         elegido = st.selectbox("Usuario", list(nombres), format_func=nombres.get)
         u = next(x for x in usuarios if x["usuario"] == elegido)
-        with st.form("nombre_usuario"):
-            nuevo = st.text_input("Nombre y apellidos", value=u["nombre"], autocomplete="off",
-                                  key="nombre_%s" % elegido)
-            if st.form_submit_button("Guardar nombre"):
-                try:
-                    almacen.actualizar_usuario(elegido, nombre=nuevo)
-                except ValueError as e:
-                    st.error(str(e))
-                else:
-                    if elegido == ss.usuario["usuario"]:
-                        ss.usuario["nombre"] = nuevo.strip()
-                    st.rerun()
         b1, b2, b3 = st.columns(3)
         if b1.button("Restablecer contraseña", use_container_width=True):
             clave = almacen.clave_temporal()

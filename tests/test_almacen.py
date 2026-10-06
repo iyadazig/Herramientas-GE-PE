@@ -62,6 +62,13 @@ class Almacen(unittest.TestCase):
         with self.assertRaises(ValueError):
             almacen.comprobar("marta", clave)
 
+    def test_cambiar_nombre(self):
+        almacen.crear_usuario("marta", "clave-por-error-1", "clave-segura-1")
+        almacen.actualizar_usuario("marta", nombre="  Marta Ruiz ")
+        self.assertEqual(almacen.comprobar("marta", "clave-segura-1")["nombre"], "Marta Ruiz")
+        with self.assertRaises(ValueError):
+            almacen.actualizar_usuario("marta", nombre=" ")
+
     def test_bloqueo_tras_cinco_fallos(self):
         almacen.crear_usuario("luis", "Luis", "clave-segura-1")
         for _ in range(5):

@@ -201,13 +201,9 @@ def listar_usuarios():
             "ORDER BY nombre")]
 
 
-def actualizar_usuario(usuario, admin=None, activo=None, nombre=None):
+def actualizar_usuario(usuario, admin=None, activo=None):
     """Si el cambio dejara sin administradores activos, se deshace y da error."""
-    if nombre is not None and not nombre.strip():
-        raise ValueError("El nombre no puede quedar vacío.")
     with _con(escribir=True) as con:
-        if nombre is not None:
-            con.execute("UPDATE usuarios SET nombre=? WHERE usuario=?", (nombre.strip(), usuario))
         if admin is not None:
             con.execute("UPDATE usuarios SET admin=? WHERE usuario=?", (int(admin), usuario))
         if activo is not None:
