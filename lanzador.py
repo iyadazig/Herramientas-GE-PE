@@ -9,9 +9,12 @@ Se cierra con el boton "Cerrar la aplicacion" de la barra lateral.
 Tambien se puede probar sin compilar:   python lanzador.py
 
 MODO SERVIDOR (para todo el equipo; ver servidor/GUIA_SERVIDOR.md):
-    python lanzador.py --servidor [--puerto 8501]
+    python lanzador.py --servidor [--puerto 8501] [--carpeta-esios RUTA]
 escucha en la red (el cortafuegos de Windows limita quien entra: oficina y VPN), no abre
 navegador y no muestra el boton de cerrar.
+
+--carpeta-esios RUTA: carpeta de los Excel historicos de ESIOS (p. ej. una carpeta de red
+\\\\servidor\\datos\\ESIOS); por defecto ..\\Descarga_datos_ESIOS.
 """
 
 import os
@@ -95,6 +98,9 @@ def _argumento(nombre, defecto):
 
 def main():
     global PUERTO, URL
+    carpeta_esios = _argumento("--carpeta-esios", None)
+    if carpeta_esios:
+        os.environ["SSAA_CARPETA_ESIOS"] = carpeta_esios       # la lee config.py
     if "--autoprueba" in sys.argv:
         autoprueba()
         return
