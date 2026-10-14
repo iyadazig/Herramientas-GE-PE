@@ -18,6 +18,21 @@ class PaginaEnEspanol(unittest.TestCase):
         self.assertIn(b'<meta name="google" content="notranslate" />', out)
         self.assertNotIn(b'lang="en"', out)
 
+    def test_otra_version_de_streamlit_no_impide_arrancar(self):
+        # versiones de Streamlit sin streamlit.web.server.routes (p. ej. la del PC de la oficina)
+        from unittest import mock
+        import importlib
+        real = importlib.import_module
+
+        def sin_rutas(nombre, *a, **k):
+            if nombre.startswith("streamlit.web.server."):
+                raise ImportError("cannot import name 'routes'")
+            return real(nombre, *a, **k)
+
+        with mock.patch("importlib.import_module", side_effect=sin_rutas):
+            self.assertIsNone(lanzador._manejador_estatico())
+            self.assertFalse(lanzador.servir_en_espanol())
+
     def test_index_real_de_streamlit(self):
         # si una version nueva de Streamlit cambia la cabecera, que se note aqui
         import streamlit

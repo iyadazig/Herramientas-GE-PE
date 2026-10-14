@@ -95,11 +95,31 @@ def _html_en_espanol(html):
         b"<head>", b'<head><meta name="google" content="notranslate" />', 1)
 
 
-def servir_en_espanol():
-    """Cambia la pagina inicial al servirla, sin tocar los ficheros de Streamlit."""
-    from streamlit.web.server import routes
+def _manejador_estatico():
+    """Clase con la que Streamlit sirve index.html (Tornado), o None si esta version de
+    Streamlit la tiene en otro sitio o sirve la pagina de otra forma."""
+    import importlib
+    for modulo in ("streamlit.web.server.routes", "streamlit.web.server.server"):
+        try:
+            clase = getattr(importlib.import_module(modulo), "StaticFileHandler", None)
+        except ImportError:
+            continue
+        if clase is not None and hasattr(clase, "get_content") and \
+                hasattr(clase, "get_content_size"):
+            return clase
+    return None
 
-    clase = routes.StaticFileHandler
+
+def servir_en_espanol():
+    """Cambia la pagina inicial al servirla, sin tocar los ficheros de Streamlit. Si esta
+    version de Streamlit no lo permite, se sigue sin ello (la pagina se marca en espanol al
+    cargar, desde estilo.traducir)."""
+    clase = _manejador_estatico()
+    if clase is None:
+        import streamlit
+        print("Aviso: con Streamlit %s no se puede servir la página ya marcada en español; "
+              "se marca al cargar. El programa funciona igual." % streamlit.__version__)
+        return False
     original_contenido = clase.get_content.__func__
     original_tamano = clase.get_content_size
 
@@ -120,6 +140,7 @@ def servir_en_espanol():
 
     clase.get_content = classmethod(get_content)
     clase.get_content_size = get_content_size
+    return True
 
 
 def _argumento(nombre, defecto):
@@ -177,7 +198,11 @@ def main():
         if ruta:
             opciones["server.sslCertFile" if clave == "cert" else "server.sslKeyFile"] = ruta
     bootstrap.load_config_options(flag_options=opciones)
-    servir_en_espanol()
+    try:
+        servir_en_espanol()
+    except Exception as e:          # nunca debe impedir que arranque la plataforma
+        print("Aviso: no se ha podido servir la página en español (%s). El programa "
+              "funciona igual." % e)
     if not servidor:
         threading.Thread(target=abrir_navegador_cuando_este_lista, daemon=True).start()
     bootstrap.run(str(recursos / "inicio.py"), False, [], opciones)
