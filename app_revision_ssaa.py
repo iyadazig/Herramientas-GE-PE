@@ -177,6 +177,15 @@ lineas = lineas_actuales()
 if lineas:
     total = sum(l["Importe €"] or 0 for l in lineas)
     st.caption("Total SSAA facturado en las líneas: **%.2f €**" % total)
+elif ss.get("f_inicio") and ss.get("f_fin"):
+    # sin cargo de SSAA en la factura: se calcula lo que corresponderia al periodo facturado
+    # y se compara con 0 EUR (puede faltar un cargo o un abono)
+    lineas = [{"Concepto": "SSAA sin cargo en la factura", "Inicio": ss.f_inicio,
+               "Fin": ss.f_fin, "kWh": ss.get("f_consumo") or None, "Precio €/kWh": 0.0,
+               "Importe €": 0.0}]
+    st.info("La factura no trae línea de SSAA: se calculará la regularización que "
+            "correspondería al periodo facturado (%s – %s) y se comparará con 0 €."
+            % (ss.f_inicio.strftime("%d/%m/%Y"), ss.f_fin.strftime("%d/%m/%Y")))
 
 # ==================================================================== contrato
 estilo.seccion(2, "Condiciones de SSAA del contrato", "Ficha guardada por CUPS")

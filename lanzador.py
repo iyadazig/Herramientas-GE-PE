@@ -88,6 +88,40 @@ def autoprueba():
     (destino / "autoprueba_resultado.txt").write_text("\n".join(lineas), encoding="utf-8")
 
 
+def _html_en_espanol(html):
+    """index.html de Streamlit marcado en espanol y sin traduccion automatica: el traductor
+    de Chrome reescribe la pagina, rompe los iconos y puede dejar sin menu lateral."""
+    return html.replace(b'<html lang="en">', b'<html lang="es" translate="no">', 1).replace(
+        b"<head>", b'<head><meta name="google" content="notranslate" />', 1)
+
+
+def servir_en_espanol():
+    """Cambia la pagina inicial al servirla, sin tocar los ficheros de Streamlit."""
+    from streamlit.web.server import routes
+
+    clase = routes.StaticFileHandler
+    original_contenido = clase.get_content.__func__
+    original_tamano = clase.get_content_size
+
+    def es_indice(ruta):
+        return os.path.basename(ruta) == "index.html"
+
+    def get_content(cls, abspath, start=None, end=None):
+        if not es_indice(abspath):
+            yield from original_contenido(cls, abspath, start, end)
+            return
+        html = _html_en_espanol(b"".join(original_contenido(cls, abspath)))
+        yield html[start:end]
+
+    def get_content_size(self):
+        if not es_indice(self.absolute_path):
+            return original_tamano(self)
+        return len(_html_en_espanol(b"".join(original_contenido(type(self), self.absolute_path))))
+
+    clase.get_content = classmethod(get_content)
+    clase.get_content_size = get_content_size
+
+
 def _argumento(nombre, defecto):
     if nombre in sys.argv:
         i = sys.argv.index(nombre)
@@ -143,6 +177,7 @@ def main():
         if ruta:
             opciones["server.sslCertFile" if clave == "cert" else "server.sslKeyFile"] = ruta
     bootstrap.load_config_options(flag_options=opciones)
+    servir_en_espanol()
     if not servidor:
         threading.Thread(target=abrir_navegador_cuando_este_lista, daemon=True).start()
     bootstrap.run(str(recursos / "inicio.py"), False, [], opciones)
