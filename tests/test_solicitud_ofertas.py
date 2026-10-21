@@ -43,7 +43,7 @@ class Datos(unittest.TestCase):
     def test_nombres_de_hojas(self):
         self.assertEqual(so.nombres_de_hojas([{"alias": "TC1"}, {"alias": "",
                                                                  "cups": "ES0000000000000000XX"}]),
-                         ["2. TC1", "3. 000000XX"])
+                         ["1. TC1", "2. 000000XX"])
 
 
 class Excel(unittest.TestCase):
@@ -57,8 +57,8 @@ class Excel(unittest.TestCase):
         cab = {"ref": "R-1", "fecha": "01/01/2026", "gestor": "Persona de prueba",
                "telefono": so.TELEFONO_GEYPE, "email": "prueba@example.com", "producto": "X"}
         wb = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud(cab, [s])))
-        self.assertEqual(wb.sheetnames, ["Resumen", "2. TC1"])
-        h = wb["2. TC1"]
+        self.assertEqual(wb.sheetnames, ["Resumen", "1. TC1"])
+        h = wb["1. TC1"]
         self.assertEqual((h["C6"].value, h["D8"].value, h["H9"].value, h["D10"].value),
                          ("R-1", "Persona de prueba", "prueba@example.com", "X"))
         self.assertEqual((h["E12"].value, h["D13"].value, h["D14"].value, h["H14"].value),
@@ -75,8 +75,8 @@ class Excel(unittest.TestCase):
         self.assertEqual((r["A2"].value, r["I2"].value, r["O2"].value),
                          ("Cliente/Grupo", "POTENCIAS A CONTRATAR (kW)", "PREVISIÓN DE CONSUMO ANUAL"))
         self.assertEqual([r.cell(4, n).value for n in range(9, 15)], [100] * 5 + [200])
-        self.assertEqual(r["O4"].value, "='2. TC1'!C37")
-        self.assertEqual(r["U4"].value, "='2. TC1'!I37")
+        self.assertEqual(r["O4"].value, "='1. TC1'!C37")
+        self.assertEqual(r["U4"].value, "='1. TC1'!I37")
 
 
 if __name__ == "__main__":

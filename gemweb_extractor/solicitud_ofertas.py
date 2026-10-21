@@ -246,9 +246,9 @@ def _hoja_resumen(wb, suministros, nombres_hojas):
 
 
 def nombres_de_hojas(suministros: list) -> list:
-    """'2. TC4', '3. TC3'... (numeradas tras el Resumen; sin alias, el final del CUPS)."""
+    """'1. TC4', '2. TC3'... (una por suministro; sin alias, el final del CUPS)."""
     usados, nombres = set(), []
-    for n, s in enumerate(suministros, start=2):
+    for n, s in enumerate(suministros, start=1):
         base = re.sub(r"[\[\]:*?/\\']", "", s.get("alias") or s.get("cups", "")[-8:])
         nombre = f"{n}. {base}"[:31]
         while nombre in usados:
