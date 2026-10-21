@@ -199,36 +199,44 @@ def _hoja_resumen(wb, suministros, nombres_hojas):
     ws = wb.active
     ws.title = "Resumen"
     ws.sheet_view.showGridLines = False
-    cabeceras = ["Alias", "CUPS", "Razón social", "Dirección de suministro", "CIF",
-                 "Tarifa de acceso", "Fecha fin contrato actual"]
-    anchos = [10, 25, 32, 45, 12, 10, 13] + [8] * 12 + [14]
-    for n, ancho in enumerate(anchos, start=1):
-        ws.column_dimensions[ws.cell(1, n).column_letter].width = ancho
-    for n, texto in enumerate(cabeceras, start=1):
-        letra = ws.cell(2, n).column_letter
-        _bloque(ws, f"{letra}2:{letra}3", texto, True)
-    _bloque(ws, "H2:M2", "POTENCIAS A CONTRATAR (kW)", True)
-    _bloque(ws, "N2:T2", "PREVISIÓN DE CONSUMO ANUAL", True)
+    campos = [("grupo", "Cliente/Grupo", 28), ("alias", "Alias", 10), ("cups", "CUPS", 25),
+              ("razon", "Razón social", 32), ("direccion", "Dirección de suministro", 45),
+              ("cif", "CIF", 12), ("tarifa", "Tarifa de acceso", 10),
+              ("fecha_fin", "Fecha fin contrato actual", 13)]
+    pot0 = len(campos) + 1                  # primera columna de potencias
+    con0 = pot0 + 6                         # primera columna de consumos
+    total = con0 + 6                        # consumo anual
+
+    def letra(col):
+        return ws.cell(1, col).column_letter
+
+    for n, (_, _, ancho) in enumerate(campos, start=1):
+        ws.column_dimensions[letra(n)].width = ancho
+    for col in range(pot0, total):
+        ws.column_dimensions[letra(col)].width = 8
+    ws.column_dimensions[letra(total)].width = 14
+    for n, (_, texto, _) in enumerate(campos, start=1):
+        _bloque(ws, f"{letra(n)}2:{letra(n)}3", texto, True)
+    _bloque(ws, f"{letra(pot0)}2:{letra(pot0 + 5)}2", "POTENCIAS A CONTRATAR (kW)", True)
+    _bloque(ws, f"{letra(con0)}2:{letra(total)}2", "PREVISIÓN DE CONSUMO ANUAL", True)
     for n, p in enumerate(PERIODOS):
-        _bloque(ws, ws.cell(3, 8 + n).coordinate, p, True)
-        _bloque(ws, ws.cell(3, 14 + n).coordinate, p, True)
-    _bloque(ws, "T3", "Consumo anual  (kWh)", True)
+        _bloque(ws, ws.cell(3, pot0 + n).coordinate, p, True)
+        _bloque(ws, ws.cell(3, con0 + n).coordinate, p, True)
+    _bloque(ws, ws.cell(3, total).coordinate, "Consumo anual  (kWh)", True)
     ws.row_dimensions[2].height = 24
     ws.row_dimensions[3].height = 24
     for fila, (s, hoja) in enumerate(zip(suministros, nombres_hojas), start=4):
         ws.row_dimensions[fila].height = 27
-        valores = [s.get("alias", ""), s.get("cups", ""), s.get("razon", ""),
-                   s.get("direccion", ""), s.get("cif", ""), s.get("tarifa", ""),
-                   s.get("fecha_fin", "")]
-        for n, v in enumerate(valores, start=1):
-            _bloque(ws, ws.cell(fila, n).coordinate, v)
+        for n, (clave, _, _) in enumerate(campos, start=1):
+            _bloque(ws, ws.cell(fila, n).coordinate, s.get(clave, ""))
         for n in range(6):
             pot = (s.get("potencias") or [None] * 6)[n]
-            _bloque(ws, ws.cell(fila, 8 + n).coordinate, pot, formato="General")
+            _bloque(ws, ws.cell(fila, pot0 + n).coordinate, pot, formato="General")
             col = "CDEFGH"[n]
-            _bloque(ws, ws.cell(fila, 14 + n).coordinate, f"='{hoja}'!{col}37", formato="#,##0")
-        _bloque(ws, ws.cell(fila, 20).coordinate, f"='{hoja}'!I37", True, formato="#,##0")
-    ws.freeze_panes = "C4"
+            _bloque(ws, ws.cell(fila, con0 + n).coordinate, f"='{hoja}'!{col}37",
+                    formato="#,##0")
+        _bloque(ws, ws.cell(fila, total).coordinate, f"='{hoja}'!I37", True, formato="#,##0")
+    ws.freeze_panes = "D4"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0

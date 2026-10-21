@@ -48,7 +48,8 @@ class Datos(unittest.TestCase):
 class Excel(unittest.TestCase):
     def test_libro_completo(self):
         perfil, _ = so.perfil_mensual([factura(2026, m, 28, p1=100, p6=50) for m in range(1, 13)])
-        s = {"alias": "TC1", "cups": "ES0000000000000000XX", "razon": "EMPRESA DE PRUEBA SA",
+        s = {"grupo": "GRUPO DE PRUEBA", "alias": "TC1", "cups": "ES0000000000000000XX",
+             "razon": "EMPRESA DE PRUEBA SA",
              "direccion": "Calle Falsa 1", "cif": "A00000000", "tarifa": "6.1TD",
              "fecha_fin": "31/12/2026", "potencias": [100, 100, 100, 100, 100, 200],
              "perfil": perfil}
@@ -67,11 +68,14 @@ class Excel(unittest.TestCase):
         self.assertEqual(h["H23"].value, "DH6")
         self.assertEqual(len(h._charts), 1)
         r = wb["Resumen"]
-        self.assertEqual([r.cell(4, n).value for n in range(1, 8)],
-                         ["TC1", "ES0000000000000000XX", "EMPRESA DE PRUEBA SA", "Calle Falsa 1",
-                          "A00000000", "6.1TD", "31/12/2026"])
-        self.assertEqual(r["N4"].value, "='2. TC1'!C37")
-        self.assertEqual(r["T4"].value, "='2. TC1'!I37")
+        self.assertEqual([r.cell(4, n).value for n in range(1, 9)],
+                         ["GRUPO DE PRUEBA", "TC1", "ES0000000000000000XX", "EMPRESA DE PRUEBA SA",
+                          "Calle Falsa 1", "A00000000", "6.1TD", "31/12/2026"])
+        self.assertEqual((r["A2"].value, r["I2"].value, r["O2"].value),
+                         ("Cliente/Grupo", "POTENCIAS A CONTRATAR (kW)", "PREVISIÓN DE CONSUMO ANUAL"))
+        self.assertEqual([r.cell(4, n).value for n in range(9, 15)], [100] * 5 + [200])
+        self.assertEqual(r["O4"].value, "='2. TC1'!C37")
+        self.assertEqual(r["U4"].value, "='2. TC1'!I37")
 
 
 if __name__ == "__main__":

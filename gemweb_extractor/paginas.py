@@ -1026,6 +1026,7 @@ def ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv) -> dict:
                      else None for n in range(1, 7)]
     perfil, aviso = so.perfil_mensual(elegidas)
     return {"cups": cups, "alias": so.alias_de(sumi.get("nom")),
+            "grupo": entidad.get("divisio") or "",
             "razon": entidad.get("nom") or "", "cif": so.cif_limpio(entidad.get("cif")),
             "direccion": centro.get("direccio") or entidad.get("direccio") or "",
             "tarifa": sumi.get("tarifa_acces") or (ultima or {}).get("Tarifa") or "",
@@ -1065,9 +1066,11 @@ def mostrar_consumo_periodos(res: dict) -> None:
                        type="primary")
 
 
-COLUMNAS_FICHA = {"alias": "Alias", "cups": "CUPS", "razon": "Razón social",
-                  "direccion": "Dirección de suministro", "cif": "CIF", "tarifa": "Tarifa",
-                  "fecha_fin": "Fecha fin contrato actual"}
+# columnas de la tabla editable, en este orden (grupo = division de la entidad en Gemweb,
+# razon social = nombre de la entidad, alias = final del nombre del suministro)
+COLUMNAS_FICHA = {"grupo": "Cliente/Grupo", "razon": "Razón social", "cif": "CIF",
+                  "alias": "Alias", "cups": "CUPS", "direccion": "Dirección de suministro",
+                  "tarifa": "Tarifa", "fecha_fin": "Fecha fin contrato actual"}
 
 
 def seccion_solicitud_ofertas(res: dict) -> None:
@@ -1098,11 +1101,20 @@ def seccion_solicitud_ofertas(res: dict) -> None:
         producto = st.text_input("Producto", key="sol_producto",
                                  placeholder="p. ej. ELECTRICIDAD / ELECTRICITY")
 
-    st.caption("Revisa los datos de cada suministro (salen de Gemweb) y escribe la fecha fin del "
-               "contrato actual, que Gemweb no tiene.")
-    tabla = pd.DataFrame([{v: f.get(k, "") for k, v in COLUMNAS_FICHA.items()} for f in fichas])
-    editada = st.data_editor(tabla, hide_index=True, use_container_width=True,
-                             disabled=["CUPS", "Tarifa"], key="sol_tabla_%d" % hash(res["nombre"]))
+    st.caption("Revisa los datos de cada suministro (salen de Gemweb). Gemweb no tiene la fecha "
+               "fin del contrato actual: elige una para todos y cambia en la tabla la de los "
+               "suministros que tengan otra.")
+    comun = st.date_input("Fecha fin del contrato actual (para todos los suministros)",
+                          value=None, format="DD/MM/YYYY", key="sol_fecha_fin_comun")
+    tabla = pd.DataFrame([{v: (comun if k == "fecha_fin" else f.get(k, ""))
+                           for k, v in COLUMNAS_FICHA.items()} for f in fichas])
+    tabla["Fecha fin contrato actual"] = pd.to_datetime(tabla["Fecha fin contrato actual"])
+    # al cambiar la fecha comun, la tabla vuelve a empezar con ella en todos los suministros
+    editada = st.data_editor(
+        tabla, hide_index=True, use_container_width=True, disabled=["CUPS", "Tarifa"],
+        column_config={"Fecha fin contrato actual": st.column_config.DateColumn(
+            format="DD/MM/YYYY")},
+        key="sol_tabla_%d_%s" % (hash(res["nombre"]), comun))
     with st.expander("Potencias que se usarán (última factura de cada suministro)"):
         st.dataframe(pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f["ultima_factura"]},
                                         **{p: f["potencias"][n] for n, p in
@@ -1117,8 +1129,12 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     for f, (_, fila) in zip(fichas, editada.iterrows()):
         s = dict(f)
         for col, valor in fila.items():
-            s[inversa[col]] = "" if valor is None or (isinstance(valor, float) and pd.isna(valor)) \
-                else str(valor).strip()
+            if valor is None or valor is pd.NaT or (isinstance(valor, float) and pd.isna(valor)):
+                s[inversa[col]] = ""
+            elif hasattr(valor, "strftime"):
+                s[inversa[col]] = valor.strftime("%d/%m/%Y")
+            else:
+                s[inversa[col]] = str(valor).strip()
         suministros.append(s)
     cabecera = {"ref": ref, "fecha": fecha.strftime("%d/%m/%Y") if fecha else "",
                 "gestor": gestor, "telefono": telefono, "email": email, "producto": producto}
