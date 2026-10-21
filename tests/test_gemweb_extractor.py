@@ -69,6 +69,88 @@ class Parsers(unittest.TestCase):
             self.assertEqual(fin, ini)                  # sin huecos entre tramos
 
 
+class AyudasDePaginas(unittest.TestCase):
+    """Rodeos de los fallos de Gemweb comprobados contra la API real (oct-2026)."""
+
+    def setUp(self):
+        from gemweb_extractor import paginas
+        self.p = paginas
+
+    def test_co2_sin_agrupaciones_inferiores_a_la_hora(self):
+        self.assertNotIn("quart-horari", self.p.periodos_para("co2"))
+        self.assertIn("horari", self.p.periodos_para("co2"))
+        self.assertIn("quart-horari", self.p.periodos_para("consum"))
+
+    def test_un_mensaje_por_error_repetido_en_los_tramos(self):
+        fallidos = ["2026-01-01 → 2026-02-01: get_metering: El dispositivo no obtiene lecturas.",
+                    "2026-02-01 → 2026-03-01: get_metering: El dispositivo no obtiene lecturas."]
+        self.assertEqual(self.p.errores_tramos(fallidos), ["El dispositivo no obtiene lecturas."])
+
+    def test_mes_anterior(self):
+        import datetime as dt
+        self.assertEqual(self.p.mes_anterior(dt.date(2026, 3, 15)),
+                         (dt.date(2026, 2, 1), dt.date(2026, 2, 28)))
+        self.assertEqual(self.p.mes_anterior(dt.date(2026, 1, 3)),
+                         (dt.date(2025, 12, 1), dt.date(2025, 12, 31)))
+
+    def test_consumo_mensual_desde_telelecturas(self):
+        import pandas as pd
+
+        class Falso:
+            def get_metering_por_tramos(self, **k):
+                self.k = k
+                return pd.DataFrame({"id_suministro": ["7", "7"], "fecha": ["2026-01", "2026-02"],
+                                     "valor": [10.0, 20.0], "unidades": ["kWh", "kWh"]}), []
+
+        api = Falso()
+        df = self.p.consumo_mensual_telelecturas(api, 7, "2026-01-01", "2026-02-28")
+        self.assertEqual((api.k["period"], api.k["field"]), ("mensual", "consum"))
+        self.assertEqual(list(df["mes"]), [1, 2])
+        self.assertEqual(list(df["valor"]), [10.0, 20.0])
+
+    def test_xml_roto_de_gemweb_se_explica(self):
+        api = c.GemwebClient("u", "s")
+        api._token_valido = lambda: True
+        import requests
+        original = requests.post
+        requests.post = lambda *a, **k: type("R", (), {
+            "text": "<r><day value='0'>1</day></month></r>",
+            "raise_for_status": lambda self: None})()
+        try:
+            with self.assertRaises(c.GemwebError) as e:
+                api._post("get_consumption_by_period")
+        finally:
+            requests.post = original
+        self.assertIn("fallo del servidor de Gemweb", str(e.exception))
+        self.assertNotIn("temporal", str(e.exception))
+
+    def test_campos_de_la_simulacion(self):
+        campos, valores = self.p.campos_simulacion({"p1": 0.15, "p2": None, "p3": 0.1},
+                                                   {"p1": 30.5})
+        self.assertEqual(campos, "preu_ene_p1,preu_ene_p3,preu_pot_p1")
+        self.assertEqual(valores, "0.15,0.1,30.5")             # decimales con punto
+
+    def test_resultado_de_la_simulacion(self):
+        df, gen = self.p.simulacion_a_dataframe(xml(
+            "<resultat><simulation><id>7</id><data_ini_sim>01/01/2026</data_ini_sim>"
+            "<data_fin_sim>31/03/2026</data_fin_sim><import_ene_p1>10</import_ene_p1>"
+            "<import_pot_p1>5</import_pot_p1><import_react_p1>0</import_react_p1>"
+            "<import_ene>10</import_ene><import_tot>15</import_tot></simulation></resultat>"))
+        self.assertEqual(list(df["Periodo"]), ["P1"])            # los totales van aparte
+        self.assertEqual((gen["energia"], gen["total"], gen["desde"]), (10.0, 15.0, "01/01/2026"))
+        vacio, gen0 = self.p.simulacion_a_dataframe(xml(
+            "<resultat><simulation><id>7</id><import_tot>0</import_tot></simulation></resultat>"))
+        self.assertTrue(vacio.empty)
+        self.assertEqual(gen0["total"], 0.0)
+
+    def test_avisos_de_gemweb_en_paginas_existentes(self):
+        # las claves son los titulos del menu (inicio.py): si se renombra uno, que se note
+        import re
+        menu = open(Path(__file__).resolve().parents[1] / "inicio.py", encoding="utf-8").read()
+        titulos = set(re.findall(r'gw\.pagina_\w+, "([^"]+)"', menu))
+        self.assertTrue(set(self.p.AVISOS_GEMWEB) <= titulos)
+
+
 class ClienteComun(unittest.TestCase):
     def test_un_solo_token_con_varios_a_la_vez(self):
         class Lento(c.GemwebClient):

@@ -26,15 +26,27 @@ usuario = paginas.acceso()          # detiene la pagina hasta que se inicia sesi
 
 with st.sidebar:
     paginas.barra_usuario()
+    if gw.AVISOS_GEMWEB:
+        with st.expander(":material/warning: Fallos de la API de Gemweb"):
+            st.caption("Estas opciones no funcionan del todo por falta de implementación o "
+                       "mejora de la API de Gemweb (no de esta aplicación).")
+            for _titulo, _texto in gw.AVISOS_GEMWEB.items():
+                st.markdown("**%s**: %s" % (_titulo, _texto))
 
 
 def _pagina(funcion, titulo, subtitulo, ruta):
-    """Pagina de funcion con la cabecera corporativa comun."""
+    """Pagina de funcion con la cabecera corporativa comun. Si la API de Gemweb tiene un fallo
+    conocido en esa opcion, se marca en el menu y se avisa al abrirla."""
+    aviso = gw.AVISOS_GEMWEB.get(titulo)
+
     @functools.wraps(funcion)
     def mostrar():
         estilo.cabecera(titulo, subtitulo)
+        if aviso:
+            st.warning("Fallo de la API de Gemweb: " + aviso, icon=":material/warning:")
         funcion()
-    return st.Page(mostrar, title=titulo, url_path=ruta)
+    return st.Page(mostrar, title=titulo, url_path=ruta,
+                   icon=":material/warning:" if aviso else None)
 
 
 SUB_SSAA = "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)"
@@ -55,7 +67,9 @@ menu = {
             (gw.pagina_coste_consumo, "Coste y consumo mensual", "gemweb-coste-consumo"),
             (gw.pagina_optimizacion, "Optimización de potencia", "gemweb-optimizacion"),
             (gw.pagina_incoherencias, "Incoherencias en facturas", "gemweb-incoherencias"),
-            (gw.pagina_factura_calculada, "Factura calculada", "gemweb-factura-calculada"))
+            (gw.pagina_factura_calculada, "Factura calculada", "gemweb-factura-calculada"),
+            (gw.pagina_simulacion_contrato, "Simulación de contrato",
+             "gemweb-simulacion-contrato"))
     ],
 }
 if usuario["admin"]:

@@ -23,6 +23,18 @@ from gemweb_extractor.cliente import (
 )
 
 
+# Opciones que no funcionan del todo por fallos de la API de Gemweb (comprobado contra la API
+# real y el manual, oct-2026). inicio.py las marca en el menu y lo explica en la barra lateral;
+# quitar la entrada cuando Gemweb lo corrija.
+AVISOS_GEMWEB = {
+    "Consumo por periodo": "la agrupación **diaria** no funciona: Gemweb devuelve la respuesta "
+                           "rota (sin año ni mes). La mensual funciona.",
+    "Coste y consumo mensual": "con origen **telelecturas** Gemweb devuelve la respuesta rota "
+                               "(consumo) o un error (coste). El consumo se saca de las "
+                               "telelecturas mensuales; el coste, solo desde facturas.",
+}
+
+
 def obtener_cliente():
     """Cliente comun de la API; si no hay credenciales se avisa y se detiene la pagina."""
     cred, _origen = gemweb.cargar_credenciales()
@@ -190,8 +202,9 @@ def pagina_inventario():
             "entitats": ["", "entitats.id", "entitats.pais"],
             "centres_consum": ["", "centres_consum.id"],
             "instalacions_solars": ["", "instalacions_solars.id", "instalacions_solars.polissa"],
-            "factures": ["", "subministraments.cups", "factures.num_factura",
-                         "factures.data_emissio", "factures.periode_ini", "factures.periode_fin"],
+            "factures": ["", "subministraments.cups", "factures.id", "factures.num_factura",
+                         "factures.data_emissio", "factures.periode_ini", "factures.periode_fin",
+                         "factures.fecha_mod"],
         }
         filtro_libre = st.selectbox(
             "Filtrar por (opcional)",
@@ -199,12 +212,34 @@ def pagina_inventario():
             help="Elige el campo por el que quieres filtrar. Deja en blanco para listar todo.",
         )
 
+    operador = None
     if filtro_libre:
-        valor_filtro = st.text_input("Valor del filtro", placeholder="Ej: ES0000000000000001XX0F")
+        f1, f2 = st.columns([1, 2])
+        with f1:
+            # search_operator del manual: por defecto "="
+            operador = st.selectbox("Comparación", ["=", ">", ">=", "<", "<=", "!="],
+                                    help="Por ejemplo, «>» con factures.data_emissio = "
+                                         "2026-09-01 lista las facturas emitidas después.")
+        with f2:
+            valor_filtro = st.text_input(
+                "Valor del filtro",
+                placeholder="Fechas como AAAA-MM-DD" if "data" in filtro_libre or "periode" in
+                filtro_libre or "fecha" in filtro_libre else "Ej: ES0000000000000001XX0F")
     else:
         valor_filtro = None
 
-    limit = st.number_input("Límite de registros (0 = sin límite)", min_value=0, value=100)
+    o1, o2, o3 = st.columns([2, 1, 1])
+    with o1:
+        orden = st.selectbox("Ordenar por (opcional)",
+                             [c for c in FILTROS_SUGERIDOS[category] if c != "subministraments.cups"
+                              or category == "subministraments"],
+                             help="Por ejemplo, factures.periode_ini descendente para ver primero "
+                                  "las facturas más recientes.")
+    with o2:
+        sentido = st.radio("Sentido", ["ASC", "DESC"], horizontal=True, disabled=not orden,
+                           format_func=lambda x: "Ascendente" if x == "ASC" else "Descendente")
+    with o3:
+        limit = st.number_input("Límite de registros (0 = sin límite)", min_value=0, value=100)
 
     if st.button("Ejecutar consulta", type="primary"):
         ejecutar(
@@ -213,6 +248,8 @@ def pagina_inventario():
                 category=category,
                 search_by=filtro_libre or None,
                 search_values=valor_filtro or None,
+                search_operator=operador if operador and operador != "=" else None,
+                order_by=f"{orden} {sentido}" if orden else None,
                 limit=limit if limit > 0 else None,
             ),
             inventory_a_dataframe,
@@ -228,10 +265,6 @@ def pagina_consumo_periodo():
     id_sum = st.number_input("ID suministro", min_value=1, step=1)
     period = st.radio("Agrupación", ["mensual", "diari"], horizontal=True,
                       format_func=lambda x: "Diaria" if x == "diari" else "Mensual")
-    if period == "diari":
-        st.warning("Gemweb devuelve mal la agrupación **diaria** por periodos (fallo de su "
-                   "servidor: la respuesta llega rota y sin fechas). La **mensual** funciona. "
-                   "Para el consumo diario total, usa «Telelecturas» con agrupación diaria.")
     f_ini, f_fin = selector_fechas(default_dias_atras=30)
 
     if st.button("Ejecutar consulta", type="primary"):
@@ -307,10 +340,12 @@ def pagina_coste_consumo():
                         format_func=lambda x: "Consumo (kWh)" if x == "consum" else "Coste (€)")
 
     source = st.radio("Origen de datos", ["factures", "telelectures"], horizontal=True)
-    if source == "telelectures":
-        st.caption("Gemweb devuelve mal este análisis desde telelecturas (fallo de su "
-                   "servidor). El consumo se saca entonces de las telelecturas mensuales; "
-                   "el coste solo está disponible desde facturas.")
+    por_fecha_factura = False
+    if source == "factures":
+        por_fecha_factura = st.checkbox(
+            "Asignar cada factura al mes de su fecha de facturación",
+            help="Si no se marca, cada factura se reparte según su periodo facturado "
+                 "(parámetro billing_date de Gemweb).")
     f_ini, f_fin = selector_fechas(default_dias_atras=365)
 
     if st.button("Ejecutar consulta", type="primary"):
@@ -319,6 +354,7 @@ def pagina_coste_consumo():
                 try:
                     xml = cliente.get_cost_consumption(
                         id=id_sum, type=tipo, date_from=f_ini, date_to=f_fin, source=source,
+                        billing_date=1 if por_fecha_factura else 0,
                     )
                     df = cost_consumption_a_dataframe(xml)
                 except GemwebError:
@@ -450,15 +486,18 @@ def pagina_incoherencias():
         "consums_facturats_reactiva", "imports", "preus",
     ]
     tipos = st.multiselect("Tipos de incoherencia (vacío = todas)", tipos_dispo)
-    porcentaje = None
+    porcentajes = []
     if tipos:
-        # Gemweb exige un porcentaje por cada tipo elegido (si no: "El número de
-        # incoherencias y porcentajes indicados no coinciden")
-        porcentaje = st.number_input(
-            "Porcentaje de desviación a partir del cual se marca (%)", min_value=0.0,
-            value=5.0, step=1.0, format="%g",
-            help="Gemweb pide un porcentaje por cada tipo de incoherencia; se usa el mismo "
-                 "para todos los tipos elegidos.")
+        # El manual exige un porcentaje (margen de error) por cada tipo elegido, vacío para
+        # los que no lo usan; si no: "El número de incoherencias y porcentajes ... no coinciden"
+        st.caption("Margen de error de cada tipo (%). Déjalo vacío en los tipos que no usan "
+                   "porcentaje, por ejemplo la comparación de lecturas.")
+        columnas = st.columns(min(len(tipos), 4))
+        for n, tipo in enumerate(tipos):
+            with columnas[n % len(columnas)]:
+                porcentajes.append(st.number_input(
+                    tipo, min_value=0.0, value=None, step=1.0, format="%g",
+                    placeholder="vacío", key=f"pct_{tipo}"))
 
     if st.button("Ejecutar consulta", type="primary"):
         # El parser para incoherencias es más enrevesado; lo hacemos inline
@@ -468,7 +507,8 @@ def pagina_incoherencias():
                     category=category,
                     id=id_elemento,
                     inconsistencies=",".join(tipos) if tipos else None,
-                    percentages=",".join(["%g" % porcentaje] * len(tipos)) if tipos else None,
+                    percentages=",".join("" if p is None else "%g" % p for p in porcentajes)
+                    if tipos else None,
                 )
                 filas = []
                 for fac in xml.findall(".//factura"):
@@ -505,7 +545,18 @@ def pagina_factura_calculada():
     st.caption("Necesita telelecturas de todo el periodo y que el suministro tenga en Gemweb "
                "un lote con tarifa (precios de energía y potencia) para esas fechas. Los "
                "últimos días suelen no estar cargados todavía: por defecto, el mes anterior.")
-    f_ini, f_fin = selector_fechas(*((0,) + mes_anterior()))
+    desde_ultima = st.checkbox(
+        "Empezar donde acaba la última factura del suministro",
+        help="Sin fecha de inicio, Gemweb empieza en la fecha final de la última factura "
+             "introducida (o el día 1 del mes actual si no hay ninguna). Útil para anticipar "
+             "la próxima factura.")
+    if desde_ultima:
+        # solo cuenta la fecha final: tiene que ser posterior al final de la ultima factura
+        f_fin = st.date_input("Fecha fin", value=date.today() - timedelta(days=3),
+                              format="DD/MM/YYYY", key="fin_desde_ultima").isoformat()
+        f_ini = None
+    else:
+        f_ini, f_fin = selector_fechas(*((0,) + mes_anterior()))
 
     if st.button("Ejecutar consulta", type="primary"):
         with st.spinner("Generando factura..."):
@@ -517,7 +568,7 @@ def pagina_factura_calculada():
                 datos = {hijo.tag: hijo.text for hijo in xml if hijo.text}
                 df = pd.DataFrame([datos]).T.reset_index()
                 df.columns = ["campo", "valor"]
-                mostrar_resultado(df, f"factura_calculada_{id_sum}_{f_ini}_{f_fin}")
+                mostrar_resultado(df, f"factura_calculada_{id_sum}_{f_ini or 'ultima'}_{f_fin}")
 
                 import xml.etree.ElementTree as ET_  # noqa
                 with st.expander("Ver XML completo"):
@@ -527,6 +578,106 @@ def pagina_factura_calculada():
             except Exception as e:
                 st.error(f"Error inesperado: {e}")
                 st.exception(e)
+
+
+# ===== SIMULACIÓN DE CONTRATO =====
+PERIODOS_TARIFA = ["p1", "p2", "p3", "p4", "p5", "p6"]
+
+
+def campos_simulacion(precios_ene: dict, precios_pot: dict) -> tuple:
+    """(contract_fields, contract_values) con los precios informados; los de potencia
+    vacios no se envian (Gemweb usa entonces el peaje)."""
+    campos, valores = [], []
+    for prefijo, precios in (("preu_ene", precios_ene), ("preu_pot", precios_pot)):
+        for p in PERIODOS_TARIFA:
+            if precios.get(p) is not None:
+                campos.append(f"{prefijo}_{p}")
+                valores.append("%g" % precios[p])         # decimales con punto
+    return ",".join(campos), ",".join(valores)
+
+
+def simulacion_a_dataframe(root) -> tuple:
+    """get_contract_simulation -> (tabla periodo × energía/potencia/reactiva, datos generales:
+    fechas de los consumos usados e importes totales)."""
+    sim = root.find(".//simulation")
+    if sim is None:
+        return pd.DataFrame(), {}
+    datos = {h.tag: h.text for h in sim}
+    filas = []
+    for p in PERIODOS_TARIFA:
+        fila = {"Periodo": p.upper()}
+        for clave, nombre in (("import_ene", "Energía €"), ("import_pot", "Potencia €"),
+                              ("import_react", "Reactiva €")):
+            v = datos.get(f"{clave}_{p}")
+            fila[nombre] = float(v) if v not in (None, "") else None
+        if any(fila[c] is not None for c in ("Energía €", "Potencia €", "Reactiva €")):
+            filas.append(fila)
+    numero = lambda k: float(datos[k]) if datos.get(k) not in (None, "") else None
+    generales = {"desde": datos.get("data_ini_sim"), "hasta": datos.get("data_fin_sim"),
+                 "energia": numero("import_ene"), "total": numero("import_tot")}
+    return pd.DataFrame(filas), generales
+
+
+def pagina_simulacion_contrato():
+    cliente = obtener_cliente()
+    st.markdown("Simula la facturación de un suministro con los precios de energía y potencia "
+                "que indiques (por ejemplo, para comparar una oferta).")
+    st.caption("Gemweb simula a partir de las **facturas** del periodo: si en las fechas "
+               "elegidas no hay ninguna factura completa, devuelve 0 €. Si el periodo es "
+               "futuro, usa los consumos del mismo periodo del año anterior.")
+
+    id_sum = st.number_input("ID suministro", min_value=1, step=1)
+    st.subheader("Vigencia del contrato simulado")
+    hoy = date.today()
+    c1, c2 = st.columns(2)
+    with c1:
+        c_ini = st.date_input("Inicio del contrato", value=date(hoy.year, 1, 1), format="DD/MM/YYYY")
+    with c2:
+        c_fin = st.date_input("Fin del contrato", value=date(hoy.year, 12, 31), format="DD/MM/YYYY")
+    st.subheader("Periodo a simular")
+    f_ini, f_fin = selector_fechas(inicio=date(hoy.year, 1, 1), fin=mes_anterior()[1])
+
+    st.subheader("Precios")
+    st.caption("Energía en €/kWh. Potencia opcional: si se deja vacía, Gemweb usa el peaje "
+               "que corresponda.")
+    precios_ene, precios_pot = {}, {}
+    columnas = st.columns(6)
+    for col, p in zip(columnas, PERIODOS_TARIFA):
+        with col:
+            precios_ene[p] = st.number_input(f"Energía {p.upper()}", min_value=0.0, value=None,
+                                             format="%.6f", placeholder="vacío", key=f"ene_{p}")
+            precios_pot[p] = st.number_input(f"Potencia {p.upper()}", min_value=0.0, value=None,
+                                             format="%.6f", placeholder="vacío", key=f"pot_{p}")
+    campos, valores = campos_simulacion(precios_ene, precios_pot)
+
+    if st.button("Simular", type="primary", disabled=not campos):
+        with st.spinner("Simulando en Gemweb..."):
+            try:
+                xml = cliente.get_contract_simulation(
+                    id=id_sum, contract_date_from=c_ini.isoformat(),
+                    contract_date_to=c_fin.isoformat(), contract_fields=campos,
+                    contract_values=valores, date_from=f_ini, date_to=f_fin)
+                df, gen = simulacion_a_dataframe(xml)
+                if gen.get("desde"):
+                    st.caption(f"Consumos usados por Gemweb: del {gen['desde']} al "
+                               f"{gen['hasta']}.")
+                if df.empty and not gen.get("total"):
+                    st.warning("Gemweb devuelve 0 € sin desglose: no hay ninguna factura completa "
+                               "en el periodo elegido. Amplía las fechas a meses con factura.")
+                else:
+                    m1, m2 = st.columns(2)
+                    m1.metric("Total energía", f"{_num(gen['energia'])} €"
+                              if gen.get("energia") is not None else "—")
+                    m2.metric("Total simulado", f"{_num(gen['total'])} €"
+                              if gen.get("total") is not None else "—")
+                    mostrar_resultado(df, f"simulacion_{id_sum}_{f_ini}_{f_fin}")
+            except GemwebError as e:
+                error_api(e)
+            except Exception as e:
+                st.error(f"Error inesperado: {e}")
+                st.exception(e)
+    elif not campos:
+        st.caption("Indica al menos un precio para simular.")
 
 
 # ===== DESCARGA MASIVA POR CUPS =====
