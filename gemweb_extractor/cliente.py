@@ -137,8 +137,9 @@ class GemwebClient:
             # Guardar respuesta cruda para inspección
             self.ultima_respuesta_cruda = r.text
             raise GemwebError(
-                f"La API devolvió un XML mal formado ({e}). "
-                f"Esto suele ser un problema temporal del servidor de Gemweb. "
+                f"{request_name}: Gemweb ha devuelto una respuesta mal formada ({e}). "
+                f"Es un fallo del servidor de Gemweb (le pasa siempre, por ejemplo, al "
+                f"consumo diario por periodos), no de esta aplicación. "
                 f"Respuesta recibida (primeros 1000 caracteres):\n\n{r.text[:1000]}"
             ) from e
 

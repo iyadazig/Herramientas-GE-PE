@@ -18,7 +18,6 @@ from gemweb_extractor.cliente import (
     GemwebError,
     inventory_a_dataframe,
     consumo_periodos_a_dataframe,
-    metering_a_dataframe,
     cost_consumption_a_dataframe,
     power_optimization_a_dataframe,
 )
@@ -100,33 +99,67 @@ def mostrar_resultado(df: pd.DataFrame, nombre_descarga: str) -> None:
 
 
 # Helper común para fechas
-def selector_fechas(default_dias_atras: int = 90):
+def selector_fechas(default_dias_atras: int = 90, inicio: date = None, fin: date = None):
     hoy = date.today()
     c1, c2 = st.columns(2)
     with c1:
         f_ini = st.date_input(
             "Fecha inicio",
-            value=hoy - timedelta(days=default_dias_atras),
+            value=inicio or hoy - timedelta(days=default_dias_atras),
             format="DD/MM/YYYY",
         )
     with c2:
         f_fin = st.date_input(
             "Fecha fin",
-            value=hoy,
+            value=fin or hoy,
             format="DD/MM/YYYY",
         )
     return f_ini.isoformat(), f_fin.isoformat()
 
 
-def ejecutar(nombre_operacion: str, fn, parser, archivo: str):
+def mes_anterior(hoy: date = None):
+    """(primer dia, ultimo dia) del mes anterior completo."""
+    hoy = hoy or date.today()
+    fin = hoy.replace(day=1) - timedelta(days=1)
+    return fin.replace(day=1), fin
+
+
+# Agrupaciones de las telelecturas. Gemweb no calcula el CO2 por debajo de la hora.
+PERIODOS_METERING = ["diari", "horari", "quart-horari", "cinc-min", "un-min",
+                     "mensual", "anual", "total"]
+PERIODOS_SIN_CO2 = ("quart-horari", "cinc-min", "un-min")
+
+
+def periodos_para(field: str) -> list:
+    return [p for p in PERIODOS_METERING if not (field == "co2" and p in PERIODOS_SIN_CO2)]
+
+
+def error_api(e: Exception, alternativa: str = None) -> None:
+    """Error de Gemweb con la explicacion corta delante y el detalle plegado."""
+    texto = str(e)
+    if "mal formada" in texto:
+        st.error("Gemweb ha devuelto una respuesta rota para esta consulta. Es un fallo de su "
+                 "servidor, no de esta aplicación." + (" " + alternativa if alternativa else ""))
+        with st.expander("Detalle técnico"):
+            st.code(texto, language=None)
+    else:
+        st.error(f"Error de la API: {texto}" + (" " + alternativa if alternativa else ""))
+
+
+def errores_tramos(fallidos: list) -> list:
+    """Mensajes distintos de los tramos fallidos ('ini → fin: peticion: mensaje')."""
+    return list(dict.fromkeys(f.split(": ", 2)[-1] for f in fallidos))
+
+
+def ejecutar(nombre_operacion: str, fn, parser, archivo: str, alternativa: str = None):
     """Ejecuta la llamada API, parsea y muestra resultados con manejo de errores."""
-    with st.spinner(f"Consultando Gemweb..."):
+    with st.spinner("Consultando Gemweb..."):
         try:
             xml = fn()
             df = parser(xml)
             mostrar_resultado(df, archivo)
         except GemwebError as e:
-            st.error(f"Error de la API: {e}")
+            error_api(e, alternativa)
         except Exception as e:
             st.error(f"Error inesperado: {e}")
             st.exception(e)
@@ -193,8 +226,12 @@ def pagina_consumo_periodo():
     st.markdown("Consumo desagregado por periodos tarifarios (P1, P2, P3…).")
 
     id_sum = st.number_input("ID suministro", min_value=1, step=1)
-    period = st.radio("Agrupación", ["diari", "mensual"], horizontal=True,
+    period = st.radio("Agrupación", ["mensual", "diari"], horizontal=True,
                       format_func=lambda x: "Diaria" if x == "diari" else "Mensual")
+    if period == "diari":
+        st.warning("Gemweb devuelve mal la agrupación **diaria** por periodos (fallo de su "
+                   "servidor: la respuesta llega rota y sin fechas). La **mensual** funciona. "
+                   "Para el consumo diario total, usa «Telelecturas» con agrupación diaria.")
     f_ini, f_fin = selector_fechas(default_dias_atras=30)
 
     if st.button("Ejecutar consulta", type="primary"):
@@ -205,6 +242,7 @@ def pagina_consumo_periodo():
             ),
             consumo_periodos_a_dataframe,
             f"consumo_{id_sum}_{f_ini}_{f_fin}",
+            alternativa="Prueba con la agrupación mensual o con «Telelecturas» diarias.",
         )
 
 
@@ -223,14 +261,14 @@ def pagina_telelecturas():
         )
     with c3:
         period = st.selectbox(
-            "Agrupación temporal",
-            ["diari", "horari", "quart-horari", "cinc-min", "un-min",
-             "mensual", "anual", "total"],
+            "Agrupación temporal", periodos_para(field),
+            help="Gemweb no calcula el CO2 cuartohorario, de 5 minutos ni de 1 minuto.",
         )
 
     data_source = st.radio(
         "Origen", ["comptador", "instantanis"], horizontal=True,
-        help="comptador: lecturas oficiales (15min). instantanis: medidas minuto a minuto.",
+        help="comptador: lecturas oficiales (15min). instantanis: medidas minuto a minuto "
+             "(solo si el equipo de telemedida las registra).",
     )
     f_ini, f_fin = selector_fechas(default_dias_atras=15)
 
@@ -245,6 +283,9 @@ def pagina_telelecturas():
                         f"Tramo {n}/{t}: {ini} → {fin}"),
                 )
                 aviso.empty()
+                if df.empty and fallidos:
+                    st.error("Gemweb no ha devuelto datos: " + " · ".join(errores_tramos(fallidos)))
+                    return
                 for f in fallidos:
                     st.warning(f"Tramo sin descargar: {f}")
                 mostrar_resultado(df, f"telelectura_{id_sum}_{field}_{f_ini}_{f_fin}")
@@ -266,15 +307,26 @@ def pagina_coste_consumo():
                         format_func=lambda x: "Consumo (kWh)" if x == "consum" else "Coste (€)")
 
     source = st.radio("Origen de datos", ["factures", "telelectures"], horizontal=True)
+    if source == "telelectures":
+        st.caption("Gemweb devuelve mal este análisis desde telelecturas (fallo de su "
+                   "servidor). El consumo se saca entonces de las telelecturas mensuales; "
+                   "el coste solo está disponible desde facturas.")
     f_ini, f_fin = selector_fechas(default_dias_atras=365)
 
     if st.button("Ejecutar consulta", type="primary"):
         with st.spinner("Consultando Gemweb..."):
             try:
-                xml = cliente.get_cost_consumption(
-                    id=id_sum, type=tipo, date_from=f_ini, date_to=f_fin, source=source,
-                )
-                df = cost_consumption_a_dataframe(xml)
+                try:
+                    xml = cliente.get_cost_consumption(
+                        id=id_sum, type=tipo, date_from=f_ini, date_to=f_fin, source=source,
+                    )
+                    df = cost_consumption_a_dataframe(xml)
+                except GemwebError:
+                    if not (tipo == "consum" and source == "telelectures"):
+                        raise
+                    df = consumo_mensual_telelecturas(cliente, id_sum, f_ini, f_fin)
+                    st.info("Gemweb ha devuelto mal el análisis desde telelecturas: se muestra "
+                            "el consumo mensual de las telelecturas (mismo dato, otra consulta).")
 
                 if df.empty:
                     st.warning("La consulta no ha devuelto registros.")
@@ -291,6 +343,8 @@ def pagina_coste_consumo():
                     media = df["valor"].mean()
                     maximo = df["valor"].max()
                     completitud = df["completitud_%"].iloc[0] if "completitud_%" in df.columns else "—"
+                    if completitud is None or pd.isna(completitud):
+                        completitud = "—"
 
                     c1, c2, c3, c4 = st.columns(4)
                     with c1:
@@ -333,16 +387,35 @@ def pagina_coste_consumo():
                             mime="text/csv",
                         )
             except GemwebError as e:
-                st.error(f"Error de la API: {e}")
+                error_api(e, "Prueba con el origen «factures»." if source == "telelectures"
+                          else None)
             except Exception as e:
                 st.error(f"Error inesperado: {e}")
                 st.exception(e)
+
+
+def consumo_mensual_telelecturas(cliente, id_sum, f_ini, f_fin) -> pd.DataFrame:
+    """Consumo mensual desde get_metering (mismas columnas que cost_consumption_a_dataframe)."""
+    df, fallidos = cliente.get_metering_por_tramos(
+        id=int(id_sum), date_from=f_ini, date_to=f_fin, period="mensual", field="consum")
+    if df.empty:
+        if fallidos:
+            raise GemwebError(" · ".join(errores_tramos(fallidos)))
+        return df
+    fecha = df["fecha"].astype(str).str[:7]
+    return pd.DataFrame({
+        "id_suministro": df["id_suministro"], "anio": fecha.str[:4].astype(int),
+        "mes": fecha.str[5:7].astype(int), "fecha": fecha, "valor": df["valor"],
+        "unidades": df["unidades"], "completitud_%": None})
 
 
 # ===== OPTIMIZACIÓN DE POTENCIA =====
 def pagina_optimizacion():
     cliente = obtener_cliente()
     st.markdown("Cálculo de las potencias óptimas que habrían minimizado el coste.")
+    st.caption("Gemweb la calcula con las lecturas horarias o cuartohorarias de la "
+               "distribuidora cargadas en el suministro. Si responde que no dispone de ellas, "
+               "falta cargarlas en Gemweb (las telelecturas del contador no le sirven).")
 
     id_sum = st.number_input("ID suministro", min_value=1, step=1)
     f_ini, f_fin = selector_fechas(default_dias_atras=365)
@@ -377,6 +450,15 @@ def pagina_incoherencias():
         "consums_facturats_reactiva", "imports", "preus",
     ]
     tipos = st.multiselect("Tipos de incoherencia (vacío = todas)", tipos_dispo)
+    porcentaje = None
+    if tipos:
+        # Gemweb exige un porcentaje por cada tipo elegido (si no: "El número de
+        # incoherencias y porcentajes indicados no coinciden")
+        porcentaje = st.number_input(
+            "Porcentaje de desviación a partir del cual se marca (%)", min_value=0.0,
+            value=5.0, step=1.0, format="%g",
+            help="Gemweb pide un porcentaje por cada tipo de incoherencia; se usa el mismo "
+                 "para todos los tipos elegidos.")
 
     if st.button("Ejecutar consulta", type="primary"):
         # El parser para incoherencias es más enrevesado; lo hacemos inline
@@ -386,6 +468,7 @@ def pagina_incoherencias():
                     category=category,
                     id=id_elemento,
                     inconsistencies=",".join(tipos) if tipos else None,
+                    percentages=",".join(["%g" % porcentaje] * len(tipos)) if tipos else None,
                 )
                 filas = []
                 for fac in xml.findall(".//factura"):
@@ -404,7 +487,10 @@ def pagina_incoherencias():
                 else:
                     mostrar_resultado(df, f"incoherencias_{category}_{id_elemento}")
             except GemwebError as e:
-                st.error(f"Error de la API: {e}")
+                error_api(e)
+            except Exception as e:
+                st.error(f"Error inesperado: {e}")
+                st.exception(e)
 
 
 # ===== FACTURA CALCULADA =====
@@ -416,7 +502,10 @@ def pagina_factura_calculada():
     )
 
     id_sum = st.number_input("ID suministro", min_value=1, step=1)
-    f_ini, f_fin = selector_fechas(default_dias_atras=30)
+    st.caption("Necesita telelecturas de todo el periodo y que el suministro tenga en Gemweb "
+               "un lote con tarifa (precios de energía y potencia) para esas fechas. Los "
+               "últimos días suelen no estar cargados todavía: por defecto, el mes anterior.")
+    f_ini, f_fin = selector_fechas(*((0,) + mes_anterior()))
 
     if st.button("Ejecutar consulta", type="primary"):
         with st.spinner("Generando factura..."):
@@ -434,7 +523,10 @@ def pagina_factura_calculada():
                 with st.expander("Ver XML completo"):
                     st.code(ET_.tostring(xml, encoding="unicode"), language="xml")
             except GemwebError as e:
-                st.error(f"Error de la API: {e}")
+                error_api(e)
+            except Exception as e:
+                st.error(f"Error inesperado: {e}")
+                st.exception(e)
 
 
 # ===== DESCARGA MASIVA POR CUPS =====
@@ -524,16 +616,18 @@ def pagina_descarga_masiva():
             help="consum = energía activa en kWh",
         )
     with c2:
+        opciones = periodos_para(field)
         period = st.selectbox(
-            "Agrupación temporal",
-            ["diari", "horari", "quart-horari", "cinc-min", "un-min",
-             "mensual", "anual", "total"],
-            index=2,  # quart-horari por defecto
+            "Agrupación temporal", opciones,
+            # quart-horari por defecto (horari para el CO2, que no es cuartohorario)
+            index=opciones.index("quart-horari" if "quart-horari" in opciones else "horari"),
+            help="Gemweb no calcula el CO2 cuartohorario, de 5 minutos ni de 1 minuto.",
         )
 
     data_source = st.radio(
         "Origen", ["comptador", "instantanis"], horizontal=True,
-        help="comptador = lecturas oficiales (15 min). instantanis = medidas minuto a minuto.",
+        help="comptador = lecturas oficiales (15 min). instantanis = medidas minuto a minuto "
+             "(solo si el equipo de telemedida las registra).",
     )
 
     # --- 3. Rango de fechas (libre) ---
@@ -608,8 +702,8 @@ def pagina_descarga_masiva():
                     al_avanzar=al_avanzar,
                 )
                 if df_met.empty:
-                    estado = (f"Error API: {fallidos[0][:300]}" if fallidos
-                              else "Sin datos en el periodo")
+                    estado = (f"Error API: {' · '.join(errores_tramos(fallidos))[:300]}"
+                              if fallidos else "Sin datos en el periodo")
                     resultados.append({
                         "cups": cups, "id": id_sum, "registros": 0, "estado": estado,
                     })
