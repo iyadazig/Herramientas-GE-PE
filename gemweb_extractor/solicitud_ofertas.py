@@ -237,6 +237,15 @@ def _hoja_resumen(wb, suministros, nombres_hojas):
             _bloque(ws, ws.cell(fila, con0 + n).coordinate, f"='{hoja}'!{col}37",
                     formato="#,##0")
         _bloque(ws, ws.cell(fila, total).coordinate, f"='{hoja}'!I37", True, formato="#,##0")
+    # fila TOTAL: suma de los consumos de todos los suministros (las potencias no se suman)
+    primera, ultima = 4, 3 + len(suministros)
+    fila = ultima + 1
+    ws.row_dimensions[fila].height = 20
+    _bloque(ws, f"A{fila}:{letra(con0 - 1)}{fila}", "TOTAL", True)
+    for col in range(con0, total + 1):
+        c = letra(col)
+        _bloque(ws, f"{c}{fila}", f"=SUM({c}{primera}:{c}{ultima})" if suministros else 0, True,
+                formato="#,##0")
     ws.freeze_panes = "D4"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1

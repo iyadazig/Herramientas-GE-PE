@@ -77,6 +77,10 @@ class Excel(unittest.TestCase):
         self.assertEqual([r.cell(4, n).value for n in range(9, 15)], [100] * 5 + [200])
         self.assertEqual(r["O4"].value, "='1. TC1'!C37")
         self.assertEqual(r["U4"].value, "='1. TC1'!I37")
+        # fila TOTAL bajo el ultimo suministro
+        self.assertEqual((r["A5"].value, r["O5"].value, r["U5"].value),
+                         ("TOTAL", "=SUM(O4:O4)", "=SUM(U4:U4)"))
+        self.assertIn("A5:N5", [str(m) for m in r.merged_cells.ranges])
 
 
 if __name__ == "__main__":
