@@ -38,9 +38,10 @@ CENTRO = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
 # ------------------------------------------------------------------- datos
 def alias_de(nombre_suministro: str) -> str:
-    """'Empresa de prueba SA_TC4' -> 'TC4' (lo que va tras el ultimo '_')."""
+    """Todo lo que va tras el PRIMER '_': 'Empresa de prueba SA_TC4' -> 'TC4',
+    'Empresa_Nave_2' -> 'Nave_2'."""
     nombre = (nombre_suministro or "").strip()
-    return nombre.rsplit("_", 1)[1].strip() if "_" in nombre else ""
+    return nombre.split("_", 1)[1].strip() if "_" in nombre else ""
 
 
 def cif_limpio(cif: str) -> str:

@@ -22,6 +22,7 @@ def factura(anio, mes, dia, p1=0.0, p6=0.0):
 class Datos(unittest.TestCase):
     def test_alias_cif_y_discriminacion(self):
         self.assertEqual(so.alias_de("Empresa de prueba SA_TC4"), "TC4")
+        self.assertEqual(so.alias_de("Empresa de prueba_Nave_2 Norte"), "Nave_2 Norte")
         self.assertEqual(so.alias_de("Sin alias"), "")
         self.assertEqual(so.cif_limpio("a-00.000.000"), "A00000000")
         self.assertEqual((so.discriminacion("2.0TD"), so.discriminacion("6.1TD")), ("DH3", "DH6"))
