@@ -261,6 +261,9 @@ def pagina_inventario():
 def pagina_consumo_periodo():
     cliente = obtener_cliente()
     st.markdown("Consumo desagregado por periodos tarifarios (P1, P2, P3…).")
+    st.caption("Gemweb saca estos consumos de las **facturas** introducidas, no de las "
+               "telelecturas del contador (coinciden al kWh con lo facturado). Para la medida "
+               "del contador, usa «Telelecturas».")
 
     id_sum = st.number_input("ID suministro", min_value=1, step=1)
     period = st.radio("Agrupación", ["mensual", "diari"], horizontal=True,
@@ -743,8 +746,8 @@ def variantes_cups(cups: str) -> list:
 
 
 def meses_naturales(facturas: list, modo: str, ini: date = None, fin: date = None) -> tuple:
-    """Rango de meses naturales para el consumo por periodo de Gemweb: los 12 meses hasta el
-    de la ultima factura, o el periodo elegido."""
+    """Rango de meses naturales de las telelecturas: los 12 meses hasta el de la ultima
+    factura, o el periodo elegido."""
     if modo != "ultimos12":
         return ini, fin
     if not facturas:
@@ -757,24 +760,52 @@ def meses_naturales(facturas: list, modo: str, ini: date = None, fin: date = Non
     return date(anio, mes, 1), fin_mes
 
 
-def mes_natural_por_periodo(cups: str, root) -> list:
-    """get_consumption_by_period mensual -> filas CUPS | Mes | P1..P6 | Total."""
-    df = consumo_periodos_a_dataframe(root)
+def telelecturas_por_mes(cups: str, df_metering: pd.DataFrame) -> list:
+    """get_metering (consum, mensual, comptador) -> filas CUPS | Mes | Total kWh.
+
+    Ojo: get_consumption_by_period mensual NO sirve para comparar: Gemweb devuelve en el los
+    consumos de las facturas (comprobado oct-2026, coinciden al kWh), no las telelecturas.
+    Las telelecturas solo dan el total del mes, sin reparto P1-P6."""
+    if df_metering is None or df_metering.empty:
+        return []
+    return [{"CUPS": cups, "Mes": str(r["fecha"])[:7], "Total kWh": float(r["valor"])}
+            for r in df_metering.to_dict("records")]
+
+
+def _pct(dif, base):
+    return round(dif / base * 100, 2) if base else None
+
+
+def diferencias_por_mes(filas_fact: list, filas_mes: list) -> list:
+    """Facturado (cada factura en el mes de su fecha de fin) frente a las telelecturas del
+    mes natural, por CUPS y mes. Diferencia = facturado - telelecturas."""
+    meses = {}
+    for f in filas_fact:
+        clave = (f["CUPS"], f["Fin factura"].strftime("%Y-%m"))
+        d = meses.setdefault(clave, {"facturas": 0, "fact": 0.0, "nat": None})
+        d["facturas"] += 1
+        d["fact"] += f["Total kWh"]
+    for m in filas_mes:
+        meses.setdefault((m["CUPS"], m["Mes"]), {"facturas": 0, "fact": 0.0, "nat": None})[
+            "nat"] = m["Total kWh"]
     filas = []
-    for r in df.to_dict("records"):
-        fila = {"CUPS": cups, "Mes": r["fecha"]}
-        for n, col in enumerate(COLS_P, start=1):
-            fila[col] = float(r.get(f"consumption_p{n}") or 0)
-        fila["Total kWh"] = sum(fila[c] for c in COLS_P)
-        filas.append(fila)
+    for (cups, mes), d in sorted(meses.items()):
+        fact = d["fact"] if d["facturas"] else None
+        dif = fact - d["nat"] if fact is not None and d["nat"] is not None else None
+        filas.append({"CUPS": cups, "Mes": mes, "Facturas": d["facturas"],
+                      "Facturado kWh": fact, "Telelecturas kWh": d["nat"],
+                      "Diferencia kWh": dif,
+                      "Diferencia %": _pct(dif, d["nat"]) if dif is not None else None})
     return filas
 
 
-def excel_consumo_periodos(df_fact, df_mes, df_resumen) -> bytes:
+def excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif=None) -> bytes:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df_fact.to_excel(writer, sheet_name="Facturas por periodo", index=False)
-        df_mes.to_excel(writer, sheet_name="Mes natural por periodo", index=False)
+        df_mes.to_excel(writer, sheet_name="Telelecturas por mes", index=False)
+        if df_dif is not None:
+            df_dif.to_excel(writer, sheet_name="Diferencias", index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen", index=False)
         for hoja in writer.sheets.values():
             for col in hoja.columns:
@@ -793,8 +824,9 @@ def descarga_consumo_periodos(cliente, cups_list):
                                else "Un periodo concreto"))
     ini = fin = None
     if modo == "ultimos12":
-        st.caption("De cada CUPS, sus facturas de los 12 meses anteriores al final de su última "
-                   "factura (normalmente 12; alguna más si un mes se facturó en dos).")
+        st.caption("Para cada CUPS se toman las facturas de los últimos 12 meses, contados hacia "
+                   "atrás desde el final de su factura más reciente. Si algún mes se facturó en "
+                   "dos facturas, se incluyen las dos.")
     else:
         st.caption("Facturas cuya fecha de fin cae dentro del periodo (la del 31/07 al 31/08 "
                    "cuenta como agosto).")
@@ -802,9 +834,11 @@ def descarga_consumo_periodos(cliente, cups_list):
         ini_s, fin_s = selector_fechas(inicio=date(hoy.year - 1, hoy.month, 1),
                                        fin=mes_anterior()[1])
         ini, fin = date.fromisoformat(ini_s), date.fromisoformat(fin_s)
-    st.caption("Se descargan dos hojas: lo **facturado** (una fila por factura, con su periodo) "
-               "y el **mes natural** que calcula Gemweb con las telelecturas. No se cuentan las "
-               "facturas anuladas, simuladas, abonos ni las abonadas.")
+    st.caption("El Excel trae lo **facturado** (una fila por factura, con P1–P6 y su periodo), "
+               "las **telelecturas** del contador por mes natural (solo el total: Gemweb no las "
+               "reparte por periodos) y sus **diferencias** mes a mes (cada factura cuenta en el "
+               "mes de su fecha de fin). No se cuentan las facturas anuladas, simuladas, abonos "
+               "ni las abonadas.")
 
     st.subheader("3. Ejecutar")
     if not st.button("Descargar consumos", type="primary", disabled=not cups_list):
@@ -849,11 +883,14 @@ def descarga_consumo_periodos(cliente, cups_list):
                     break
             m_ini, m_fin = meses_naturales(elegidas, modo, ini, fin)
             if id_sum and m_ini:
-                mensuales = mes_natural_por_periodo(cups, cliente.get_consumption_by_period(
-                    id=int(id_sum), period="mensual", date_from=m_ini.isoformat(),
-                    date_to=m_fin.isoformat()))
+                df_tel, fallidos = cliente.get_metering_por_tramos(
+                    id=int(id_sum), date_from=m_ini.isoformat(), date_to=m_fin.isoformat(),
+                    period="mensual", field="consum", data_source="comptador")
+                mensuales = telelecturas_por_mes(cups, df_tel)
+                if fallidos and not mensuales:
+                    raise GemwebError(" · ".join(errores_tramos(fallidos)))
         except GemwebError as e:
-            estado = (estado + " · " if estado != "OK" else "") + f"Mes natural: {str(e)[:200]}"
+            estado = (estado + " · " if estado != "OK" else "") + f"Telelecturas: {str(e)[:200]}"
         if estado == "OK" and id_sum is None and not hay_facturas:
             estado = "CUPS no encontrado en Gemweb"
         elif estado == "OK" and not hay_facturas:
@@ -862,21 +899,37 @@ def descarga_consumo_periodos(cliente, cups_list):
             estado = "Sin facturas en el periodo"
         filas_fact += elegidas
         filas_mes += mensuales
+        # la diferencia solo con los meses que tienen factura y telelectura a la vez
+        comunes = [d for d in diferencias_por_mes(elegidas, mensuales)
+                   if d["Diferencia kWh"] is not None]
+        c_fact = sum(d["Facturado kWh"] for d in comunes)
+        c_tel = sum(d["Telelecturas kWh"] for d in comunes)
         resumen.append({
             "CUPS": cups, "ID": id_sum, "Facturas": len(elegidas),
             "Desde": elegidas[0]["Inicio factura"] if elegidas else None,
             "Hasta": elegidas[-1]["Fin factura"] if elegidas else None,
             "Total facturado kWh": sum(f["Total kWh"] for f in elegidas),
-            "Meses naturales": len(mensuales),
-            "Total mes natural kWh": sum(f["Total kWh"] for f in mensuales),
+            "Meses con telelecturas": len(mensuales),
+            "Total telelecturas kWh": sum(f["Total kWh"] for f in mensuales),
+            "Meses comparados": len(comunes),
+            "Facturado en esos meses kWh": c_fact if comunes else None,
+            "Telelecturas en esos meses kWh": c_tel if comunes else None,
+            "Diferencia kWh": c_fact - c_tel if comunes else None,
+            "Diferencia %": _pct(c_fact - c_tel, c_tel) if comunes else None,
             "Facturas descartadas": descartadas, "Estado": estado})
     progreso.progress(1.0, text="Descarga completada")
 
     df_fact = pd.DataFrame(filas_fact, columns=["CUPS", "Inicio factura", "Fin factura", "Tarifa",
                                                 "Comercializadora"] + COLS_P + ["Total kWh"])
-    df_mes = pd.DataFrame(filas_mes, columns=["CUPS", "Mes"] + COLS_P + ["Total kWh"])
+    df_mes = pd.DataFrame(filas_mes, columns=["CUPS", "Mes", "Total kWh"])
     df_resumen = pd.DataFrame(resumen)
+    df_dif = pd.DataFrame(diferencias_por_mes(filas_fact, filas_mes),
+                          columns=["CUPS", "Mes", "Facturas", "Facturado kWh", "Telelecturas kWh",
+                                   "Diferencia kWh", "Diferencia %"])
     st.subheader("Resumen")
+    st.caption("Diferencia = facturado − telelecturas del contador, sumando solo los meses que "
+               "tienen las dos cosas («Meses comparados»). Positiva: "
+               "se ha facturado más consumo del que registran las telelecturas.")
     c1, c2, c3 = st.columns(3)
     c1.metric("CUPS con facturas", int((df_resumen["Facturas"] > 0).sum()))
     c2.metric("Facturas", len(df_fact))
@@ -885,14 +938,19 @@ def descarga_consumo_periodos(cliente, cups_list):
     if df_fact.empty and df_mes.empty:
         st.warning("No se ha descargado ningún dato. Revisa el resumen para ver los errores.")
         return
-    t1, t2 = st.tabs(["Facturas por periodo", "Mes natural por periodo"])
+    t1, t2, t3 = st.tabs(["Facturas por periodo", "Telelecturas por mes", "Diferencias"])
     with t1:
         st.dataframe(df_fact, use_container_width=True, hide_index=True, height=350)
     with t2:
         st.dataframe(df_mes, use_container_width=True, hide_index=True, height=350)
+    with t3:
+        st.caption("Cada factura cuenta en el mes de su fecha de fin. Si el periodo facturado no "
+                   "coincide con el mes natural, parte de la diferencia es solo de calendario.")
+        st.dataframe(df_dif, use_container_width=True, hide_index=True, height=350)
     nombre = "consumo_periodos_%s.xlsx" % ("ultimos12" if modo == "ultimos12"
                                             else f"{ini.isoformat()}_{fin.isoformat()}")
-    st.download_button("Descargar Excel", data=excel_consumo_periodos(df_fact, df_mes, df_resumen),
+    st.download_button("Descargar Excel",
+                       data=excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif),
                        file_name=nombre,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary")

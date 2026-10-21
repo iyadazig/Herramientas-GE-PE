@@ -91,8 +91,12 @@ h3, .stMarkdown h3 {
 .stButton > button:hover, .stDownloadButton > button:hover {
     background: %(rosa)s; color: %(granate_oscuro)s; border-color: %(granate_oscuro)s;
 }
-.stButton > button[kind="primary"] { background: %(granate)s; color: #fff; }
-.stButton > button[kind="primary"]:hover { background: %(granate_oscuro)s; color: #fff; }
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
+    background: %(granate)s; color: #fff;
+}
+.stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover {
+    background: %(granate_oscuro)s; color: #fff;
+}
 
 /* barra lateral */
 [data-testid="stSidebar"] { background: %(beis)s; border-right: 1px solid %(borde)s; }

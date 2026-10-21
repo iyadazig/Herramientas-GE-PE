@@ -190,21 +190,34 @@ class AyudasDePaginas(unittest.TestCase):
                          ["ES0000000000000000XX0F", "ES0000000000000000XX"])
         self.assertEqual(self.p.variantes_cups("ES0000000000000000XX"), ["ES0000000000000000XX"])
 
-    def test_mes_natural_y_excel(self):
+    def test_telelecturas_diferencias_y_excel(self):
+        import datetime as dt
         import io
         import openpyxl
-        filas = self.p.mes_natural_por_periodo("ES0000000000000000XX", xml(
-            "<r><subministrament><id>7</id><units>kWh</units><values><year value='2026'>"
-            "<month value='3'><consumption_p1>4</consumption_p1><consumption_p6>6"
-            "</consumption_p6></month></year></values></subministrament></r>"))
-        self.assertEqual((filas[0]["Mes"], filas[0]["P1 kWh"], filas[0]["Total kWh"]),
-                         ("2026-03", 4.0, 10.0))
         import pandas as pd
-        datos = self.p.excel_consumo_periodos(pd.DataFrame([{"CUPS": "x"}]), pd.DataFrame(filas),
-                                              pd.DataFrame([{"CUPS": "x", "Estado": "OK"}]))
+        cups = "ES0000000000000000XX"
+        tel = self.p.telelecturas_por_mes(cups, c.metering_a_dataframe(xml(
+            "<r><subministrament><id>7</id><units>kWh</units><values>"
+            "<value date='2026-03'>110</value><value date='2026-04'>90</value>"
+            "</values></subministrament></r>")))
+        self.assertEqual([(f["Mes"], f["Total kWh"]) for f in tel],
+                         [("2026-03", 110.0), ("2026-04", 90.0)])
+        self.assertEqual(self.p.telelecturas_por_mes(cups, pd.DataFrame()), [])
+        # marzo facturado en dos facturas; abril sin factura
+        fact = [{"CUPS": cups, "Fin factura": dt.date(2026, 3, 15), "Total kWh": 40.0},
+                {"CUPS": cups, "Fin factura": dt.date(2026, 3, 31), "Total kWh": 60.0}]
+        dif = self.p.diferencias_por_mes(fact, tel)
+        marzo, abril = dif
+        self.assertEqual((marzo["Facturas"], marzo["Facturado kWh"], marzo["Telelecturas kWh"],
+                          marzo["Diferencia kWh"], marzo["Diferencia %"]),
+                         (2, 100.0, 110.0, -10.0, -9.09))
+        self.assertEqual((abril["Facturado kWh"], abril["Diferencia kWh"]), (None, None))
+        datos = self.p.excel_consumo_periodos(pd.DataFrame([{"CUPS": "x"}]), pd.DataFrame(tel),
+                                              pd.DataFrame([{"CUPS": "x", "Estado": "OK"}]),
+                                              pd.DataFrame(dif))
         wb = openpyxl.load_workbook(io.BytesIO(datos))
-        self.assertEqual(wb.sheetnames, ["Facturas por periodo", "Mes natural por periodo",
-                                         "Resumen"])
+        self.assertEqual(wb.sheetnames, ["Facturas por periodo", "Telelecturas por mes",
+                                         "Diferencias", "Resumen"])
 
     def test_avisos_de_gemweb_en_paginas_existentes(self):
         # las claves son los titulos del menu (inicio.py): si se renombra uno, que se note
