@@ -680,12 +680,231 @@ def pagina_simulacion_contrato():
         st.caption("Indica al menos un precio para simular.")
 
 
+# ===== DESCARGA MASIVA: CONSUMO MENSUAL POR PERIODOS =====
+COLS_P = ["P1 kWh", "P2 kWh", "P3 kWh", "P4 kWh", "P5 kWh", "P6 kWh"]
+# facturas que no se cuentan: no son consumo real o duplicarian un mes (abono + rectificativa)
+MARCAS_EXCLUIR = {"anulada": "anulada", "simulada": "simulada", "abonament": "abono",
+                  "abonada": "abonada"}
+
+
+def _fecha_gemweb(texto):
+    """'31/08/2026' (o '2026-08-31') -> date; None si no se entiende."""
+    from datetime import datetime
+    for formato in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime((texto or "").strip()[:10], formato).date()
+        except ValueError:
+            pass
+    return None
+
+
+def facturas_por_periodo(cups: str, root) -> tuple:
+    """Facturas de get_inventory(category=factures) -> (filas validas, nº descartadas)."""
+    filas, descartadas = [], 0
+    for f in root:
+        d = {h.tag: h.text for h in f}
+        if any(str(d.get(m) or "0").strip() not in ("0", "") for m in MARCAS_EXCLUIR):
+            descartadas += 1
+            continue
+        ini, fin = _fecha_gemweb(d.get("periode_ini")), _fecha_gemweb(d.get("periode_fin"))
+        if fin is None:
+            descartadas += 1
+            continue
+        fila = {"CUPS": cups, "Inicio factura": ini, "Fin factura": fin,
+                "Tarifa": d.get("tarifa"), "Comercializadora": d.get("comercialitzadora")}
+        for n, col in enumerate(COLS_P, start=1):
+            fila[col] = float(d.get(f"consum_p{n}") or 0)
+        fila["Total kWh"] = float(d.get("consum_tot") or 0) or sum(fila[c] for c in COLS_P)
+        filas.append(fila)
+    return filas, descartadas
+
+
+def elegir_facturas(filas: list, modo: str, ini: date = None, fin: date = None) -> list:
+    """modo 'ultimos12': las facturas de los 12 meses anteriores al final de la ultima (suelen
+    ser 12; alguna mas si un mes se facturo en dos, p. ej. por un alta a mitad de mes).
+    modo 'periodo': las que terminan entre ini y fin (incluidos)."""
+    filas = sorted(filas, key=lambda f: f["Fin factura"], reverse=True)
+    if not filas:
+        return []
+    if modo == "ultimos12":
+        ultima = filas[0]["Fin factura"]
+        dia = 28 if (ultima.month, ultima.day) == (2, 29) else ultima.day
+        hace_un_anio = ultima.replace(year=ultima.year - 1, day=dia)
+        elegidas = [f for f in filas if f["Fin factura"] > hace_un_anio]
+    else:
+        elegidas = [f for f in filas if ini <= f["Fin factura"] <= fin]
+    return sorted(elegidas, key=lambda f: f["Fin factura"])
+
+
+def variantes_cups(cups: str) -> list:
+    """Gemweb guarda a veces el CUPS de 20 caracteres (sin el '0F' final de 22)."""
+    cups = cups.strip().upper()
+    return [cups] + ([cups[:20]] if len(cups) > 20 else [])
+
+
+def meses_naturales(facturas: list, modo: str, ini: date = None, fin: date = None) -> tuple:
+    """Rango de meses naturales para el consumo por periodo de Gemweb: los 12 meses hasta el
+    de la ultima factura, o el periodo elegido."""
+    if modo != "ultimos12":
+        return ini, fin
+    if not facturas:
+        return None, None
+    ultima = facturas[-1]["Fin factura"]
+    fin_mes = (ultima.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    anio, mes = ultima.year, ultima.month - 11
+    if mes <= 0:
+        anio, mes = anio - 1, mes + 12
+    return date(anio, mes, 1), fin_mes
+
+
+def mes_natural_por_periodo(cups: str, root) -> list:
+    """get_consumption_by_period mensual -> filas CUPS | Mes | P1..P6 | Total."""
+    df = consumo_periodos_a_dataframe(root)
+    filas = []
+    for r in df.to_dict("records"):
+        fila = {"CUPS": cups, "Mes": r["fecha"]}
+        for n, col in enumerate(COLS_P, start=1):
+            fila[col] = float(r.get(f"consumption_p{n}") or 0)
+        fila["Total kWh"] = sum(fila[c] for c in COLS_P)
+        filas.append(fila)
+    return filas
+
+
+def excel_consumo_periodos(df_fact, df_mes, df_resumen) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_fact.to_excel(writer, sheet_name="Facturas por periodo", index=False)
+        df_mes.to_excel(writer, sheet_name="Mes natural por periodo", index=False)
+        df_resumen.to_excel(writer, sheet_name="Resumen", index=False)
+        for hoja in writer.sheets.values():
+            for col in hoja.columns:
+                ancho = max(len(str(c.value or "")) for c in col[:200])
+                hoja.column_dimensions[col[0].column_letter].width = min(max(ancho + 2, 10), 40)
+            hoja.freeze_panes = "B2"
+    return buffer.getvalue()
+
+
+def descarga_consumo_periodos(cliente, cups_list):
+    """Opcion «Consumo mensual por periodos» de la descarga masiva."""
+    st.subheader("2. Periodo")
+    modo = st.radio(
+        "¿Qué facturas?", ["ultimos12", "periodo"], horizontal=True,
+        format_func=lambda m: ("Últimos 12 meses con factura" if m == "ultimos12"
+                               else "Un periodo concreto"))
+    ini = fin = None
+    if modo == "ultimos12":
+        st.caption("De cada CUPS, sus facturas de los 12 meses anteriores al final de su última "
+                   "factura (normalmente 12; alguna más si un mes se facturó en dos).")
+    else:
+        st.caption("Facturas cuya fecha de fin cae dentro del periodo (la del 31/07 al 31/08 "
+                   "cuenta como agosto).")
+        hoy = date.today()
+        ini_s, fin_s = selector_fechas(inicio=date(hoy.year - 1, hoy.month, 1),
+                                       fin=mes_anterior()[1])
+        ini, fin = date.fromisoformat(ini_s), date.fromisoformat(fin_s)
+    st.caption("Se descargan dos hojas: lo **facturado** (una fila por factura, con su periodo) "
+               "y el **mes natural** que calcula Gemweb con las telelecturas. No se cuentan las "
+               "facturas anuladas, simuladas, abonos ni las abonadas.")
+
+    st.subheader("3. Ejecutar")
+    if not st.button("Descargar consumos", type="primary", disabled=not cups_list):
+        return
+    cache = st.session_state.setdefault("cache_cups_id", {})
+    progreso = st.progress(0.0, text="Preparando descarga...")
+    filas_fact, filas_mes, resumen = [], [], []
+    total = len(cups_list)
+    for i, cups in enumerate(cups_list, start=1):
+        progreso.progress(i / total, text=f"Procesando {i}/{total}: {cups}")
+        estado, id_sum, elegidas, mensuales, descartadas = "OK", cache.get(cups), [], [], 0
+        validas, hay_facturas = [], False
+        try:
+            for variante in variantes_cups(cups):
+                try:
+                    xml_f = cliente.get_inventory(
+                        category="factures", search_by="subministraments.cups",
+                        search_values=variante, order_by="factures.periode_fin DESC", limit=60)
+                except GemwebError as e:
+                    if "no se han encontrado" in str(e).lower():
+                        continue
+                    raise
+                if len(xml_f):
+                    hay_facturas = True
+                    validas, descartadas = facturas_por_periodo(cups, xml_f)
+                    break
+            elegidas = elegir_facturas(validas, modo, ini, fin)
+        except GemwebError as e:
+            estado = f"Facturas: {str(e)[:200]}"
+        try:
+            for variante in variantes_cups(cups) if id_sum is None else []:
+                try:
+                    df_inv = inventory_a_dataframe(cliente.get_inventory(
+                        category="subministraments", search_by="subministraments.cups",
+                        search_values=variante, limit=1))
+                except GemwebError as e:
+                    if "no se han encontrado" in str(e).lower():
+                        continue
+                    raise
+                if not df_inv.empty and "id" in df_inv.columns:
+                    id_sum = cache[cups] = str(df_inv["id"].iloc[0])
+                    break
+            m_ini, m_fin = meses_naturales(elegidas, modo, ini, fin)
+            if id_sum and m_ini:
+                mensuales = mes_natural_por_periodo(cups, cliente.get_consumption_by_period(
+                    id=int(id_sum), period="mensual", date_from=m_ini.isoformat(),
+                    date_to=m_fin.isoformat()))
+        except GemwebError as e:
+            estado = (estado + " · " if estado != "OK" else "") + f"Mes natural: {str(e)[:200]}"
+        if estado == "OK" and id_sum is None and not hay_facturas:
+            estado = "CUPS no encontrado en Gemweb"
+        elif estado == "OK" and not hay_facturas:
+            estado = "El suministro no tiene facturas en Gemweb"
+        elif estado == "OK" and not elegidas:
+            estado = "Sin facturas en el periodo"
+        filas_fact += elegidas
+        filas_mes += mensuales
+        resumen.append({
+            "CUPS": cups, "ID": id_sum, "Facturas": len(elegidas),
+            "Desde": elegidas[0]["Inicio factura"] if elegidas else None,
+            "Hasta": elegidas[-1]["Fin factura"] if elegidas else None,
+            "Total facturado kWh": sum(f["Total kWh"] for f in elegidas),
+            "Meses naturales": len(mensuales),
+            "Total mes natural kWh": sum(f["Total kWh"] for f in mensuales),
+            "Facturas descartadas": descartadas, "Estado": estado})
+    progreso.progress(1.0, text="Descarga completada")
+
+    df_fact = pd.DataFrame(filas_fact, columns=["CUPS", "Inicio factura", "Fin factura", "Tarifa",
+                                                "Comercializadora"] + COLS_P + ["Total kWh"])
+    df_mes = pd.DataFrame(filas_mes, columns=["CUPS", "Mes"] + COLS_P + ["Total kWh"])
+    df_resumen = pd.DataFrame(resumen)
+    st.subheader("Resumen")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("CUPS con facturas", int((df_resumen["Facturas"] > 0).sum()))
+    c2.metric("Facturas", len(df_fact))
+    c3.metric("Con problemas", int((df_resumen["Estado"] != "OK").sum()))
+    st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+    if df_fact.empty and df_mes.empty:
+        st.warning("No se ha descargado ningún dato. Revisa el resumen para ver los errores.")
+        return
+    t1, t2 = st.tabs(["Facturas por periodo", "Mes natural por periodo"])
+    with t1:
+        st.dataframe(df_fact, use_container_width=True, hide_index=True, height=350)
+    with t2:
+        st.dataframe(df_mes, use_container_width=True, hide_index=True, height=350)
+    nombre = "consumo_periodos_%s.xlsx" % ("ultimos12" if modo == "ultimos12"
+                                            else f"{ini.isoformat()}_{fin.isoformat()}")
+    st.download_button("Descargar Excel", data=excel_consumo_periodos(df_fact, df_mes, df_resumen),
+                       file_name=nombre,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       type="primary")
+
+
 # ===== DESCARGA MASIVA POR CUPS =====
 def pagina_descarga_masiva():
     cliente = obtener_cliente()
     st.markdown(
-        "Descarga telelecturas de **varios suministros a la vez** identificándolos por su CUPS. "
-        "Ideal para extracciones mensuales o por rango libre. Límite recomendado: 80 CUPS por descarga (máximo absoluto: 150)."
+        "Descarga telelecturas o el **consumo mensual por periodos** de **varios suministros a "
+        "la vez** identificándolos por su CUPS. Límite recomendado: 80 CUPS por descarga "
+        "(máximo absoluto: 150)."
     )
 
     # --- 1. Recogida de CUPS: dos métodos ---
@@ -755,6 +974,13 @@ def pagina_descarga_masiva():
                 f"Has introducido {len(cups_list)} CUPS. Es una descarga grande "
                 "y puede tardar varios minutos. Se procesará igualmente."
             )
+
+    que = st.radio("¿Qué quieres descargar?", ["telelecturas", "periodos"], horizontal=True,
+                   format_func=lambda x: ("Telelecturas (curva)" if x == "telelecturas"
+                                          else "Consumo mensual por periodos (P1–P6)"))
+    if que == "periodos":
+        descarga_consumo_periodos(cliente, cups_list)
+        return
 
     # --- 2. Parámetros de la descarga ---
     st.subheader("2. Datos a descargar")

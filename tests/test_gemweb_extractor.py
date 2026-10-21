@@ -143,6 +143,69 @@ class AyudasDePaginas(unittest.TestCase):
         self.assertTrue(vacio.empty)
         self.assertEqual(gen0["total"], 0.0)
 
+    def _factura(self, ini, fin, p1=0, p6=0, **marcas):
+        extra = "".join("<%s>%s</%s>" % (k, v, k) for k, v in marcas.items())
+        return ("<factura_elec><periode_ini>%s</periode_ini><periode_fin>%s</periode_fin>"
+                "<tarifa>6.1TD</tarifa><comercialitzadora>COMERCIAL S.A.</comercialitzadora>"
+                "<consum_p1>%s</consum_p1><consum_p6>%s</consum_p6><consum_tot>%s</consum_tot>"
+                "<anulada>0</anulada><abonada>0</abonada>%s</factura_elec>"
+                % (ini, fin, p1, p6, p1 + p6, extra))
+
+    def test_facturas_por_periodo_descarta_anuladas_y_abonos(self):
+        root = xml("<registre>%s%s%s</registre>" % (
+            self._factura("31/12/2025", "31/01/2026", p1=10, p6=5),
+            self._factura("31/12/2025", "31/01/2026", p1=10, anulada=1),
+            self._factura("31/01/2026", "28/02/2026", p1=3, abonament=1)))
+        filas, descartadas = self.p.facturas_por_periodo("ES0000000000000000XX", root)
+        self.assertEqual((len(filas), descartadas), (1, 2))
+        f = filas[0]
+        self.assertEqual((f["Fin factura"].isoformat(), f["P1 kWh"], f["P6 kWh"], f["Total kWh"]),
+                         ("2026-01-31", 10.0, 5.0, 15.0))
+        self.assertEqual((f["Tarifa"], f["Comercializadora"]), ("6.1TD", "COMERCIAL S.A."))
+
+    def test_elegir_ultimos_12_meses_y_periodo(self):
+        import datetime as dt
+        filas = [{"Fin factura": dt.date(2025, m, 28)} for m in range(1, 13)] + \
+                [{"Fin factura": dt.date(2026, m, 28)} for m in range(1, 10)] + \
+                [{"Fin factura": dt.date(2026, 9, 15)}]          # un mes facturado en dos
+        ult = self.p.elegir_facturas(filas, "ultimos12")
+        self.assertEqual(ult[0]["Fin factura"], dt.date(2025, 10, 28))
+        self.assertEqual(ult[-1]["Fin factura"], dt.date(2026, 9, 28))
+        self.assertEqual(len(ult), 13)                           # 12 meses, 13 facturas
+        per = self.p.elegir_facturas(filas, "periodo", dt.date(2026, 1, 1), dt.date(2026, 3, 31))
+        self.assertEqual([f["Fin factura"].month for f in per], [1, 2, 3])
+        self.assertEqual(self.p.elegir_facturas([], "ultimos12"), [])
+
+    def test_meses_naturales_de_los_ultimos_12(self):
+        import datetime as dt
+        facturas = [{"Fin factura": dt.date(2026, 2, 28)}]
+        self.assertEqual(self.p.meses_naturales(facturas, "ultimos12"),
+                         (dt.date(2025, 3, 1), dt.date(2026, 2, 28)))
+        self.assertEqual(self.p.meses_naturales([], "ultimos12"), (None, None))
+        a, b = dt.date(2026, 1, 1), dt.date(2026, 6, 30)
+        self.assertEqual(self.p.meses_naturales(facturas, "periodo", a, b), (a, b))
+
+    def test_variantes_cups_de_22_caracteres(self):
+        self.assertEqual(self.p.variantes_cups("es0000000000000000xx0f"),
+                         ["ES0000000000000000XX0F", "ES0000000000000000XX"])
+        self.assertEqual(self.p.variantes_cups("ES0000000000000000XX"), ["ES0000000000000000XX"])
+
+    def test_mes_natural_y_excel(self):
+        import io
+        import openpyxl
+        filas = self.p.mes_natural_por_periodo("ES0000000000000000XX", xml(
+            "<r><subministrament><id>7</id><units>kWh</units><values><year value='2026'>"
+            "<month value='3'><consumption_p1>4</consumption_p1><consumption_p6>6"
+            "</consumption_p6></month></year></values></subministrament></r>"))
+        self.assertEqual((filas[0]["Mes"], filas[0]["P1 kWh"], filas[0]["Total kWh"]),
+                         ("2026-03", 4.0, 10.0))
+        import pandas as pd
+        datos = self.p.excel_consumo_periodos(pd.DataFrame([{"CUPS": "x"}]), pd.DataFrame(filas),
+                                              pd.DataFrame([{"CUPS": "x", "Estado": "OK"}]))
+        wb = openpyxl.load_workbook(io.BytesIO(datos))
+        self.assertEqual(wb.sheetnames, ["Facturas por periodo", "Mes natural por periodo",
+                                         "Resumen"])
+
     def test_avisos_de_gemweb_en_paginas_existentes(self):
         # las claves son los titulos del menu (inicio.py): si se renombra uno, que se note
         import re
