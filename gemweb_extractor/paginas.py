@@ -29,6 +29,10 @@ from gemweb_extractor.cliente import (
 AVISOS_GEMWEB = {
     "Consumo por periodo": "la agrupación **diaria** no funciona: Gemweb devuelve la respuesta "
                            "rota (sin año ni mes). La mensual funciona.",
+    "Telelecturas": "las agrupaciones **diaria, mensual, anual y total** pueden salir **a 0 en "
+                    "todo el rango** si este incluye ciertos días (p. ej. el 18/02/2026 en "
+                    "algunos suministros), aunque haya datos. La **cuartohoraria** y la "
+                    "**horaria** son fiables; la descarga masiva de consumos ya las usa.",
     "Coste y consumo mensual": "con origen **telelecturas** Gemweb devuelve la respuesta rota "
                                "(consumo) o un error (coste). El consumo se saca de las "
                                "telelecturas mensuales; el coste, solo desde facturas.",
@@ -144,6 +148,17 @@ PERIODOS_SIN_CO2 = ("quart-horari", "cinc-min", "un-min")
 
 def periodos_para(field: str) -> list:
     return [p for p in PERIODOS_METERING if not (field == "co2" and p in PERIODOS_SIN_CO2)]
+
+
+AVISO_CEROS = ("Todos los valores son 0. Si en Gemweb ves datos para este suministro, es el "
+               "fallo de su API en las agrupaciones diaria, mensual, anual y total: pide la "
+               "agrupación cuartohoraria u horaria, o un rango más corto.")
+
+
+def todo_a_cero_sospechoso(df: pd.DataFrame, period: str) -> bool:
+    """Respuesta con todos los valores a 0 en una agrupacion que Gemweb calcula mal."""
+    return (period in ("diari", "mensual", "anual", "total") and not df.empty
+            and "valor" in df.columns and bool((df["valor"] == 0).all()))
 
 
 def error_api(e: Exception, alternativa: str = None) -> None:
@@ -324,6 +339,8 @@ def pagina_telelecturas():
                     return
                 for f in fallidos:
                     st.warning(f"Tramo sin descargar: {f}")
+                if todo_a_cero_sospechoso(df, period):
+                    st.warning(AVISO_CEROS)
                 mostrar_resultado(df, f"telelectura_{id_sum}_{field}_{f_ini}_{f_fin}")
             except Exception as e:
                 st.error(f"Error inesperado: {e}")
@@ -760,16 +777,30 @@ def meses_naturales(facturas: list, modo: str, ini: date = None, fin: date = Non
     return date(anio, mes, 1), fin_mes
 
 
-def telelecturas_por_mes(cups: str, df_metering: pd.DataFrame) -> list:
-    """get_metering (consum, mensual, comptador) -> filas CUPS | Mes | Total kWh.
+def telelecturas_por_mes(cups: str, df_qh: pd.DataFrame) -> list:
+    """get_metering (consum, quart-horari, comptador) sumado por mes natural -> filas CUPS |
+    Mes | Total kWh | Días con datos | Días del mes | Completa.
 
-    Ojo: get_consumption_by_period mensual NO sirve para comparar: Gemweb devuelve en el los
-    consumos de las facturas (comprobado oct-2026, coinciden al kWh), no las telelecturas.
-    Las telelecturas solo dan el total del mes, sin reparto P1-P6."""
-    if df_metering is None or df_metering.empty:
+    Se suman los cuartos de hora porque las agrupaciones diaria, mensual, anual y total de
+    Gemweb devuelven 0 en TODO el rango pedido si incluye ciertos dias (p. ej. el 18/02/2026
+    en algunos suministros, aunque ese dia tiene datos cuartohorarios; comprobado oct-2026).
+    get_consumption_by_period tampoco sirve: devuelve los consumos de las facturas. Las
+    telelecturas solo dan el total, sin reparto P1-P6."""
+    if df_qh is None or df_qh.empty:
         return []
-    return [{"CUPS": cups, "Mes": str(r["fecha"])[:7], "Total kWh": float(r["valor"])}
-            for r in df_metering.to_dict("records")]
+    import calendar
+    # Gemweb etiqueta cada cuarto con su hora de FIN: el de 23:45-24:00 lleva el dia siguiente
+    fin = pd.to_datetime(df_qh["fecha"].astype(str).str.split().str.join(" "), errors="coerce")
+    df = df_qh.assign(dia=fin - pd.Timedelta(minutes=15)).dropna(subset=["dia"])
+    filas = []
+    for mes, grupo in df.groupby(df["dia"].dt.strftime("%Y-%m")):
+        anio, m = int(mes[:4]), int(mes[5:7])
+        dias_mes = calendar.monthrange(anio, m)[1]
+        con_datos = int(grupo.loc[grupo["valor"] != 0, "dia"].dt.date.nunique())
+        filas.append({"CUPS": cups, "Mes": mes, "Total kWh": float(grupo["valor"].sum()),
+                      "Días con datos": con_datos, "Días del mes": dias_mes,
+                      "Completa": "Sí" if con_datos >= dias_mes else "No"})
+    return filas
 
 
 def _pct(dif, base):
@@ -778,24 +809,36 @@ def _pct(dif, base):
 
 def diferencias_por_mes(filas_fact: list, filas_mes: list) -> list:
     """Facturado (cada factura en el mes de su fecha de fin) frente a las telelecturas del
-    mes natural, por CUPS y mes. Diferencia = facturado - telelecturas."""
+    mes natural, por CUPS y mes. Diferencia = facturado - telelecturas, solo en los meses con
+    telelectura completa (si faltan dias, la diferencia seria un hueco de datos, no de
+    facturacion)."""
     meses = {}
+    nuevo = lambda: {"facturas": 0, "fact": 0.0, "nat": None, "completa": None}
     for f in filas_fact:
-        clave = (f["CUPS"], f["Fin factura"].strftime("%Y-%m"))
-        d = meses.setdefault(clave, {"facturas": 0, "fact": 0.0, "nat": None})
+        d = meses.setdefault((f["CUPS"], f["Fin factura"].strftime("%Y-%m")), nuevo())
         d["facturas"] += 1
         d["fact"] += f["Total kWh"]
     for m in filas_mes:
-        meses.setdefault((m["CUPS"], m["Mes"]), {"facturas": 0, "fact": 0.0, "nat": None})[
-            "nat"] = m["Total kWh"]
+        d = meses.setdefault((m["CUPS"], m["Mes"]), nuevo())
+        d["nat"] = m["Total kWh"] if m.get("Días con datos", 1) else None
+        d["completa"] = m.get("Completa", "Sí")
     filas = []
     for (cups, mes), d in sorted(meses.items()):
         fact = d["fact"] if d["facturas"] else None
-        dif = fact - d["nat"] if fact is not None and d["nat"] is not None else None
+        comparable = fact is not None and d["nat"] is not None and d["completa"] == "Sí"
+        dif = fact - d["nat"] if comparable else None
+        nota = ""
+        if fact is not None and d["nat"] is None:
+            nota = "Sin telelecturas"
+        elif fact is not None and d["completa"] == "No":
+            nota = "Telelecturas incompletas"
+        elif fact is None and d["nat"] is not None:
+            nota = "Sin factura"
         filas.append({"CUPS": cups, "Mes": mes, "Facturas": d["facturas"],
                       "Facturado kWh": fact, "Telelecturas kWh": d["nat"],
                       "Diferencia kWh": dif,
-                      "Diferencia %": _pct(dif, d["nat"]) if dif is not None else None})
+                      "Diferencia %": _pct(dif, d["nat"]) if dif is not None else None,
+                      "Nota": nota})
     return filas
 
 
@@ -885,7 +928,7 @@ def descarga_consumo_periodos(cliente, cups_list):
             if id_sum and m_ini:
                 df_tel, fallidos = cliente.get_metering_por_tramos(
                     id=int(id_sum), date_from=m_ini.isoformat(), date_to=m_fin.isoformat(),
-                    period="mensual", field="consum", data_source="comptador")
+                    period="quart-horari", field="consum", data_source="comptador")
                 mensuales = telelecturas_por_mes(cups, df_tel)
                 if fallidos and not mensuales:
                     raise GemwebError(" · ".join(errores_tramos(fallidos)))
@@ -921,11 +964,12 @@ def descarga_consumo_periodos(cliente, cups_list):
 
     df_fact = pd.DataFrame(filas_fact, columns=["CUPS", "Inicio factura", "Fin factura", "Tarifa",
                                                 "Comercializadora"] + COLS_P + ["Total kWh"])
-    df_mes = pd.DataFrame(filas_mes, columns=["CUPS", "Mes", "Total kWh"])
+    df_mes = pd.DataFrame(filas_mes, columns=["CUPS", "Mes", "Total kWh", "Días con datos",
+                                              "Días del mes", "Completa"])
     df_resumen = pd.DataFrame(resumen)
     df_dif = pd.DataFrame(diferencias_por_mes(filas_fact, filas_mes),
                           columns=["CUPS", "Mes", "Facturas", "Facturado kWh", "Telelecturas kWh",
-                                   "Diferencia kWh", "Diferencia %"])
+                                   "Diferencia kWh", "Diferencia %", "Nota"])
     st.subheader("Resumen")
     st.caption("Diferencia = facturado − telelecturas del contador, sumando solo los meses que "
                "tienen las dos cosas («Meses comparados»). Positiva: "
@@ -945,7 +989,8 @@ def descarga_consumo_periodos(cliente, cups_list):
         st.dataframe(df_mes, use_container_width=True, hide_index=True, height=350)
     with t3:
         st.caption("Cada factura cuenta en el mes de su fecha de fin. Si el periodo facturado no "
-                   "coincide con el mes natural, parte de la diferencia es solo de calendario.")
+                   "coincide con el mes natural, parte de la diferencia es solo de calendario. "
+                   "Los meses con telelecturas incompletas no se comparan (ver «Nota»).")
         st.dataframe(df_dif, use_container_width=True, hide_index=True, height=350)
     nombre = "consumo_periodos_%s.xlsx" % ("ultimos12" if modo == "ultimos12"
                                             else f"{ini.isoformat()}_{fin.isoformat()}")
@@ -1150,6 +1195,9 @@ def pagina_descarga_masiva():
                     if fallidos:
                         estado = (f"Parcial: fallaron {len(fallidos)} tramo(s) → "
                                   + " | ".join(fallidos)[:300])
+                    elif todo_a_cero_sospechoso(df_met, period):
+                        estado = ("Todo a 0: probable fallo de Gemweb en esta agrupación; "
+                                  "prueba la cuartohoraria")
                     resultados.append({
                         "cups": cups, "id": id_sum, "registros": len(df_met),
                         "estado": estado,

@@ -196,22 +196,30 @@ class AyudasDePaginas(unittest.TestCase):
         import openpyxl
         import pandas as pd
         cups = "ES0000000000000000XX"
-        tel = self.p.telelecturas_por_mes(cups, c.metering_a_dataframe(xml(
-            "<r><subministrament><id>7</id><units>kWh</units><values>"
-            "<value date='2026-03'>110</value><value date='2026-04'>90</value>"
-            "</values></subministrament></r>")))
-        self.assertEqual([(f["Mes"], f["Total kWh"]) for f in tel],
-                         [("2026-03", 110.0), ("2026-04", 90.0)])
+        # cuartos de hora con la hora de FIN (como Gemweb): marzo entero a 1 kWh por cuarto y
+        # solo la primera hora del 1 de abril (mes incompleto)
+        fin = pd.date_range("2026-03-01 00:15", "2026-04-01 01:00", freq="15min")
+        valores = [1.0 if t <= pd.Timestamp("2026-04-01 00:00") else 2.0 for t in fin]
+        df_qh = pd.DataFrame({"id_suministro": "7", "valor": valores, "unidades": "kWh",
+                              "fecha": [t.strftime("%Y-%m-%d  %H:%M") for t in fin]})
+        tel = self.p.telelecturas_por_mes(cups, df_qh)
+        marzo_t, abril_t = tel
+        self.assertEqual((marzo_t["Mes"], marzo_t["Total kWh"], marzo_t["Días con datos"],
+                          marzo_t["Completa"]), ("2026-03", 31 * 96.0, 31, "Sí"))
+        self.assertEqual((abril_t["Total kWh"], abril_t["Días con datos"], abril_t["Completa"]),
+                         (8.0, 1, "No"))
         self.assertEqual(self.p.telelecturas_por_mes(cups, pd.DataFrame()), [])
-        # marzo facturado en dos facturas; abril sin factura
-        fact = [{"CUPS": cups, "Fin factura": dt.date(2026, 3, 15), "Total kWh": 40.0},
-                {"CUPS": cups, "Fin factura": dt.date(2026, 3, 31), "Total kWh": 60.0}]
+        # marzo facturado en dos facturas; abril con factura pero telelectura incompleta
+        fact = [{"CUPS": cups, "Fin factura": dt.date(2026, 3, 15), "Total kWh": 1000.0},
+                {"CUPS": cups, "Fin factura": dt.date(2026, 3, 31), "Total kWh": 2000.0},
+                {"CUPS": cups, "Fin factura": dt.date(2026, 4, 30), "Total kWh": 50.0}]
         dif = self.p.diferencias_por_mes(fact, tel)
         marzo, abril = dif
         self.assertEqual((marzo["Facturas"], marzo["Facturado kWh"], marzo["Telelecturas kWh"],
                           marzo["Diferencia kWh"], marzo["Diferencia %"]),
-                         (2, 100.0, 110.0, -10.0, -9.09))
-        self.assertEqual((abril["Facturado kWh"], abril["Diferencia kWh"]), (None, None))
+                         (2, 3000.0, 2976.0, 24.0, 0.81))
+        self.assertEqual((abril["Diferencia kWh"], abril["Nota"]),
+                         (None, "Telelecturas incompletas"))
         datos = self.p.excel_consumo_periodos(pd.DataFrame([{"CUPS": "x"}]), pd.DataFrame(tel),
                                               pd.DataFrame([{"CUPS": "x", "Estado": "OK"}]),
                                               pd.DataFrame(dif))
