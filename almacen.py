@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -72,9 +73,17 @@ def conectar():
             if clave not in _iniciado:
                 con.execute("PRAGMA journal_mode=WAL")     # queda guardado en el fichero
                 con.executescript(ESQUEMA)
+                _migrar(con)
                 _importar_json(con)
                 _iniciado.add(clave)
     return con
+
+
+def _migrar(con):
+    """Columnas anadidas despues de crear la base de datos (las bases antiguas no las tienen)."""
+    columnas = {r["name"] for r in con.execute("PRAGMA table_info(usuarios)")}
+    if "email" not in columnas:
+        con.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
 
 
 @contextmanager
@@ -138,7 +147,7 @@ def validar_clave(clave):
     return None
 
 
-def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True):
+def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email=None):
     usuario = usuario.strip().lower()
     if not usuario or not nombre.strip():
         raise ValueError("Usuario y nombre son obligatorios.")
@@ -150,9 +159,9 @@ def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True):
         if con.execute("SELECT 1 FROM usuarios WHERE usuario=?", (usuario,)).fetchone():
             raise ValueError("Ya existe el usuario %s." % usuario)
         con.execute("INSERT INTO usuarios (usuario, nombre, sal, clave, admin, activo, "
-                    "cambiar_clave, creado) VALUES (?,?,?,?,?,1,?,?)",
+                    "cambiar_clave, creado, email) VALUES (?,?,?,?,?,1,?,?,?)",
                     (usuario, nombre.strip(), sal, _hash(clave, sal), int(admin),
-                     int(cambiar_clave), _ahora()))
+                     int(cambiar_clave), _ahora(), _email(email)))
 
 
 def comprobar(usuario, clave):
@@ -177,7 +186,7 @@ def comprobar(usuario, clave):
         else:
             con.execute("UPDATE usuarios SET intentos_fallidos=0, bloqueado_hasta=NULL, "
                         "ultimo_acceso=? WHERE usuario=?", (_ahora(), usuario))
-            datos = {k: u[k] for k in ("usuario", "nombre", "admin", "cambiar_clave")}
+            datos = {k: u[k] for k in ("usuario", "nombre", "admin", "cambiar_clave", "email")}
     if error:                    # fuera del with: el contador de fallos ya esta guardado
         raise ValueError(error)
     return datos
@@ -197,15 +206,30 @@ def cambiar_clave(usuario, nueva, obligar_cambio=False):
 def listar_usuarios():
     with _con() as con:
         return [dict(r) for r in con.execute(
-            "SELECT usuario, nombre, admin, activo, creado, ultimo_acceso FROM usuarios "
+            "SELECT usuario, nombre, email, admin, activo, creado, ultimo_acceso FROM usuarios "
             "ORDER BY nombre")]
 
 
-def actualizar_usuario(usuario, admin=None, activo=None, nombre=None):
-    """Si el cambio dejara sin administradores activos, se deshace y da error."""
+def _email(email):
+    """Email limpio, None si esta vacio; ValueError si no tiene forma de email."""
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("El email «%s» no es válido." % email)
+    return email
+
+
+def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None):
+    """Si el cambio dejara sin administradores activos, se deshace y da error. email="" lo
+    borra; None lo deja como esta."""
     if nombre is not None and not nombre.strip():
         raise ValueError("El nombre no puede quedar vacío.")
+    if email is not None:
+        email = _email(email) or ""
     with _con(escribir=True) as con:
+        if email is not None:
+            con.execute("UPDATE usuarios SET email=? WHERE usuario=?", (email or None, usuario))
         if nombre is not None:
             con.execute("UPDATE usuarios SET nombre=? WHERE usuario=?", (nombre.strip(), usuario))
         if admin is not None:

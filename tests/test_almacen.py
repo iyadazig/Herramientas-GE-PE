@@ -69,6 +69,31 @@ class Almacen(unittest.TestCase):
         with self.assertRaises(ValueError):
             almacen.actualizar_usuario("marta", nombre=" ")
 
+    def test_email_del_usuario(self):
+        almacen.crear_usuario("marta", "Marta", "clave-segura-1", email=" Marta@Example.COM ")
+        self.assertEqual(almacen.comprobar("marta", "clave-segura-1")["email"], "marta@example.com")
+        almacen.actualizar_usuario("marta", email="otra@example.com")
+        self.assertEqual(almacen.listar_usuarios()[0]["email"], "otra@example.com")
+        almacen.actualizar_usuario("marta", email="")                 # se borra
+        self.assertIsNone(almacen.comprobar("marta", "clave-segura-1")["email"])
+        with self.assertRaises(ValueError):
+            almacen.actualizar_usuario("marta", email="sin-arroba")
+        with self.assertRaises(ValueError):
+            almacen.crear_usuario("luis", "Luis", "clave-segura-1", email="mal@")
+
+    def test_base_de_datos_antigua_sin_email(self):
+        import sqlite3
+        ruta = almacen.ruta_bd()
+        con = sqlite3.connect(ruta)
+        con.executescript("CREATE TABLE usuarios (usuario TEXT PRIMARY KEY, nombre TEXT NOT NULL, "
+                          "sal TEXT NOT NULL, clave TEXT NOT NULL, admin INTEGER NOT NULL DEFAULT 0, "
+                          "activo INTEGER NOT NULL DEFAULT 1, cambiar_clave INTEGER NOT NULL "
+                          "DEFAULT 0, creado TEXT NOT NULL, ultimo_acceso TEXT, intentos_fallidos "
+                          "INTEGER NOT NULL DEFAULT 0, bloqueado_hasta TEXT);")
+        con.close()
+        almacen.crear_usuario("ana", "Ana", "clave-segura-1", email="ana@example.com")
+        self.assertEqual(almacen.comprobar("ana", "clave-segura-1")["email"], "ana@example.com")
+
     def test_bloqueo_tras_cinco_fallos(self):
         almacen.crear_usuario("luis", "Luis", "clave-segura-1")
         for _ in range(5):

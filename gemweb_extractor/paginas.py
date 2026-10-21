@@ -8,6 +8,7 @@ plataforma (gemweb.obtener_api) con las credenciales de gemweb.cargar_credencial
 """
 
 import io
+import re
 from datetime import date, timedelta
 
 import pandas as pd
@@ -735,6 +736,9 @@ def facturas_por_periodo(cups: str, root) -> tuple:
         for n, col in enumerate(COLS_P, start=1):
             fila[col] = float(d.get(f"consum_p{n}") or 0)
         fila["Total kWh"] = float(d.get("consum_tot") or 0) or sum(fila[c] for c in COLS_P)
+        # potencias contratadas de la factura (no salen en las hojas; para la solicitud)
+        fila["_potencias"] = [float(d[f"pot_contract_p{n}"]) if d.get(f"pot_contract_p{n}")
+                              not in (None, "") else None for n in range(1, 7)]
         filas.append(fila)
     return filas, descartadas
 
@@ -884,16 +888,39 @@ def descarga_consumo_periodos(cliente, cups_list):
                "ni las abonadas.")
 
     st.subheader("3. Ejecutar")
-    if not st.button("Descargar consumos", type="primary", disabled=not cups_list):
-        return
-    cache = st.session_state.setdefault("cache_cups_id", {})
+    clave = (tuple(cups_list), modo, ini, fin)
+    if st.button("Descargar consumos", type="primary", disabled=not cups_list):
+        st.session_state.consumo_periodos = dict(
+            calcular_consumo_periodos(cliente, cups_list, modo, ini, fin), clave=clave)
+    res = st.session_state.get("consumo_periodos")
+    if res and res["clave"] == clave:
+        mostrar_consumo_periodos(res)
+        seccion_solicitud_ofertas(res)
+
+
+def _primer_registro(cliente, categoria, campo, valor):
+    """Primer registro del inventario como dict, o None si no existe."""
+    try:
+        raiz = cliente.get_inventory(category=categoria, search_by=campo,
+                                     search_values=str(valor), limit=1)
+    except GemwebError as e:
+        if "no se han encontrado" in str(e).lower():
+            return None
+        raise
+    return {h.tag: h.text for h in raiz[0]} if len(raiz) else None
+
+
+def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin) -> dict:
+    """Facturas, telelecturas y datos del suministro de cada CUPS (con la barra de progreso)."""
+    cache_sum = st.session_state.setdefault("cache_cups_suministro", {})
+    cache_inv = st.session_state.setdefault("cache_inventario", {})
     progreso = st.progress(0.0, text="Preparando descarga...")
-    filas_fact, filas_mes, resumen = [], [], []
+    filas_fact, filas_mes, resumen, fichas = [], [], [], []
     total = len(cups_list)
     for i, cups in enumerate(cups_list, start=1):
         progreso.progress(i / total, text=f"Procesando {i}/{total}: {cups}")
-        estado, id_sum, elegidas, mensuales, descartadas = "OK", cache.get(cups), [], [], 0
-        validas, hay_facturas = [], False
+        estado, elegidas, mensuales, descartadas = "OK", [], [], 0
+        validas, hay_facturas, sumi = [], False, cache_sum.get(cups)
         try:
             for variante in variantes_cups(cups):
                 try:
@@ -912,18 +939,13 @@ def descarga_consumo_periodos(cliente, cups_list):
         except GemwebError as e:
             estado = f"Facturas: {str(e)[:200]}"
         try:
-            for variante in variantes_cups(cups) if id_sum is None else []:
-                try:
-                    df_inv = inventory_a_dataframe(cliente.get_inventory(
-                        category="subministraments", search_by="subministraments.cups",
-                        search_values=variante, limit=1))
-                except GemwebError as e:
-                    if "no se han encontrado" in str(e).lower():
-                        continue
-                    raise
-                if not df_inv.empty and "id" in df_inv.columns:
-                    id_sum = cache[cups] = str(df_inv["id"].iloc[0])
+            for variante in variantes_cups(cups) if sumi is None else []:
+                sumi = _primer_registro(cliente, "subministraments", "subministraments.cups",
+                                        variante)
+                if sumi:
+                    cache_sum[cups] = sumi
                     break
+            id_sum = sumi.get("id") if sumi else None
             m_ini, m_fin = meses_naturales(elegidas, modo, ini, fin)
             if id_sum and m_ini:
                 df_tel, fallidos = cliente.get_metering_por_tramos(
@@ -933,6 +955,7 @@ def descarga_consumo_periodos(cliente, cups_list):
                 if fallidos and not mensuales:
                     raise GemwebError(" · ".join(errores_tramos(fallidos)))
         except GemwebError as e:
+            id_sum = sumi.get("id") if sumi else None
             estado = (estado + " · " if estado != "OK" else "") + f"Telelecturas: {str(e)[:200]}"
         if estado == "OK" and id_sum is None and not hay_facturas:
             estado = "CUPS no encontrado en Gemweb"
@@ -960,16 +983,59 @@ def descarga_consumo_periodos(cliente, cups_list):
             "Diferencia kWh": c_fact - c_tel if comunes else None,
             "Diferencia %": _pct(c_fact - c_tel, c_tel) if comunes else None,
             "Facturas descartadas": descartadas, "Estado": estado})
+        if sumi or elegidas:
+            fichas.append(ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv))
     progreso.progress(1.0, text="Descarga completada")
 
     df_fact = pd.DataFrame(filas_fact, columns=["CUPS", "Inicio factura", "Fin factura", "Tarifa",
                                                 "Comercializadora"] + COLS_P + ["Total kWh"])
     df_mes = pd.DataFrame(filas_mes, columns=["CUPS", "Mes", "Total kWh", "Días con datos",
                                               "Días del mes", "Completa"])
-    df_resumen = pd.DataFrame(resumen)
     df_dif = pd.DataFrame(diferencias_por_mes(filas_fact, filas_mes),
                           columns=["CUPS", "Mes", "Facturas", "Facturado kWh", "Telelecturas kWh",
                                    "Diferencia kWh", "Diferencia %", "Nota"])
+    nombre = "consumo_periodos_%s.xlsx" % ("ultimos12" if modo == "ultimos12"
+                                            else f"{ini.isoformat()}_{fin.isoformat()}")
+    return {"fact": df_fact, "mes": df_mes, "resumen": pd.DataFrame(resumen), "dif": df_dif,
+            "nombre": nombre, "fichas": fichas}
+
+
+def ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv) -> dict:
+    """Datos de un suministro para la solicitud de ofertas: Gemweb + potencias de la ultima
+    factura + perfil por meses. Razon social y CIF de la entidad; direccion del centro."""
+    from gemweb_extractor import solicitud_ofertas as so
+    sumi = sumi or {}
+
+    def registro(categoria, campo, valor):
+        if not valor:
+            return {}
+        clave = (categoria, str(valor))
+        if clave not in cache_inv:
+            try:
+                cache_inv[clave] = _primer_registro(cliente, categoria, campo, valor) or {}
+            except GemwebError:
+                cache_inv[clave] = {}
+        return cache_inv[clave]
+
+    entidad = registro("entitats", "entitats.id", sumi.get("id_entitats"))
+    centro = registro("centres_consum", "centres_consum.id", sumi.get("id_centres_consum"))
+    ultima = max(validas, key=lambda f: f["Fin factura"]) if validas else None
+    potencias = ultima["_potencias"] if ultima else [None] * 6
+    if not any(p is not None for p in potencias):          # sin potencias en la factura
+        potencias = [float(sumi[f"pot_contract_p{n}"]) if sumi.get(f"pot_contract_p{n}")
+                     else None for n in range(1, 7)]
+    perfil, aviso = so.perfil_mensual(elegidas)
+    return {"cups": cups, "alias": so.alias_de(sumi.get("nom")),
+            "razon": entidad.get("nom") or "", "cif": so.cif_limpio(entidad.get("cif")),
+            "direccion": centro.get("direccio") or entidad.get("direccio") or "",
+            "tarifa": sumi.get("tarifa_acces") or (ultima or {}).get("Tarifa") or "",
+            "fecha_fin": "", "potencias": potencias, "perfil": perfil, "aviso": aviso,
+            "facturas": len(elegidas),
+            "ultima_factura": ultima["Fin factura"] if ultima else None}
+
+
+def mostrar_consumo_periodos(res: dict) -> None:
+    df_fact, df_mes, df_resumen, df_dif = res["fact"], res["mes"], res["resumen"], res["dif"]
     st.subheader("Resumen")
     st.caption("Diferencia = facturado − telelecturas del contador, sumando solo los meses que "
                "tienen las dos cosas («Meses comparados»). Positiva: "
@@ -992,11 +1058,74 @@ def descarga_consumo_periodos(cliente, cups_list):
                    "coincide con el mes natural, parte de la diferencia es solo de calendario. "
                    "Los meses con telelecturas incompletas no se comparan (ver «Nota»).")
         st.dataframe(df_dif, use_container_width=True, hide_index=True, height=350)
-    nombre = "consumo_periodos_%s.xlsx" % ("ultimos12" if modo == "ultimos12"
-                                            else f"{ini.isoformat()}_{fin.isoformat()}")
     st.download_button("Descargar Excel",
                        data=excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif),
-                       file_name=nombre,
+                       file_name=res["nombre"],
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       type="primary")
+
+
+COLUMNAS_FICHA = {"alias": "Alias", "cups": "CUPS", "razon": "Razón social",
+                  "direccion": "Dirección de suministro", "cif": "CIF", "tarifa": "Tarifa",
+                  "fecha_fin": "Fecha fin contrato actual"}
+
+
+def seccion_solicitud_ofertas(res: dict) -> None:
+    """Excel de solicitud de ofertas (Resumen + una hoja por suministro) con los datos
+    descargados, revisables antes de generarlo."""
+    from gemweb_extractor import solicitud_ofertas as so
+    fichas = res.get("fichas") or []
+    if not fichas:
+        return
+    st.markdown("---")
+    st.subheader("Solicitud de ofertas")
+    st.caption("Excel con el formato de GE&PE: una hoja «Resumen» y otra por suministro con sus "
+               "datos, las potencias de su última factura y el perfil de consumo de los últimos "
+               "12 meses (cada factura en el mes de su fecha de fin).")
+    usuario = st.session_state.get("usuario") or {}
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        ref = st.text_input("Ref.", key="sol_ref")
+        fecha = st.date_input("Fecha", value=date.today(), format="DD/MM/YYYY", key="sol_fecha")
+    with c2:
+        gestor = st.text_input("Gestor de cuenta", value=usuario.get("nombre", ""),
+                               key="sol_gestor")
+        telefono = st.text_input("Teléfono", value=so.TELEFONO_GEYPE, key="sol_tel")
+    with c3:
+        email = st.text_input("Email", value=usuario.get("email") or "", key="sol_email",
+                              help="El del usuario conectado. Si sale vacío, un administrador "
+                                   "puede añadirlo en Administración → Usuarios.")
+        producto = st.text_input("Producto", key="sol_producto",
+                                 placeholder="p. ej. ELECTRICIDAD / ELECTRICITY")
+
+    st.caption("Revisa los datos de cada suministro (salen de Gemweb) y escribe la fecha fin del "
+               "contrato actual, que Gemweb no tiene.")
+    tabla = pd.DataFrame([{v: f.get(k, "") for k, v in COLUMNAS_FICHA.items()} for f in fichas])
+    editada = st.data_editor(tabla, hide_index=True, use_container_width=True,
+                             disabled=["CUPS", "Tarifa"], key="sol_tabla_%d" % hash(res["nombre"]))
+    with st.expander("Potencias que se usarán (última factura de cada suministro)"):
+        st.dataframe(pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f["ultima_factura"]},
+                                        **{p: f["potencias"][n] for n, p in
+                                           enumerate(so.PERIODOS)}) for f in fichas]),
+                     hide_index=True, use_container_width=True)
+    for f in fichas:
+        if f.get("aviso"):
+            st.warning(f"{f['cups']}: {f['aviso']}. El perfil Ene–Dic mezcla años; usa «Últimos "
+                       "12 meses con factura» o un periodo de 12 meses.")
+    inversa = {v: k for k, v in COLUMNAS_FICHA.items()}
+    suministros = []
+    for f, (_, fila) in zip(fichas, editada.iterrows()):
+        s = dict(f)
+        for col, valor in fila.items():
+            s[inversa[col]] = "" if valor is None or (isinstance(valor, float) and pd.isna(valor)) \
+                else str(valor).strip()
+        suministros.append(s)
+    cabecera = {"ref": ref, "fecha": fecha.strftime("%d/%m/%Y") if fecha else "",
+                "gestor": gestor, "telefono": telefono, "email": email, "producto": producto}
+    nombre = "solicitud_ofertas_%s.xlsx" % (re.sub(r"[^\w-]", "_", ref) if ref else
+                                             date.today().strftime("%d%m%Y"))
+    st.download_button("Descargar solicitud de ofertas",
+                       data=so.excel_solicitud(cabecera, suministros), file_name=nombre,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary")
 

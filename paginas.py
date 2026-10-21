@@ -238,7 +238,7 @@ def pagina_usuarios():
         return
     usuarios = almacen.listar_usuarios()
     st.dataframe(pd.DataFrame([{
-        "Usuario": u["usuario"], "Nombre": u["nombre"],
+        "Usuario": u["usuario"], "Nombre": u["nombre"], "Email": u.get("email") or "",
         "Administrador": "Sí" if u["admin"] else "", "Activo": "Sí" if u["activo"] else "No",
         "Alta": pd.to_datetime(u["creado"]),
         "Último acceso": pd.to_datetime(u["ultimo_acceso"]) if u["ultimo_acceso"] else None}
@@ -264,11 +264,15 @@ def pagina_usuarios():
             usuario = st.text_input("Usuario (por ejemplo, la parte del correo antes de la @)",
                                     autocomplete="off")
             nombre = st.text_input("Nombre y apellidos", autocomplete="off")
+            email = st.text_input("Email", autocomplete="off",
+                                  help="Sale en los documentos que genera (p. ej. la solicitud "
+                                       "de ofertas).")
             admin = st.checkbox("Administrador (puede gestionar usuarios)")
             if st.form_submit_button("Dar de alta", type="primary"):
                 clave = almacen.clave_temporal()
                 try:
-                    almacen.crear_usuario(usuario, nombre, clave, admin=admin, cambiar_clave=True)
+                    almacen.crear_usuario(usuario, nombre, clave, admin=admin, cambiar_clave=True,
+                                          email=email)
                 except ValueError as e:
                     st.error(str(e))
                 else:
@@ -282,14 +286,17 @@ def pagina_usuarios():
         with st.form("nombre_usuario"):
             nuevo = st.text_input("Nombre y apellidos", value=u["nombre"], autocomplete="off",
                                   key="nombre_%s" % elegido)
-            if st.form_submit_button("Guardar nombre"):
+            nuevo_email = st.text_input("Email", value=u.get("email") or "", autocomplete="off",
+                                        key="email_%s" % elegido)
+            if st.form_submit_button("Guardar nombre y email"):
                 try:
-                    almacen.actualizar_usuario(elegido, nombre=nuevo)
+                    almacen.actualizar_usuario(elegido, nombre=nuevo, email=nuevo_email)
                 except ValueError as e:
                     st.error(str(e))
                 else:
                     if elegido == ss.usuario["usuario"]:
                         ss.usuario["nombre"] = nuevo.strip()
+                        ss.usuario["email"] = nuevo_email.strip().lower() or None
                     st.rerun()
         b1, b2, b3 = st.columns(3)
         if b1.button("Restablecer contraseña", use_container_width=True):
