@@ -119,7 +119,7 @@ class TablaConsideraciones(unittest.TestCase):
         from ofertas import paginas as op
         comun = {o: False for o in op.COLUMNAS_CASILLA}
         comun.update({"PVPC": True, op.INICIO: dt.date(2027, 1, 1), op.DURACION: None,
-                      op.DURACION2: None, op.PCT_CONSUMO: None, op.PCT_TIPO: None})
+                      op.DURACION2: None, op.DURACION3: None, op.PCT_CONSUMO: None, op.PCT_TIPO: None})
         t = op.tabla_consideraciones([{"cups": "A"}, {"cups": "B"}], comun)
         t.loc[1, op.GDO] = True
         t.loc[1, op.EXENCION] = True
@@ -134,8 +134,8 @@ class TablaConsideraciones(unittest.TestCase):
 class Correo(unittest.TestCase):
     def suministro(self, cups, tarifa="6.1TD", **c):
         base = {"indexado": ["PVPC"], "inicio": "01/01/2027", "duracion": "31/12/2027",
-                "duracion2": "", "temporada": False, "exencion": False, "gdo": False,
-                "excedentes": False}
+                "duracion2": "", "duracion3": "", "temporada": False, "exencion": False,
+                "gdo": False, "excedentes": False}
         base.update(c)
         return {"grupo": "GRUPO DE PRUEBA", "razon": "EMPRESA DE PRUEBA SA", "cups": cups,
                 "tarifa": tarifa, "perfil": {1: [1000, 0, 0, 0, 0, 500]},
@@ -144,31 +144,55 @@ class Correo(unittest.TestCase):
     cab = {"email": "prueba@example.com", "recepcion_desde": "22/10/2026",
            "recepcion_hasta": "23/10/2026", "recepcion_hora": "12:00"}
 
-    def test_comun_a_todos_va_en_el_resumen(self):
+    def test_igual_en_todos(self):
         texto = correo.texto_correo(self.cab, [
-            self.suministro("ES0000000000000000XX", gdo=True),
-            self.suministro("ES0000000000000001XX", gdo=True)])
+            self.suministro("ES0000000000000000XX", gdo=True, duracion2="31/12/2028",
+                            duracion3="31/12/2029"),
+            self.suministro("ES0000000000000001XX", gdo=True, duracion2="31/12/2028",
+                            duracion3="31/12/2029")])
         self.assertIn("del cliente GRUPO DE PRUEBA en España", texto)
         self.assertIn("• CUPS: ES0000000000000000XX (EMPRESA DE PRUEBA SA)\n", texto)
         self.assertIn("consumo anual previsto total de 3.000 kWh", texto)
-        self.assertIn("precio fijo (binómica en DH6) y precio indexado (PVPC)", texto)
-        self.assertIn("inicio del contrato: 1 de enero de 2027", texto)
-        self.assertIn("deben incluir garantías de origen (GdO)", texto)
-        self.assertIn("Inicio: 22 de octubre de 2026.", texto)
+        self.assertIn("• Precio indexado: PVPC.\n", texto)
+        self.assertIn("• Tipo de contrato: anual.\n", texto)
+        self.assertIn("inicio del contrato: 1 de enero de 2027.\n", texto)
+        self.assertIn("Duración del contrato: tres alternativas, hasta el 31 de diciembre de "
+                      "2027, hasta el 31 de diciembre de 2028 y hasta el 31 de diciembre de "
+                      "2029.", texto)
+        self.assertIn("deben incluir garantías de origen (GdO).", texto)
         self.assertIn("Fecha máxima: 23 de octubre de 2026, antes de las 12:00 horas.", texto)
         self.assertIn("\nprueba@example.com\n", texto)
-        self.assertNotIn("—", texto)                     # nada distinto por suministro
+        self.assertNotIn("inómica", texto)              # el precio fijo no se menciona
+        self.assertNotIn("—", texto)
 
-    def test_lo_de_algunos_va_junto_al_cups(self):
+    def test_exencion_y_excedentes_junto_al_cups(self):
         texto = correo.texto_correo(self.cab, [
-            self.suministro("ES0000000000000000XX", exencion=True, pct_consumo_exento=85.0),
-            self.suministro("ES0000000000000001XX", tarifa="2.0TD", excedentes=True)])
-        self.assertIn("ES0000000000000000XX (EMPRESA DE PRUEBA SA) — precio fijo binómica en "
-                      "DH6; sujeto a exención del impuesto eléctrico (85 % del consumo)", texto)
-        self.assertIn("ES0000000000000001XX (EMPRESA DE PRUEBA SA) — precio fijo binómica en "
-                      "DH2; con compensación de excedentes", texto)
-        self.assertIn("precio fijo según la tarifa de cada suministro", texto)
-        self.assertNotIn("Todos los suministros están", texto)
+            self.suministro("ES0000000000000000XX", exencion=True, pct_consumo_exento=85.0,
+                            excedentes=True),
+            self.suministro("ES0000000000000001XX", exencion=True, pct_consumo_exento=85.0)])
+        self.assertIn("ES0000000000000000XX (EMPRESA DE PRUEBA SA) — sujeto a exención del "
+                      "impuesto eléctrico (85 % del consumo); con compensación de excedentes\n",
+                      texto)
+        self.assertIn("ES0000000000000001XX (EMPRESA DE PRUEBA SA) — sujeto a exención del "
+                      "impuesto eléctrico (85 % del consumo)\n", texto)
+        resumen = texto.split("Resumen de la solicitud:")[1].split("Adjuntamos")[0]
+        self.assertNotIn("exención", resumen)
+        self.assertNotIn("excedentes", resumen)
+
+    def test_lo_distinto_en_el_resumen_con_sus_cups(self):
+        pt = ["Indexada Omie Pass Through", "Indexada Omie Pass Pool"]
+        texto = correo.texto_correo(self.cab, [
+            self.suministro("ES0000000000000000XX", indexado=pt, gdo=True),
+            self.suministro("ES0000000000000001XX", indexado=pt, gdo=True,
+                            inicio="01/03/2027"),
+            self.suministro("ES0000000000000002XX", indexado=["PVPC"], temporada=True)])
+        self.assertIn("• Precio indexado: Indexada Omie Pass Through y Indexada Omie Pass Pool "
+                      "(ES0000000000000002XX: PVPC).", texto)
+        self.assertIn("• Tipo de contrato: anual (ES0000000000000002XX: de temporada).", texto)
+        self.assertIn("inicio del contrato: 1 de enero de 2027 (ES0000000000000001XX: 1 de marzo "
+                      "de 2027).", texto)
+        self.assertIn("garantías de origen (GdO), salvo en ES0000000000000002XX.", texto)
+        self.assertNotIn("—", texto)
 
 
 if __name__ == "__main__":

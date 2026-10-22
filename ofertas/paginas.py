@@ -26,12 +26,14 @@ COLUMNAS_FICHA = {"grupo": "Cliente/Grupo", "razon": "Razón social", "cif": "CI
                   "tarifa": "Tarifa"}
 
 # tabla de consideraciones de la oferta (una fila por suministro)
-INICIO, DURACION, DURACION2 = ("Fecha prevista de inicio", "Duración del contrato hasta",
-                               "Duración del contrato hasta 2")
+INICIO, DURACION, DURACION2, DURACION3 = (
+    "Fecha prevista de inicio", "Duración del contrato hasta", "Duración del contrato hasta 2",
+    "Duración del contrato hasta 3")
 TEMPORADA, EXENCION = "De temporada", "Sujeto a exención de impuesto eléctrico"
 GDO, EXCEDENTES = "Incluye GdO", "Compensación de excedentes"
 PCT_CONSUMO, PCT_TIPO = "% consumo sujeto a exención", "% tipo de exención"
-COLUMNAS_FECHA = [INICIO, DURACION, DURACION2]
+COLUMNAS_FECHA = [INICIO, DURACION, DURACION2, DURACION3]
+PLAZOS = ("duracion", "duracion2", "duracion3")
 COLUMNAS_CASILLA = so.PRECIO_INDEXADO + [TEMPORADA, EXENCION, GDO, EXCEDENTES]
 
 
@@ -80,7 +82,8 @@ def consideraciones_de(fila) -> dict:
     exento = bool(fila[EXENCION])
     return {"indexado": [o for o in so.PRECIO_INDEXADO if bool(fila[o])],
             "inicio": _texto(fila[INICIO]), "duracion": _texto(fila[DURACION]),
-            "duracion2": _texto(fila[DURACION2]), "temporada": bool(fila[TEMPORADA]),
+            "duracion2": _texto(fila[DURACION2]), "duracion3": _texto(fila[DURACION3]),
+            "temporada": bool(fila[TEMPORADA]),
             "gdo": bool(fila[GDO]), "excedentes": bool(fila[EXCEDENTES]),
             "exencion": exento,
             "pct_consumo_exento": (float(fila[PCT_CONSUMO]) if exento and
@@ -116,14 +119,14 @@ def consideraciones_comunes() -> dict:
         comun[PCT_TIPO] = p2.number_input("Porcentaje tipo de exención (%)", min_value=0.0,
                                           max_value=100.0, value=None,
                                           disabled=not comun[EXENCION], key="sol_pct_tipo")
-    c1, c2, c3 = st.columns(3)
-    comun[INICIO] = c1.date_input("Fecha prevista de inicio del contrato", value=None,
+    comun[INICIO] = st.date_input("Fecha prevista de inicio del contrato", value=None,
                                   format="DD/MM/YYYY", key="sol_inicio")
-    comun[DURACION] = c2.date_input("Duración del contrato hasta", value=None,
-                                    format="DD/MM/YYYY", key="sol_duracion")
-    comun[DURACION2] = c3.date_input("Duración del contrato hasta 2 (opcional)", value=None,
-                                     format="DD/MM/YYYY", key="sol_duracion2",
-                                     help="Para pedir además la oferta a un segundo plazo.")
+    st.caption("Duración del contrato: rellena al menos una fecha fin; cada una es una "
+               "alternativa de plazo para la oferta.")
+    c1, c2, c3 = st.columns(3)
+    for col, clave, n in ((c1, DURACION, ""), (c2, DURACION2, "2"), (c3, DURACION3, "3")):
+        comun[clave] = col.date_input(f"Duración del contrato hasta {n}".strip(), value=None,
+                                      format="DD/MM/YYYY", key="sol_duracion" + n)
     return comun
 
 
@@ -178,10 +181,15 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     editada = st.data_editor(tabla, hide_index=True, use_container_width=True,
                              disabled=["CUPS", "Tarifa"], key="sol_tabla_%d" % hash(res["clave"]))
     with st.expander("Potencias que se usarán (última factura de cada suministro)"):
-        st.dataframe(pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f["ultima_factura"]},
-                                        **{p: f["potencias"][n] for n, p in
-                                           enumerate(so.PERIODOS)}) for f in fichas]),
-                     hide_index=True, use_container_width=True)
+        st.caption("Salen de la última factura; cámbialas si hay que pedir otras (kW).")
+        potencias = st.data_editor(
+            pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f["ultima_factura"]},
+                               **{p: f["potencias"][n] for n, p in enumerate(so.PERIODOS)})
+                          for f in fichas]),
+            hide_index=True, use_container_width=True, disabled=["CUPS", "Última factura"],
+            column_config={p: st.column_config.NumberColumn(min_value=0, format="%g")
+                           for p in so.PERIODOS},
+            key="sol_potencias_%d" % hash(res["clave"]))
     for f in fichas:
         if f.get("aviso"):
             st.warning(f"{f['cups']}: {f['aviso']}. El perfil Ene–Dic mezcla años; usa «Últimos "
@@ -201,17 +209,25 @@ def seccion_solicitud_ofertas(res: dict) -> None:
 
     inversa = {v: k for k, v in COLUMNAS_FICHA.items()}
     suministros = []
-    for f, (_, fila), (_, fila_c) in zip(fichas, editada.iterrows(), editada_c.iterrows()):
+    for f, (_, fila), (_, fila_c), (_, fila_p) in zip(
+            fichas, editada.iterrows(), editada_c.iterrows(), potencias.iterrows()):
         s = dict(f, **{inversa[col]: _texto(valor) for col, valor in fila.items()})
+        s["potencias"] = [None if _texto(fila_p[p]) == "" else float(fila_p[p])
+                          for p in so.PERIODOS]
         s["consideraciones"] = consideraciones_de(fila_c)
         s["fecha_inicio"] = s["consideraciones"]["inicio"]
         suministros.append(s)
     plazos = [s["cups"] for s in suministros if s["consideraciones"]["inicio"] and any(
         s["consideraciones"][d] and _fecha(s["consideraciones"][d]) <= _fecha(
-            s["consideraciones"]["inicio"]) for d in ("duracion", "duracion2"))]
+            s["consideraciones"]["inicio"]) for d in PLAZOS)]
     if plazos:
         st.warning("La duración del contrato termina antes de la fecha de inicio en: "
                    + ", ".join(plazos))
+    sin_plazo = [s["cups"] for s in suministros
+                 if not any(s["consideraciones"][d] for d in PLAZOS)]
+    if sin_plazo:
+        st.info("Falta al menos una fecha fin de duración del contrato en: "
+                + ", ".join(sin_plazo))
 
     cabecera = {"ref": ref, "fecha": fecha.strftime("%d/%m/%Y") if fecha else "",
                 "gestor": gestor, "telefono": telefono, "email": email, "producto": producto,
@@ -221,17 +237,18 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     if not hasta:
         st.info("Elige la fecha límite de recepción de ofertas (arriba, en «Periodo para la "
                 "recepción de las ofertas») para poder descargar la solicitud y el texto.")
+    listo = bool(hasta) and not sin_plazo
     nombre = "solicitud_ofertas_%s.xlsx" % (re.sub(r"[^\w-]", "_", ref) if ref else
                                              date.today().strftime("%d%m%Y"))
     b1, b2 = st.columns(2)
     b1.download_button("Descargar solicitud de ofertas",
-                       data=so.excel_solicitud(cabecera, suministros) if hasta else b"",
-                       file_name=nombre, disabled=not hasta,
+                       data=so.excel_solicitud(cabecera, suministros) if listo else b"",
+                       file_name=nombre, disabled=not listo,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary")
-    if b2.button("Texto para el correo a las comercializadoras", disabled=not hasta):
+    if b2.button("Texto para el correo a las comercializadoras", disabled=not listo):
         st.session_state.sol_ver_correo = True
-    if hasta and st.session_state.get("sol_ver_correo"):
+    if listo and st.session_state.get("sol_ver_correo"):
         st.markdown("#### Texto para el correo")
         st.caption("Cópialo con el botón de la esquina del recuadro y pégalo en el correo. Se "
                    "actualiza solo si cambias algo de arriba.")

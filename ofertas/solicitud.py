@@ -167,7 +167,7 @@ def _consideraciones(ws, cab, s, fila):
                                         "the contract starts", True)
     _bloque(ws, f"E{fila}:E{fila + 1}", c.get("inicio", ""))
     fila += 3
-    plazos = [d for d in (c.get("duracion"), c.get("duracion2")) if d] or [""]
+    plazos = [d for d in (c.get("duracion"), c.get("duracion2"), c.get("duracion3")) if d] or [""]
     _bloque(ws, f"B{fila}:C{fila + max(len(plazos), 2) - 1}",
             "Duración del contrato / contract duration", True)
     for n in range(max(len(plazos), 2)):
