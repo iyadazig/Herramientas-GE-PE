@@ -23,12 +23,11 @@ def factura(anio, mes, dia, p1=0.0, p6=0.0):
 
 
 class Datos(unittest.TestCase):
-    def test_alias_cif_y_discriminacion(self):
+    def test_alias_y_cif(self):
         self.assertEqual(so.alias_de("Empresa de prueba SA_TC4"), "TC4")
         self.assertEqual(so.alias_de("Empresa de prueba_Nave_2 Norte"), "Nave_2 Norte")
         self.assertEqual(so.alias_de("Sin alias"), "")
         self.assertEqual(so.cif_limpio("a-00.000.000"), "A00000000")
-        self.assertEqual((so.discriminacion("2.0TD"), so.discriminacion("6.1TD")), ("DH3", "DH6"))
 
     def test_perfil_por_mes_de_fin_de_factura(self):
         # diciembre facturado en dos facturas (alta a mitad de mes): se suman
@@ -69,7 +68,7 @@ class Excel(unittest.TestCase):
         self.assertEqual([h[c + "21"].value for c in "DEFGHI"], [100, 100, 100, 100, 100, 200])
         self.assertEqual((h["B25"].value, h["C25"].value, h["H25"].value), ("Ene / Jan", 100, 50))
         self.assertEqual(h["I25"].value, "=SUM(C25:H25)")
-        self.assertEqual(h["H23"].value, "DH6")
+        self.assertIn("B23:I23", [str(m) for m in h.merged_cells.ranges])   # sin DH al lado
         self.assertEqual(len(h._charts), 1)
         r = wb["Resumen"]
         self.assertEqual([r.cell(4, n).value for n in range(1, 9)],

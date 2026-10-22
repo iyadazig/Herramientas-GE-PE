@@ -57,11 +57,6 @@ def cif_limpio(cif: str) -> str:
     return re.sub(r"[\s.\-]", "", cif or "").upper()
 
 
-def discriminacion(tarifa: str) -> str:
-    """Perfil de discriminacion horaria: DH3 para la 2.0TD, DH6 para el resto."""
-    return "DH3" if str(tarifa or "").startswith("2.0") else "DH6"
-
-
 def precio_fijo(tarifa: str) -> str:
     """Precio fijo, cuando se pide: binomica en DH2 para la 2.0TD, en DH6 para la 3.0TD y
     las 6.xTD."""
@@ -250,9 +245,8 @@ def _hoja_suministro(wb, nombre_hoja, cab, s):
         pot = (s.get("potencias") or [None] * 6)[n]
         _bloque(ws, f"{col}21", pot, formato="General")
 
-    _bloque(ws, "B23:G23", "Perfil de consumo previsto según / Expected consumption profile "
+    _bloque(ws, "B23:I23", "Perfil de consumo previsto según / Expected consumption profile "
                            "according to (kWh)", True)
-    _bloque(ws, "H23:I23", discriminacion(s.get("tarifa")))
     _bloque(ws, "B24", "Mes / Month", True)
     for n, col in enumerate("CDEFGH"):
         _bloque(ws, f"{col}24", PERIODOS[n], True)

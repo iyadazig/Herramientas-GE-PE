@@ -407,7 +407,7 @@ def pagina_solicitudes_guardadas():
     solicitudes = almacen.listar_solicitudes()
     if not solicitudes:
         st.info("Todavía no hay solicitudes guardadas. Se guardan con el botón «Guardar "
-                "solicitud», al final de «Solicitud de ofertas».")
+                "solicitud», al final de «Crear nueva solicitud».")
         return
     nombres = {u["usuario"]: u["nombre"] for u in almacen.listar_usuarios()}
     c1, c2 = st.columns([2, 1])
@@ -457,12 +457,12 @@ def pagina_solicitudes_guardadas():
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary", disabled=not sol["excel"])
     if b2.button("Cargar en el formulario",
-                 help="Abre «Solicitud de ofertas» con esta solicitud para corregirla o "
+                 help="Abre «Crear nueva solicitud» con esta solicitud para corregirla o "
                       "reutilizarla. Al guardar se crea una nueva."):
         cargar_en_formulario(sol)
         if PAGINA_FORMULARIO is not None:
             st.switch_page(PAGINA_FORMULARIO)
-        st.success("Cargada: ve a «Solicitud de ofertas».")
+        st.success("Cargada: ve a «Crear nueva solicitud».")
 
     with st.expander("Texto del correo"):
         st.code(sol["texto"] or "", language=None, wrap_lines=True)

@@ -74,7 +74,7 @@ menu = {
              "gemweb-simulacion-contrato"))
     ],
     "Solicitud de ofertas": [
-        _pagina(ofertas.pagina_solicitud_ofertas, "Solicitud de ofertas",
+        _pagina(ofertas.pagina_solicitud_ofertas, "Crear nueva solicitud",
                 "Excel de solicitud de ofertas con los datos de Gemweb", "solicitud-ofertas"),
         _pagina(ofertas.pagina_solicitudes_guardadas, "Solicitudes guardadas",
                 "Solicitudes de ofertas guardadas por el equipo y su seguimiento",
