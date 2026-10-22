@@ -5,8 +5,13 @@ PAGINAS DE «SOLICITUD DE OFERTAS» de Herramientas GE&PE
 Excel de solicitud de ofertas (Resumen + una hoja por suministro) a partir de los datos de
 Gemweb: facturas de los ultimos 12 meses, potencias de la ultima factura y datos de la
 entidad y del centro, mas las consideraciones de la oferta (tipologias de precio, fechas,
-exencion), comunes a todos los suministros y modificables en cada uno. Usa las funciones de
-consulta de gemweb_extractor.paginas; el formato del Excel esta en ofertas/solicitud.py.
+exencion...), comunes a todos los suministros y modificables en cada uno. Usa las funciones
+de consulta de gemweb_extractor.paginas; el formato del Excel esta en ofertas/solicitud.py y
+el texto del correo en ofertas/correo.py.
+
+Las solicitudes se guardan en la base de datos de la plataforma (almacen) con el Excel, el
+texto y los datos del formulario: «Solicitudes guardadas» las lista para todos, con su
+seguimiento, y permite cargarlas de nuevo en el formulario (al guardar se crea otra).
 """
 
 import re
@@ -15,9 +20,15 @@ from datetime import date, datetime, time
 import pandas as pd
 import streamlit as st
 
+import almacen
 from gemweb_extractor import paginas as gw
 from ofertas import correo
 from ofertas import solicitud as so
+
+# la registra inicio.py: «Solicitudes guardadas» vuelve a ella al cargar una solicitud
+PAGINA_FORMULARIO = None
+
+ESTADOS = ["Preparada", "Enviada", "Ofertas recibidas", "Adjudicada", "Cancelada"]
 
 # columnas de la tabla de datos, en este orden (grupo = division de la entidad en Gemweb,
 # razon social = nombre de la entidad, alias = final del nombre del suministro)
@@ -34,10 +45,31 @@ GDO, EXCEDENTES = "Incluye GdO", "Compensación de excedentes"
 PCT_CONSUMO, PCT_TIPO = "% consumo sujeto a exención", "% tipo de exención"
 COLUMNAS_FECHA = [INICIO, DURACION, DURACION2, DURACION3]
 PLAZOS = ("duracion", "duracion2", "duracion3")
-COLUMNAS_CASILLA = so.PRECIO_INDEXADO + [TEMPORADA, EXENCION, GDO, EXCEDENTES]
+TIPOLOGIAS = [so.PRECIO_FIJO] + so.PRECIO_INDEXADO
+COLUMNAS_CASILLA = TIPOLOGIAS + [TEMPORADA, EXENCION, GDO, EXCEDENTES]
+
+# claves de los controles del formulario que se guardan para volver a cargarlo
+CLAVES_FORMULARIO = (["sol_ref", "sol_fecha", "sol_gestor", "sol_tel", "sol_email",
+                      "sol_producto", "sol_rec_desde", "sol_rec_hasta", "sol_rec_hora",
+                      "sol_temporada", "sol_gdo", "sol_excedentes", "sol_exencion",
+                      "sol_pct_consumo", "sol_pct_tipo", "sol_inicio", "sol_duracion",
+                      "sol_duracion2", "sol_duracion3"]
+                     + ["sol_op_" + o for o in TIPOLOGIAS])
 
 
 def pagina_solicitud_ofertas():
+    cargada = st.session_state.get("sol_cargada")
+    if cargada:
+        st.info(f"Solicitud nº {cargada['id']} cargada (Ref. {cargada['ref'] or '—'}, guardada "
+                f"por {cargada['usuario']} el {cargada['fecha']}). Cambia lo que necesites; al "
+                "guardar se crea una solicitud nueva y la original no se modifica.")
+        if st.button("Empezar una solicitud nueva"):
+            _limpiar_formulario()
+            st.rerun()
+        seccion_solicitud_ofertas({"clave": ("guardada", cargada["id"]),
+                                   "fichas": cargada["fichas"], "comun": cargada["comun"]})
+        return
+
     cliente = gw.obtener_cliente()
     st.markdown("Prepara el Excel de **solicitud de ofertas** de varios suministros a la vez: "
                 "datos del suministro, potencias de su última factura y perfil de consumo por "
@@ -64,6 +96,7 @@ def pagina_solicitud_ofertas():
     seccion_solicitud_ofertas(res)
 
 
+# ------------------------------------------------------------------- utilidades
 def _texto(valor) -> str:
     """Celda de una tabla editada como texto ('' si vacia; fechas dd/mm/aaaa)."""
     if valor is None or valor is pd.NaT or (isinstance(valor, float) and pd.isna(valor)):
@@ -77,10 +110,42 @@ def _fecha(texto):
     return datetime.strptime(texto, "%d/%m/%Y").date()
 
 
+def _valor(clave, defecto):
+    """value= de un control: el de la solicitud cargada si la hay, si no el de por defecto.
+    Siempre el mismo en cada recarga (si cambiara, Streamlit reiniciaria el control)."""
+    return {"value": st.session_state.get("sol_valores", {}).get(clave, defecto)}
+
+
+def codificar(valor):
+    """Valor de un control a JSON (fechas y horas marcadas para poder leerlas despues)."""
+    if isinstance(valor, datetime):
+        valor = valor.date()
+    if isinstance(valor, date):
+        return {"fecha": valor.isoformat()}
+    if isinstance(valor, time):
+        return {"hora": valor.strftime("%H:%M")}
+    return valor
+
+
+def decodificar(valor):
+    if isinstance(valor, dict) and "fecha" in valor:
+        return date.fromisoformat(valor["fecha"])
+    if isinstance(valor, dict) and "hora" in valor:
+        return datetime.strptime(valor["hora"], "%H:%M").time()
+    return valor
+
+
+def _limpiar_formulario():
+    for k in [k for k in st.session_state if str(k).startswith("sol_")]:
+        del st.session_state[k]
+
+
+# ------------------------------------------------------------------- consideraciones
 def consideraciones_de(fila) -> dict:
     """Consideraciones de la oferta de un suministro a partir de su fila de la tabla."""
     exento = bool(fila[EXENCION])
-    return {"indexado": [o for o in so.PRECIO_INDEXADO if bool(fila[o])],
+    return {"fijo": bool(fila[so.PRECIO_FIJO]),
+            "indexado": [o for o in so.PRECIO_INDEXADO if bool(fila[o])],
             "inicio": _texto(fila[INICIO]), "duracion": _texto(fila[DURACION]),
             "duracion2": _texto(fila[DURACION2]), "duracion3": _texto(fila[DURACION3]),
             "temporada": bool(fila[TEMPORADA]),
@@ -92,47 +157,71 @@ def consideraciones_de(fila) -> dict:
                                   _texto(fila[PCT_TIPO]) else None)}
 
 
+def fila_de(c: dict) -> dict:
+    """Lo contrario de consideraciones_de: fila de la tabla a partir de lo guardado."""
+    fila = {so.PRECIO_FIJO: c.get("fijo", True)}
+    fila.update({o: o in (c.get("indexado") or []) for o in so.PRECIO_INDEXADO})
+    for col, k in ((INICIO, "inicio"), (DURACION, "duracion"), (DURACION2, "duracion2"),
+                   (DURACION3, "duracion3")):
+        fila[col] = _fecha(c[k]) if c.get(k) else None
+    fila.update({TEMPORADA: bool(c.get("temporada")), GDO: bool(c.get("gdo")),
+                 EXCEDENTES: bool(c.get("excedentes")), EXENCION: bool(c.get("exencion")),
+                 PCT_CONSUMO: c.get("pct_consumo_exento"), PCT_TIPO: c.get("pct_tipo_exencion")})
+    return fila
+
+
 def consideraciones_comunes() -> dict:
     """Selecciones para todos los suministros, con la disposicion del formulario de ofertas."""
     st.markdown("#### Consideraciones de la oferta")
     st.caption("Lo que elijas aquí se aplica a todos los suministros. Debajo puedes cambiarlo en "
                "los que necesiten otra cosa.")
     comun = {}
-    c_index, c_part = st.columns(2)
-    with c_index:
-        st.markdown("**Precio indexado**")
-        st.caption("El precio fijo se pide siempre según la tarifa: binómica en DH2 para la "
-                   "2.0TD y en DH6 para la 3.0TD y las 6.xTD.")
-        for o in so.PRECIO_INDEXADO:
-            comun[o] = st.checkbox(o, key="sol_op_" + o)
+    c_tipo, c_part = st.columns(2)
+    with c_tipo:
+        st.markdown("**Tipología de precios**")
+        for o in TIPOLOGIAS:
+            clave = "sol_op_" + o
+            comun[o] = st.checkbox(o, key=clave, **_valor(clave, o == so.PRECIO_FIJO),
+                                   help=("Binómica en DH2 para la 2.0TD y en DH6 para la 3.0TD "
+                                         "y las 6.xTD." if o == so.PRECIO_FIJO else None))
     with c_part:
         st.markdown("**Particularidades**")
         comun[TEMPORADA] = st.checkbox(TEMPORADA, key="sol_temporada",
+                                       **_valor("sol_temporada", False),
                                        help="Sin marcar, el contrato es anual.")
-        comun[GDO] = st.checkbox("Incluye garantías de origen (GdO)", key="sol_gdo")
-        comun[EXCEDENTES] = st.checkbox(EXCEDENTES, key="sol_excedentes")
-        comun[EXENCION] = st.checkbox(EXENCION, key="sol_exencion")
+        comun[GDO] = st.checkbox("Incluye garantías de origen (GdO)", key="sol_gdo",
+                                 **_valor("sol_gdo", False))
+        comun[EXCEDENTES] = st.checkbox(EXCEDENTES, key="sol_excedentes",
+                                        **_valor("sol_excedentes", False))
+        comun[EXENCION] = st.checkbox(EXENCION, key="sol_exencion",
+                                      **_valor("sol_exencion", False))
         p1, p2 = st.columns(2)
         comun[PCT_CONSUMO] = p1.number_input("Porcentaje de consumo sujeto a exención (%)",
-                                             min_value=0.0, max_value=100.0, value=None,
-                                             disabled=not comun[EXENCION], key="sol_pct_consumo")
+                                             min_value=0.0, max_value=100.0,
+                                             disabled=not comun[EXENCION], key="sol_pct_consumo",
+                                             **_valor("sol_pct_consumo", None))
         comun[PCT_TIPO] = p2.number_input("Porcentaje tipo de exención (%)", min_value=0.0,
-                                          max_value=100.0, value=None,
-                                          disabled=not comun[EXENCION], key="sol_pct_tipo")
-    comun[INICIO] = st.date_input("Fecha prevista de inicio del contrato", value=None,
-                                  format="DD/MM/YYYY", key="sol_inicio")
+                                          max_value=100.0, disabled=not comun[EXENCION],
+                                          key="sol_pct_tipo", **_valor("sol_pct_tipo", None))
+    comun[INICIO] = st.date_input("Fecha prevista de inicio del contrato", format="DD/MM/YYYY",
+                                  key="sol_inicio", **_valor("sol_inicio", None))
     st.caption("Duración del contrato: rellena al menos una fecha fin; cada una es una "
                "alternativa de plazo para la oferta.")
     c1, c2, c3 = st.columns(3)
     for col, clave, n in ((c1, DURACION, ""), (c2, DURACION2, "2"), (c3, DURACION3, "3")):
-        comun[clave] = col.date_input(f"Duración del contrato hasta {n}".strip(), value=None,
-                                      format="DD/MM/YYYY", key="sol_duracion" + n)
+        comun[clave] = col.date_input(f"Duración del contrato hasta {n}".strip(),
+                                      format="DD/MM/YYYY", key="sol_duracion" + n,
+                                      **_valor("sol_duracion" + n, None))
     return comun
 
 
-def tabla_consideraciones(fichas: list, comun: dict) -> pd.DataFrame:
-    """Una fila por suministro con las selecciones comunes, para editarla."""
-    tabla = pd.DataFrame([dict({"CUPS": f["cups"], "Alias": f.get("alias", "")}, **comun)
+def tabla_consideraciones(fichas: list, comun: dict, guardado: dict = None) -> pd.DataFrame:
+    """Una fila por suministro con las selecciones comunes, para editarla. Si es una solicitud
+    guardada y lo comun no ha cambiado desde entonces, con lo que tenia cada suministro."""
+    usar_guardado = guardado is not None and guardado == comun
+    tabla = pd.DataFrame([dict({"CUPS": f["cups"], "Alias": f.get("alias", "")},
+                               **(fila_de(f["consideraciones"])
+                                  if usar_guardado and f.get("consideraciones") else comun))
                           for f in fichas])
     for col in COLUMNAS_FECHA:
         tabla[col] = pd.to_datetime(tabla[col])
@@ -141,8 +230,10 @@ def tabla_consideraciones(fichas: list, comun: dict) -> pd.DataFrame:
     return tabla
 
 
+# ------------------------------------------------------------------- formulario
 def seccion_solicitud_ofertas(res: dict) -> None:
-    """Cabecera, tablas revisables de los suministros y boton de descarga del Excel."""
+    """Cabecera, tablas revisables de los suministros y botones de descarga, texto del correo
+    y guardado."""
     fichas = res.get("fichas") or []
     if not fichas:
         st.warning("No se ha encontrado ningún suministro en Gemweb.")
@@ -155,24 +246,29 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     usuario = st.session_state.get("usuario") or {}
     c1, c2, c3 = st.columns(3)
     with c1:
-        ref = st.text_input("Ref.", key="sol_ref")
-        fecha = st.date_input("Fecha", value=date.today(), format="DD/MM/YYYY", key="sol_fecha")
+        ref = st.text_input("Ref.", key="sol_ref", **_valor("sol_ref", ""))
+        fecha = st.date_input("Fecha", format="DD/MM/YYYY", key="sol_fecha",
+                              **_valor("sol_fecha", date.today()))
     with c2:
-        gestor = st.text_input("Gestor de cuenta", value=usuario.get("nombre", ""),
-                               key="sol_gestor")
-        telefono = st.text_input("Teléfono", value=so.TELEFONO_GEYPE, key="sol_tel")
+        gestor = st.text_input("Gestor de cuenta", key="sol_gestor",
+                               **_valor("sol_gestor", usuario.get("nombre", "")))
+        telefono = st.text_input("Teléfono", key="sol_tel",
+                                 **_valor("sol_tel", so.TELEFONO_GEYPE))
     with c3:
-        email = st.text_input("Email", value=usuario.get("email") or "", key="sol_email",
+        email = st.text_input("Email", key="sol_email",
                               help="El del usuario conectado. Si sale vacío, un administrador "
-                                   "puede añadirlo en Administración → Usuarios.")
-        producto = st.text_input("Producto", key="sol_producto",
+                                   "puede añadirlo en Administración → Usuarios.",
+                              **_valor("sol_email", usuario.get("email") or ""))
+        producto = st.text_input("Producto", key="sol_producto", **_valor("sol_producto", ""),
                                  placeholder="p. ej. ELECTRICIDAD / ELECTRICITY")
     st.markdown("**Periodo para la recepción de las ofertas**")
     c1, c2, c3 = st.columns(3)
-    desde = c1.date_input("Desde", value=date.today(), format="DD/MM/YYYY", key="sol_rec_desde")
-    hasta = c2.date_input("Hasta (fecha límite)", value=None, format="DD/MM/YYYY",
-                          key="sol_rec_hasta")
-    hora = c3.time_input("Hora límite", value=time(12, 0), key="sol_rec_hora", step=900)
+    desde = c1.date_input("Desde", format="DD/MM/YYYY", key="sol_rec_desde",
+                          **_valor("sol_rec_desde", date.today()))
+    hasta = c2.date_input("Hasta (fecha límite)", format="DD/MM/YYYY", key="sol_rec_hasta",
+                          **_valor("sol_rec_hasta", None))
+    hora = c3.time_input("Hora límite", key="sol_rec_hora", step=900,
+                         **_valor("sol_rec_hora", time(12, 0)))
     if desde and hasta and hasta < desde:
         st.warning("La fecha límite de recepción es anterior a la de inicio.")
 
@@ -203,8 +299,8 @@ def seccion_solicitud_ofertas(res: dict) -> None:
                      for c in (PCT_CONSUMO, PCT_TIPO)})
     columnas.update({c: st.column_config.CheckboxColumn() for c in COLUMNAS_CASILLA})
     editada_c = st.data_editor(
-        tabla_consideraciones(fichas, comun), hide_index=True, use_container_width=True,
-        disabled=["CUPS", "Alias"], column_config=columnas,
+        tabla_consideraciones(fichas, comun, res.get("comun")), hide_index=True,
+        use_container_width=True, disabled=["CUPS", "Alias"], column_config=columnas,
         key="sol_consid_%d_%d" % (hash(res["clave"]), hash(repr(sorted(comun.items())))))
 
     inversa = {v: k for k, v in COLUMNAS_FICHA.items()}
@@ -236,20 +332,150 @@ def seccion_solicitud_ofertas(res: dict) -> None:
                 "recepcion_hora": hora.strftime("%H:%M") if hora else ""}
     if not hasta:
         st.info("Elige la fecha límite de recepción de ofertas (arriba, en «Periodo para la "
-                "recepción de las ofertas») para poder descargar la solicitud y el texto.")
+                "recepción de las ofertas») para poder descargar, ver el texto y guardar.")
     listo = bool(hasta) and not sin_plazo
+    excel = so.excel_solicitud(cabecera, suministros) if listo else b""
+    texto = correo.texto_correo(cabecera, suministros) if listo else ""
     nombre = "solicitud_ofertas_%s.xlsx" % (re.sub(r"[^\w-]", "_", ref) if ref else
                                              date.today().strftime("%d%m%Y"))
-    b1, b2 = st.columns(2)
-    b1.download_button("Descargar solicitud de ofertas",
-                       data=so.excel_solicitud(cabecera, suministros) if listo else b"",
-                       file_name=nombre, disabled=not listo,
+    b1, b2, b3 = st.columns(3)
+    b1.download_button("Descargar solicitud de ofertas", data=excel, file_name=nombre,
+                       disabled=not listo,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary")
     if b2.button("Texto para el correo a las comercializadoras", disabled=not listo):
         st.session_state.sol_ver_correo = True
+    if b3.button("Guardar solicitud", disabled=not listo,
+                 help="Guarda el Excel, el texto del correo y todos los datos en el ordenador "
+                      "de la plataforma. Se consultan en «Solicitudes guardadas»."):
+        id_sol = guardar(cabecera, comun, suministros, excel, texto,
+                         usuario.get("usuario", ""))
+        st.session_state.sol_guardada = id_sol
+    if st.session_state.get("sol_guardada"):
+        st.success(f"Solicitud guardada con el nº {st.session_state.sol_guardada}. Está en "
+                   "«Solicitud de ofertas → Solicitudes guardadas».")
     if listo and st.session_state.get("sol_ver_correo"):
         st.markdown("#### Texto para el correo")
         st.caption("Cópialo con el botón de la esquina del recuadro y pégalo en el correo. Se "
                    "actualiza solo si cambias algo de arriba.")
-        st.code(correo.texto_correo(cabecera, suministros), language=None, wrap_lines=True)
+        st.code(texto, language=None, wrap_lines=True)
+
+
+def cliente_de(suministros: list) -> str:
+    grupos = list(dict.fromkeys(s.get("grupo") for s in suministros if s.get("grupo")))
+    razones = list(dict.fromkeys(s.get("razon") for s in suministros if s.get("razon")))
+    return ", ".join(grupos or razones)
+
+
+def guardar(cabecera, comun, suministros, excel, texto, usuario) -> int:
+    resumen = {"ref": cabecera.get("ref"), "cliente": cliente_de(suministros),
+               "cups": [s["cups"] for s in suministros],
+               "consumo": round(sum(so.consumo_anual(s) for s in suministros)),
+               "recepcion_desde": cabecera.get("recepcion_desde"),
+               "recepcion_hasta": " ".join(x for x in (cabecera.get("recepcion_hasta"),
+                                                       cabecera.get("recepcion_hora")) if x)}
+    datos = {"formulario": {k: codificar(st.session_state[k]) for k in CLAVES_FORMULARIO
+                            if k in st.session_state},
+             "comun": {k: codificar(v) for k, v in comun.items()},
+             "cabecera": cabecera, "suministros": suministros}
+    return almacen.guardar_solicitud(usuario, resumen, datos, texto, excel)
+
+
+# ------------------------------------------------------------------- guardadas
+def cargar_en_formulario(sol: dict) -> None:
+    """Deja la solicitud guardada lista en el formulario (sus controles y sus suministros)."""
+    _limpiar_formulario()
+    datos = sol["datos"]
+    st.session_state.sol_valores = {k: decodificar(v)
+                                    for k, v in datos.get("formulario", {}).items()}
+    fichas = []
+    for s in datos["suministros"]:
+        s = dict(s)
+        s["perfil"] = {int(m): v for m, v in (s.get("perfil") or {}).items()}
+        fichas.append(s)
+    st.session_state.sol_cargada = {
+        "id": sol["id"], "ref": sol.get("ref"), "usuario": sol.get("usuario"),
+        "fecha": _fecha_hora(sol.get("fecha")), "fichas": fichas,
+        "comun": {k: decodificar(v) for k, v in datos.get("comun", {}).items()}}
+
+
+def _fecha_hora(iso: str) -> str:
+    return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M") if iso else ""
+
+
+def pagina_solicitudes_guardadas():
+    solicitudes = almacen.listar_solicitudes()
+    if not solicitudes:
+        st.info("Todavía no hay solicitudes guardadas. Se guardan con el botón «Guardar "
+                "solicitud», al final de «Solicitud de ofertas».")
+        return
+    nombres = {u["usuario"]: u["nombre"] for u in almacen.listar_usuarios()}
+    c1, c2 = st.columns([2, 1])
+    buscar = c1.text_input("Buscar por cliente, CUPS, Ref. o comercializadora").strip().lower()
+    estados = c2.multiselect("Estado", ESTADOS)
+    filtradas = [s for s in solicitudes
+                 if (not estados or s["estado"] in estados)
+                 and (not buscar or buscar in " ".join(str(s.get(k) or "") for k in (
+                     "cliente", "cups", "ref", "comercializadoras")).lower())]
+    tabla = pd.DataFrame([{
+        "Nº": s["id"], "Guardada": _fecha_hora(s["fecha"]),
+        "Usuario": nombres.get(s["usuario"], s["usuario"]), "Ref.": s["ref"],
+        "Cliente/Grupo": s["cliente"], "Suministros": s["suministros"],
+        "Consumo anual kWh": s["consumo"], "Recepción desde": s["recepcion_desde"],
+        "Recepción hasta": s["recepcion_hasta"], "Estado": s["estado"],
+        "Comercializadoras": s["comercializadoras"]} for s in filtradas])
+    st.dataframe(tabla, hide_index=True, use_container_width=True,
+                 column_config={"Consumo anual kWh": st.column_config.NumberColumn(
+                     format="localized")})
+    if not filtradas:
+        return
+
+    st.subheader("Detalle")
+    por_id = {s["id"]: s for s in filtradas}
+    elegida = st.selectbox(
+        "Solicitud", list(por_id), format_func=lambda i: "Nº %d · %s · %s%s" % (
+            i, _fecha_hora(por_id[i]["fecha"]), por_id[i]["cliente"] or "—",
+            f" · Ref. {por_id[i]['ref']}" if por_id[i]["ref"] else ""))
+    sol = almacen.solicitud(elegida)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Suministros", sol["suministros"])
+    c2.metric("Consumo anual previsto", f"{sol['consumo'] or 0:,.0f} kWh".replace(",", "."))
+    c3.metric("Estado", sol["estado"])
+    st.caption(f"Guardada por {nombres.get(sol['usuario'], sol['usuario'])} el "
+               f"{_fecha_hora(sol['fecha'])}"
+               + (f" · seguimiento actualizado por "
+                  f"{nombres.get(sol['actualizado_por'], sol['actualizado_por'])} el "
+                  f"{_fecha_hora(sol['actualizado'])}" if sol.get("actualizado") else ""))
+    with st.expander(f"CUPS ({sol['suministros']})"):
+        st.code(sol["cups"].replace(", ", "\n"), language=None)
+
+    b1, b2 = st.columns(2)
+    b1.download_button("Descargar Excel", data=sol["excel"] or b"",
+                       file_name="solicitud_ofertas_%d%s.xlsx" % (
+                           sol["id"], "_" + re.sub(r"[^\w-]", "_", sol["ref"]) if sol["ref"]
+                           else ""),
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       type="primary", disabled=not sol["excel"])
+    if b2.button("Cargar en el formulario",
+                 help="Abre «Solicitud de ofertas» con esta solicitud para corregirla o "
+                      "reutilizarla. Al guardar se crea una nueva."):
+        cargar_en_formulario(sol)
+        if PAGINA_FORMULARIO is not None:
+            st.switch_page(PAGINA_FORMULARIO)
+        st.success("Cargada: ve a «Solicitud de ofertas».")
+
+    with st.expander("Texto del correo"):
+        st.code(sol["texto"] or "", language=None, wrap_lines=True)
+
+    with st.form(f"seguimiento_{sol['id']}"):
+        st.markdown("**Seguimiento**")
+        estado = st.selectbox("Estado", ESTADOS, index=ESTADOS.index(sol["estado"])
+                              if sol["estado"] in ESTADOS else 0)
+        comercializadoras = st.text_area("Comercializadoras a las que se ha enviado",
+                                         value=sol["comercializadoras"] or "",
+                                         placeholder="Una por línea o separadas por comas")
+        if st.form_submit_button("Guardar seguimiento"):
+            almacen.actualizar_seguimiento(sol["id"], estado, comercializadoras,
+                                           (st.session_state.get("usuario") or {}).get(
+                                               "usuario", ""))
+            st.rerun()

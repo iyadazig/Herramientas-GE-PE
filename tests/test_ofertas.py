@@ -3,6 +3,7 @@
 
 import datetime as dt
 import io
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import openpyxl
+import pandas as pd
 
 from ofertas import correo
 from ofertas import solicitud as so
@@ -109,6 +111,12 @@ class Excel(unittest.TestCase):
         self.assertEqual(h["F80"].fill.fgColor.rgb[-6:], so.NARANJA)
         self.assertFalse(any("exención" in str(v) or "excedentes" in str(v) for v in valores))
 
+    def test_sin_precio_fijo_la_fila_queda_vacia(self):
+        h = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud({}, [
+            {"cups": "ES0000000000000000XX", "tarifa": "6.1TD",
+             "consideraciones": {"fijo": False}}])))["1. 000000XX"]
+        self.assertEqual((h["B62"].value, h["D62"].value), ("Precio fijo / Fixed price", None))
+
     def test_precio_fijo_segun_tarifa(self):
         self.assertEqual([so.precio_fijo(t) for t in ("2.0TD", "3.0TD", "6.1TD", "6.4TD")],
                          ["Binómica en DH2"] + ["Binómica en DH6"] * 3)
@@ -129,6 +137,34 @@ class TablaConsideraciones(unittest.TestCase):
         self.assertEqual((a["exencion"], a["pct_consumo_exento"]), (False, None))
         self.assertEqual((b["gdo"], b["exencion"], b["pct_consumo_exento"], b["duracion"]),
                          (True, True, 50.0, ""))
+
+
+class GuardarYCargar(unittest.TestCase):
+    def test_formulario_ida_y_vuelta(self):
+        from ofertas import paginas as op
+        for v in (dt.date(2027, 1, 1), dt.time(12, 0), "R-1", True, 85.0, None):
+            self.assertEqual(op.decodificar(json.loads(json.dumps(op.codificar(v)))), v)
+        c = {"fijo": False, "indexado": ["PVPC"], "inicio": "01/01/2027", "duracion": "",
+             "duracion2": "31/12/2028", "duracion3": "", "temporada": True, "gdo": True,
+             "excedentes": False, "exencion": True, "pct_consumo_exento": 85.0,
+             "pct_tipo_exencion": None}
+        fila = pd.Series(op.fila_de(c))
+        fila[op.INICIO] = pd.Timestamp(fila[op.INICIO])
+        fila[op.DURACION2] = pd.Timestamp(fila[op.DURACION2])
+        self.assertEqual(op.consideraciones_de(fila), c)
+
+    def test_tabla_con_lo_guardado_si_lo_comun_no_cambia(self):
+        from ofertas import paginas as op
+        comun = {o: False for o in op.COLUMNAS_CASILLA}
+        comun.update({op.INICIO: None, op.DURACION: dt.date(2027, 12, 31), op.DURACION2: None,
+                      op.DURACION3: None, op.PCT_CONSUMO: None, op.PCT_TIPO: None})
+        fichas = [{"cups": "A", "consideraciones": {"indexado": ["PVPC"],
+                                                    "duracion": "31/12/2029"}}]
+        guardada = op.tabla_consideraciones(fichas, comun, dict(comun))
+        self.assertTrue(guardada.loc[0, "PVPC"])
+        self.assertEqual(guardada.loc[0, op.DURACION].year, 2029)
+        otra = dict(comun, **{op.GDO: True})               # lo comun ha cambiado
+        self.assertFalse(op.tabla_consideraciones(fichas, otra, dict(comun)).loc[0, "PVPC"])
 
 
 class Correo(unittest.TestCase):
@@ -153,7 +189,7 @@ class Correo(unittest.TestCase):
         self.assertIn("del cliente GRUPO DE PRUEBA en España", texto)
         self.assertIn("• CUPS: ES0000000000000000XX (EMPRESA DE PRUEBA SA)\n", texto)
         self.assertIn("consumo anual previsto total de 3.000 kWh", texto)
-        self.assertIn("• Precio indexado: PVPC.\n", texto)
+        self.assertIn("• Tipología de precios: Precio fijo y PVPC.\n", texto)
         self.assertIn("• Tipo de contrato: anual.\n", texto)
         self.assertIn("inicio del contrato: 1 de enero de 2027.\n", texto)
         self.assertIn("Duración del contrato: tres alternativas, hasta el 31 de diciembre de "
@@ -185,9 +221,10 @@ class Correo(unittest.TestCase):
             self.suministro("ES0000000000000000XX", indexado=pt, gdo=True),
             self.suministro("ES0000000000000001XX", indexado=pt, gdo=True,
                             inicio="01/03/2027"),
-            self.suministro("ES0000000000000002XX", indexado=["PVPC"], temporada=True)])
-        self.assertIn("• Precio indexado: Indexada Omie Pass Through y Indexada Omie Pass Pool "
-                      "(ES0000000000000002XX: PVPC).", texto)
+            self.suministro("ES0000000000000002XX", indexado=["PVPC"], temporada=True,
+                            fijo=False)])
+        self.assertIn("• Tipología de precios: Precio fijo, Indexada Omie Pass Through y Indexada "
+                      "Omie Pass Pool (ES0000000000000002XX: PVPC).", texto)
         self.assertIn("• Tipo de contrato: anual (ES0000000000000002XX: de temporada).", texto)
         self.assertIn("inicio del contrato: 1 de enero de 2027 (ES0000000000000001XX: 1 de marzo "
                       "de 2027).", texto)

@@ -30,7 +30,9 @@ COLS_P = ["P1 kWh", "P2 kWh", "P3 kWh", "P4 kWh", "P5 kWh", "P6 kWh"]
 # colores de las series del grafico (como en la plantilla): p1 rojo ... p6 verde
 COLORES_P = ["FF0000", "7030A0", "FF6600", "FFFF00", "0000FF", "00A000"]
 
-# tipologias de precio indexado que se pueden pedir (el fijo sale de la tarifa: precio_fijo)
+# tipologias de precio que se pueden pedir. El fijo, si se pide, es la binomica segun la
+# tarifa (precio_fijo)
+PRECIO_FIJO = "Precio fijo"
 PRECIO_INDEXADO = ["PVPC", "Indexada Omie Pass Through + Omip (carga base)",
                    "Indexada Omie Pass Through + Omip (% consumo)",
                    "Indexada Omie Pass Pool + Omip (carga base)",
@@ -61,7 +63,7 @@ def discriminacion(tarifa: str) -> str:
 
 
 def precio_fijo(tarifa: str) -> str:
-    """Precio fijo que se pide siempre: binomica en DH2 para la 2.0TD, en DH6 para la 3.0TD y
+    """Precio fijo, cuando se pide: binomica en DH2 para la 2.0TD, en DH6 para la 3.0TD y
     las 6.xTD."""
     return "Binómica en DH2" if str(tarifa or "").startswith("2.0") else "Binómica en DH6"
 
@@ -141,8 +143,8 @@ def _consideraciones(ws, cab, s, fila):
     c = s.get("consideraciones") or {}
     _bloque(ws, f"B{fila}:I{fila}", "Tipología de ofertas solicitadas / Typology of requested "
                                     "offers", True)
-    # precio fijo (segun la tarifa): tres por fila (D:E, F:G, H:I)
-    fijo = [precio_fijo(s.get("tarifa"))]
+    # precio fijo (si se pide, segun la tarifa): tres por fila (D:E, F:G, H:I)
+    fijo = [precio_fijo(s.get("tarifa"))] if c.get("fijo", True) else []
     filas_fijo = max(1, -(-len(fijo) // 3))
     ini = fila + 1
     _bloque(ws, f"B{ini}:C{ini + filas_fijo - 1}", "Precio fijo / Fixed price", True)

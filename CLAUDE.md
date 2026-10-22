@@ -22,7 +22,10 @@ pago. La factura y la curva no salen del PC.
 - **Solicitud de ofertas**: `ofertas/paginas.py` (consulta Gemweb con las funciones de
   `gemweb_extractor/paginas.py`), `ofertas/solicitud.py` (formato del Excel) y `ofertas/correo.py`
   (texto del correo a las comercializadoras). Sección propia
-  porque se le van a añadir más funciones.
+  porque se le van a añadir más funciones. «Solicitudes guardadas»
+  (`ofertas.paginas.pagina_solicitudes_guardadas`): las solicitudes se guardan en la base de
+  datos (`almacen`, tabla `solicitudes_ofertas`: Excel, texto, datos del formulario y
+  seguimiento); todos las ven y pueden volver a cargarlas en el formulario.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.

@@ -5,8 +5,8 @@ TEXTO DEL CORREO de peticion de ofertas a las comercializadoras
 Se genera con los mismos datos que el Excel. En el listado, junto a cada CUPS, solo la
 exencion del impuesto electrico y la compensacion de excedentes (si las tiene). En el
 resumen, para el resto de condiciones, lo mas habitual entre los suministros y, si alguno es
-distinto, la excepcion con sus CUPS. El precio fijo (binomica segun tarifa) no se menciona:
-va en el Excel.
+distinto, la excepcion con sus CUPS. Del precio fijo solo se dice si se pide (la binomica
+segun la tarifa va en el Excel).
 """
 
 from collections import Counter
@@ -96,15 +96,17 @@ def _resumen(suministros: list) -> list:
     lineas = [f"Número de suministros: {len(suministros)}, con un consumo anual previsto total "
               f"de {_kwh(sum(so.consumo_anual(s) for s in suministros))}."]
 
-    def indexado(v):
-        return _lista(v) if v else "no se solicita"
-    principal, otros = _mas_habitual(datos, lambda s: tuple(s["_c"].get("indexado") or ()))
+    def tipologia(v):
+        return _lista(v) if v else "ninguna"
+    principal, otros = _mas_habitual(datos, lambda s: tuple(
+        ([so.PRECIO_FIJO] if s["_c"].get("fijo", True) else [])
+        + list(s["_c"].get("indexado") or ())))
     if principal:
-        lineas.append(_con_excepciones(f"Precio indexado: {indexado(principal)}", otros,
-                                       indexado) + ".")
+        lineas.append(_con_excepciones(f"Tipología de precios: {tipologia(principal)}", otros,
+                                       tipologia) + ".")
     elif otros:
-        lineas.append("Precio indexado, solo en algunos suministros: " + "; ".join(
-            f"{_lista(cups)}: {indexado(v)}" for v, cups in otros) + ".")
+        lineas.append("Tipología de precios, solo en algunos suministros: " + "; ".join(
+            f"{_lista(cups)}: {tipologia(v)}" for v, cups in otros) + ".")
 
     principal, otros = _mas_habitual(
         datos, lambda s: "de temporada" if s["_c"].get("temporada") else "anual")

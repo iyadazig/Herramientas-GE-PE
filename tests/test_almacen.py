@@ -126,6 +126,23 @@ class Almacen(unittest.TestCase):
         self.assertEqual((r["id"], r["diferencia"], r["veredicto"]), (rid, 2.0, "FACTURADO DE MÁS"))
         self.assertEqual(almacen.informe_revision(rid)[0], b"xlsx")
 
+    def test_solicitudes_de_ofertas(self):
+        sid = almacen.guardar_solicitud(
+            "ana", {"ref": "R-1", "cliente": "GRUPO DE PRUEBA",
+                    "cups": ["ES0000000000000000XX", "ES0000000000000001XX"], "consumo": 3000,
+                    "recepcion_desde": "22/10/2026", "recepcion_hasta": "23/10/2026 12:00"},
+            {"formulario": {"sol_ref": "R-1"}}, "Estimado comercializador:", b"xlsx")
+        r = almacen.listar_solicitudes()[0]
+        self.assertEqual((r["id"], r["usuario"], r["suministros"], r["estado"]),
+                         (sid, "ana", 2, "Preparada"))
+        almacen.actualizar_seguimiento(sid, "Enviada", " Comercializadora A ", "luis")
+        sol = almacen.solicitud(sid)
+        self.assertEqual((sol["estado"], sol["comercializadoras"], sol["actualizado_por"]),
+                         ("Enviada", "Comercializadora A", "luis"))
+        self.assertEqual((sol["datos"]["formulario"]["sol_ref"], sol["excel"], sol["texto"]),
+                         ("R-1", b"xlsx", "Estimado comercializador:"))
+        self.assertIsNone(almacen.solicitud(999))
+
     def test_escrituras_simultaneas(self):
         errores = []
 

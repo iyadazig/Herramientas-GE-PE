@@ -76,8 +76,12 @@ menu = {
     "Solicitud de ofertas": [
         _pagina(ofertas.pagina_solicitud_ofertas, "Solicitud de ofertas",
                 "Excel de solicitud de ofertas con los datos de Gemweb", "solicitud-ofertas"),
+        _pagina(ofertas.pagina_solicitudes_guardadas, "Solicitudes guardadas",
+                "Solicitudes de ofertas guardadas por el equipo y su seguimiento",
+                "solicitudes-guardadas"),
     ],
 }
+ofertas.PAGINA_FORMULARIO = menu["Solicitud de ofertas"][0]   # para «Cargar en el formulario»
 if usuario["admin"]:
     menu["Administración"] = [
         _pagina(paginas.pagina_usuarios, "Usuarios", "Altas, contraseñas y permisos",

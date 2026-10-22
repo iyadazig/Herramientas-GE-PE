@@ -8,6 +8,9 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
   contratos             ficha vigente de cada CUPS y quien/cuando la guardo
   contratos_historial   todas las versiones de cada ficha (quien, cuando, que)
   revisiones            cada revision: usuario, fecha, factura, importes, veredicto e informe
+  solicitudes_ofertas   cada solicitud de ofertas guardada: quien, cuando, cliente, CUPS,
+                        periodo de recepcion, seguimiento (estado, comercializadoras), Excel,
+                        texto del correo y los datos del formulario para volver a cargarla
 
 SQLite en modo WAL admite varios compañeros a la vez desde la misma app (servidor).
 La primera vez se importan las fichas de contratos_ssaa.json si existe.
@@ -48,6 +51,12 @@ CREATE TABLE IF NOT EXISTS revisiones (
     clausula TEXT, lineas INTEGER, facturado REAL, recalculado REAL, diferencia REAL,
     veredicto TEXT, detalle TEXT, informe BLOB);
 CREATE INDEX IF NOT EXISTS ix_rev_cups ON revisiones(cups);
+CREATE TABLE IF NOT EXISTS solicitudes_ofertas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
+    ref TEXT, cliente TEXT, cups TEXT, suministros INTEGER, consumo REAL,
+    recepcion_desde TEXT, recepcion_hasta TEXT, estado TEXT NOT NULL,
+    comercializadoras TEXT, actualizado TEXT, actualizado_por TEXT,
+    datos TEXT NOT NULL, texto TEXT, excel BLOB);
 CREATE INDEX IF NOT EXISTS ix_hist_cups ON contratos_historial(cups);
 """
 
@@ -325,6 +334,51 @@ def informe_revision(id_revision):
         r = con.execute("SELECT informe, cups, factura FROM revisiones WHERE id=?",
                         (id_revision,)).fetchone()
         return (r["informe"], r["cups"], r["factura"]) if r else (None, None, None)
+
+
+# ------------------------------------------------------------------- solicitudes de ofertas
+def guardar_solicitud(usuario, resumen, datos, texto, excel, estado="Preparada"):
+    """resumen: ref, cliente, cups (lista), consumo, recepcion_desde, recepcion_hasta.
+    datos: lo necesario para volver a cargar el formulario (JSON). Devuelve el id."""
+    with _con(escribir=True) as con:
+        cur = con.execute(
+            "INSERT INTO solicitudes_ofertas (fecha, usuario, ref, cliente, cups, suministros, "
+            "consumo, recepcion_desde, recepcion_hasta, estado, datos, texto, excel) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (_ahora(), usuario, resumen.get("ref"), resumen.get("cliente"),
+             ", ".join(resumen.get("cups") or []), len(resumen.get("cups") or []),
+             resumen.get("consumo"), resumen.get("recepcion_desde"),
+             resumen.get("recepcion_hasta"), estado,
+             json.dumps(datos, ensure_ascii=False, default=str), texto, excel))
+        return cur.lastrowid
+
+
+def listar_solicitudes(limite=1000):
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, fecha, usuario, ref, cliente, cups, suministros, consumo, "
+            "recepcion_desde, recepcion_hasta, estado, comercializadoras, actualizado, "
+            "actualizado_por FROM solicitudes_ofertas ORDER BY id DESC LIMIT ?", (limite,))]
+
+
+def solicitud(id_solicitud):
+    """Solicitud completa (con datos ya leidos del JSON, Excel y texto) o None."""
+    with _con() as con:
+        r = con.execute("SELECT * FROM solicitudes_ofertas WHERE id=?",
+                        (id_solicitud,)).fetchone()
+    if not r:
+        return None
+    r = dict(r)
+    r["datos"] = json.loads(r["datos"])
+    return r
+
+
+def actualizar_seguimiento(id_solicitud, estado, comercializadoras, usuario):
+    with _con(escribir=True) as con:
+        con.execute("UPDATE solicitudes_ofertas SET estado=?, comercializadoras=?, "
+                    "actualizado=?, actualizado_por=? WHERE id=?",
+                    (estado, (comercializadoras or "").strip(), _ahora(), usuario,
+                     id_solicitud))
 
 
 # ------------------------------------------------------------------- copias
