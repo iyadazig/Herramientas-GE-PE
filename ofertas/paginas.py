@@ -10,12 +10,13 @@ consulta de gemweb_extractor.paginas; el formato del Excel esta en ofertas/solic
 """
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 import pandas as pd
 import streamlit as st
 
 from gemweb_extractor import paginas as gw
+from ofertas import correo
 from ofertas import solicitud as so
 
 # columnas de la tabla de datos, en este orden (grupo = division de la entidad en Gemweb,
@@ -28,9 +29,10 @@ COLUMNAS_FICHA = {"grupo": "Cliente/Grupo", "razon": "Razón social", "cif": "CI
 INICIO, DURACION, DURACION2 = ("Fecha prevista de inicio", "Duración del contrato hasta",
                                "Duración del contrato hasta 2")
 TEMPORADA, EXENCION = "De temporada", "Sujeto a exención de impuesto eléctrico"
+GDO, EXCEDENTES = "Incluye GdO", "Compensación de excedentes"
 PCT_CONSUMO, PCT_TIPO = "% consumo sujeto a exención", "% tipo de exención"
 COLUMNAS_FECHA = [INICIO, DURACION, DURACION2]
-COLUMNAS_CASILLA = so.PRECIO_FIJO + so.PRECIO_INDEXADO + [TEMPORADA, EXENCION]
+COLUMNAS_CASILLA = so.PRECIO_INDEXADO + [TEMPORADA, EXENCION, GDO, EXCEDENTES]
 
 
 def pagina_solicitud_ofertas():
@@ -76,10 +78,10 @@ def _fecha(texto):
 def consideraciones_de(fila) -> dict:
     """Consideraciones de la oferta de un suministro a partir de su fila de la tabla."""
     exento = bool(fila[EXENCION])
-    return {"fijo": [o for o in so.PRECIO_FIJO if bool(fila[o])],
-            "indexado": [o for o in so.PRECIO_INDEXADO if bool(fila[o])],
+    return {"indexado": [o for o in so.PRECIO_INDEXADO if bool(fila[o])],
             "inicio": _texto(fila[INICIO]), "duracion": _texto(fila[DURACION]),
             "duracion2": _texto(fila[DURACION2]), "temporada": bool(fila[TEMPORADA]),
+            "gdo": bool(fila[GDO]), "excedentes": bool(fila[EXCEDENTES]),
             "exencion": exento,
             "pct_consumo_exento": (float(fila[PCT_CONSUMO]) if exento and
                                    _texto(fila[PCT_CONSUMO]) else None),
@@ -93,15 +95,27 @@ def consideraciones_comunes() -> dict:
     st.caption("Lo que elijas aquí se aplica a todos los suministros. Debajo puedes cambiarlo en "
                "los que necesiten otra cosa.")
     comun = {}
-    c_fijo, c_index = st.columns(2)
-    with c_fijo:
-        st.markdown("**Precio fijo**")
-        for o in so.PRECIO_FIJO:
-            comun[o] = st.checkbox(o, key="sol_op_" + o)
+    c_index, c_part = st.columns(2)
     with c_index:
         st.markdown("**Precio indexado**")
+        st.caption("El precio fijo se pide siempre según la tarifa: binómica en DH2 para la "
+                   "2.0TD y en DH6 para la 3.0TD y las 6.xTD.")
         for o in so.PRECIO_INDEXADO:
             comun[o] = st.checkbox(o, key="sol_op_" + o)
+    with c_part:
+        st.markdown("**Particularidades**")
+        comun[TEMPORADA] = st.checkbox(TEMPORADA, key="sol_temporada",
+                                       help="Sin marcar, el contrato es anual.")
+        comun[GDO] = st.checkbox("Incluye garantías de origen (GdO)", key="sol_gdo")
+        comun[EXCEDENTES] = st.checkbox(EXCEDENTES, key="sol_excedentes")
+        comun[EXENCION] = st.checkbox(EXENCION, key="sol_exencion")
+        p1, p2 = st.columns(2)
+        comun[PCT_CONSUMO] = p1.number_input("Porcentaje de consumo sujeto a exención (%)",
+                                             min_value=0.0, max_value=100.0, value=None,
+                                             disabled=not comun[EXENCION], key="sol_pct_consumo")
+        comun[PCT_TIPO] = p2.number_input("Porcentaje tipo de exención (%)", min_value=0.0,
+                                          max_value=100.0, value=None,
+                                          disabled=not comun[EXENCION], key="sol_pct_tipo")
     c1, c2, c3 = st.columns(3)
     comun[INICIO] = c1.date_input("Fecha prevista de inicio del contrato", value=None,
                                   format="DD/MM/YYYY", key="sol_inicio")
@@ -110,16 +124,6 @@ def consideraciones_comunes() -> dict:
     comun[DURACION2] = c3.date_input("Duración del contrato hasta 2 (opcional)", value=None,
                                      format="DD/MM/YYYY", key="sol_duracion2",
                                      help="Para pedir además la oferta a un segundo plazo.")
-    c1, c2, c3, c4 = st.columns(4)
-    comun[TEMPORADA] = c1.checkbox(TEMPORADA, key="sol_temporada",
-                                   help="Sin marcar, el contrato es anual.")
-    comun[EXENCION] = c2.checkbox(EXENCION, key="sol_exencion")
-    comun[PCT_CONSUMO] = c3.number_input("Porcentaje de consumo sujeto a exención (%)",
-                                         min_value=0.0, max_value=100.0, value=None,
-                                         disabled=not comun[EXENCION], key="sol_pct_consumo")
-    comun[PCT_TIPO] = c4.number_input("Porcentaje tipo de exención (%)", min_value=0.0,
-                                      max_value=100.0, value=None,
-                                      disabled=not comun[EXENCION], key="sol_pct_tipo")
     return comun
 
 
@@ -149,10 +153,7 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     c1, c2, c3 = st.columns(3)
     with c1:
         ref = st.text_input("Ref.", key="sol_ref")
-        fecha = st.date_input("Fecha", value=date.today(), format="DD/MM/YYYY", key="sol_fecha",
-                              help="También es el inicio del periodo de recepción de ofertas.")
-        limite = st.date_input("Fecha límite de recepción de ofertas", value=None,
-                               format="DD/MM/YYYY", key="sol_limite")
+        fecha = st.date_input("Fecha", value=date.today(), format="DD/MM/YYYY", key="sol_fecha")
     with c2:
         gestor = st.text_input("Gestor de cuenta", value=usuario.get("nombre", ""),
                                key="sol_gestor")
@@ -163,6 +164,14 @@ def seccion_solicitud_ofertas(res: dict) -> None:
                                    "puede añadirlo en Administración → Usuarios.")
         producto = st.text_input("Producto", key="sol_producto",
                                  placeholder="p. ej. ELECTRICIDAD / ELECTRICITY")
+    st.markdown("**Periodo para la recepción de las ofertas**")
+    c1, c2, c3 = st.columns(3)
+    desde = c1.date_input("Desde", value=date.today(), format="DD/MM/YYYY", key="sol_rec_desde")
+    hasta = c2.date_input("Hasta (fecha límite)", value=None, format="DD/MM/YYYY",
+                          key="sol_rec_hasta")
+    hora = c3.time_input("Hora límite", value=time(12, 0), key="sol_rec_hora", step=900)
+    if desde and hasta and hasta < desde:
+        st.warning("La fecha límite de recepción es anterior a la de inicio.")
 
     st.caption("Revisa los datos de cada suministro (salen de Gemweb).")
     tabla = pd.DataFrame([{v: f.get(k, "") for k, v in COLUMNAS_FICHA.items()} for f in fichas])
@@ -197,10 +206,6 @@ def seccion_solicitud_ofertas(res: dict) -> None:
         s["consideraciones"] = consideraciones_de(fila_c)
         s["fecha_inicio"] = s["consideraciones"]["inicio"]
         suministros.append(s)
-    sin_tipo = [s["cups"] for s in suministros
-                if not s["consideraciones"]["fijo"] and not s["consideraciones"]["indexado"]]
-    if sin_tipo:
-        st.info("Sin ninguna tipología de precio elegida: " + ", ".join(sin_tipo))
     plazos = [s["cups"] for s in suministros if s["consideraciones"]["inicio"] and any(
         s["consideraciones"][d] and _fecha(s["consideraciones"][d]) <= _fecha(
             s["consideraciones"]["inicio"]) for d in ("duracion", "duracion2"))]
@@ -210,15 +215,24 @@ def seccion_solicitud_ofertas(res: dict) -> None:
 
     cabecera = {"ref": ref, "fecha": fecha.strftime("%d/%m/%Y") if fecha else "",
                 "gestor": gestor, "telefono": telefono, "email": email, "producto": producto,
-                "recepcion_desde": fecha.strftime("%d/%m/%Y") if fecha else "",
-                "recepcion_hasta": limite.strftime("%d/%m/%Y") if limite else ""}
-    if not limite:
-        st.info("Elige la fecha límite de recepción de ofertas (arriba, junto a la fecha) para "
-                "poder descargar la solicitud.")
+                "recepcion_desde": desde.strftime("%d/%m/%Y") if desde else "",
+                "recepcion_hasta": hasta.strftime("%d/%m/%Y") if hasta else "",
+                "recepcion_hora": hora.strftime("%H:%M") if hora else ""}
+    if not hasta:
+        st.info("Elige la fecha límite de recepción de ofertas (arriba, en «Periodo para la "
+                "recepción de las ofertas») para poder descargar la solicitud y el texto.")
     nombre = "solicitud_ofertas_%s.xlsx" % (re.sub(r"[^\w-]", "_", ref) if ref else
                                              date.today().strftime("%d%m%Y"))
-    st.download_button("Descargar solicitud de ofertas",
-                       data=so.excel_solicitud(cabecera, suministros) if limite else b"",
-                       file_name=nombre, disabled=not limite,
+    b1, b2 = st.columns(2)
+    b1.download_button("Descargar solicitud de ofertas",
+                       data=so.excel_solicitud(cabecera, suministros) if hasta else b"",
+                       file_name=nombre, disabled=not hasta,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary")
+    if b2.button("Texto para el correo a las comercializadoras", disabled=not hasta):
+        st.session_state.sol_ver_correo = True
+    if hasta and st.session_state.get("sol_ver_correo"):
+        st.markdown("#### Texto para el correo")
+        st.caption("Cópialo con el botón de la esquina del recuadro y pégalo en el correo. Se "
+                   "actualiza solo si cambias algo de arriba.")
+        st.code(correo.texto_correo(cabecera, suministros), language=None, wrap_lines=True)

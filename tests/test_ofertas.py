@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import openpyxl
 
+from ofertas import correo
 from ofertas import solicitud as so
 
 
@@ -83,25 +84,34 @@ class Excel(unittest.TestCase):
         self.assertFalse([m for m in r.merged_cells.ranges if m.min_row == 5])
 
     def test_consideraciones_en_la_hoja(self):
-        c = {"fijo": ["Binómica en DH6"], "indexado": ["Indexada Omie Pass Through",
-                                                      "Indexada Omie Pass Pool"],
+        c = {"indexado": ["Indexada Omie Pass Through", "Indexada Omie Pass Pool"],
              "inicio": "01/01/2027", "duracion": "31/12/2027", "duracion2": "31/12/2028",
-             "temporada": False, "exencion": False}
-        cab = {"recepcion_desde": "22/10/2026", "recepcion_hasta": "23/10/2026"}
+             "temporada": False, "exencion": False, "gdo": True, "excedentes": False}
+        cab = {"recepcion_desde": "22/10/2026", "recepcion_hasta": "23/10/2026",
+               "recepcion_hora": "12:00"}
         h = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud(
-            cab, [{"cups": "ES0000000000000000XX", "consideraciones": c}])))["1. 000000XX"]
+            cab, [{"cups": "ES0000000000000000XX", "tarifa": "2.0TD",
+                   "consideraciones": c}])))["1. 000000XX"]
         valores = {celda.value for fila in h.iter_rows(min_row=61) for celda in fila}
         self.assertEqual(h["B61"].value[:32], "Tipología de ofertas solicitadas")
+        # el precio fijo sale de la tarifa
         self.assertEqual((h["B62"].value, h["D62"].value), ("Precio fijo / Fixed price",
-                                                            "Binómica en DH6"))
+                                                            "Binómica en DH2"))
         self.assertEqual((h["D63"].value, h["D64"].value, h["D65"].value),
                          ("Indexada Omie Pass Through", "Indexada Omie Pass Pool", None))
         self.assertEqual(h["E67"].value, "Anual / Annual")
         self.assertEqual(h["E70"].value, "01/01/2027")
         self.assertEqual((h["F73"].value, h["F74"].value), ("31/12/2027", "31/12/2028"))
-        self.assertEqual((h["F76"].value, h["F77"].value), ("22/10/2026", "23/10/2026"))
-        self.assertEqual(h["F77"].fill.fgColor.rgb[-6:], so.NARANJA)
-        self.assertNotIn("Sí / Yes", valores)          # sin exencion no sale su bloque
+        self.assertEqual((h["B76"].value[:21], h["E76"].value),
+                         ("Garantías de origen (", "Sí / Yes"))
+        self.assertEqual((h["F79"].value, h["F80"].value), ("22/10/2026", "23/10/2026"))
+        self.assertEqual(h["G80"].value, "antes de las 12:00 h / before 12:00")
+        self.assertEqual(h["F80"].fill.fgColor.rgb[-6:], so.NARANJA)
+        self.assertFalse(any("exención" in str(v) or "excedentes" in str(v) for v in valores))
+
+    def test_precio_fijo_segun_tarifa(self):
+        self.assertEqual([so.precio_fijo(t) for t in ("2.0TD", "3.0TD", "6.1TD", "6.4TD")],
+                         ["Binómica en DH2"] + ["Binómica en DH6"] * 3)
 
 
 class TablaConsideraciones(unittest.TestCase):
@@ -111,14 +121,54 @@ class TablaConsideraciones(unittest.TestCase):
         comun.update({"PVPC": True, op.INICIO: dt.date(2027, 1, 1), op.DURACION: None,
                       op.DURACION2: None, op.PCT_CONSUMO: None, op.PCT_TIPO: None})
         t = op.tabla_consideraciones([{"cups": "A"}, {"cups": "B"}], comun)
-        t.loc[1, "Binómica en DH3"] = True
+        t.loc[1, op.GDO] = True
         t.loc[1, op.EXENCION] = True
         t.loc[1, op.PCT_CONSUMO] = 50.0
         a, b = (op.consideraciones_de(f) for _, f in t.iterrows())
-        self.assertEqual((a["fijo"], a["indexado"], a["inicio"]), ([], ["PVPC"], "01/01/2027"))
+        self.assertEqual((a["indexado"], a["inicio"], a["gdo"]), (["PVPC"], "01/01/2027", False))
         self.assertEqual((a["exencion"], a["pct_consumo_exento"]), (False, None))
-        self.assertEqual((b["fijo"], b["exencion"], b["pct_consumo_exento"], b["duracion"]),
-                         (["Binómica en DH3"], True, 50.0, ""))
+        self.assertEqual((b["gdo"], b["exencion"], b["pct_consumo_exento"], b["duracion"]),
+                         (True, True, 50.0, ""))
+
+
+class Correo(unittest.TestCase):
+    def suministro(self, cups, tarifa="6.1TD", **c):
+        base = {"indexado": ["PVPC"], "inicio": "01/01/2027", "duracion": "31/12/2027",
+                "duracion2": "", "temporada": False, "exencion": False, "gdo": False,
+                "excedentes": False}
+        base.update(c)
+        return {"grupo": "GRUPO DE PRUEBA", "razon": "EMPRESA DE PRUEBA SA", "cups": cups,
+                "tarifa": tarifa, "perfil": {1: [1000, 0, 0, 0, 0, 500]},
+                "consideraciones": base}
+
+    cab = {"email": "prueba@example.com", "recepcion_desde": "22/10/2026",
+           "recepcion_hasta": "23/10/2026", "recepcion_hora": "12:00"}
+
+    def test_comun_a_todos_va_en_el_resumen(self):
+        texto = correo.texto_correo(self.cab, [
+            self.suministro("ES0000000000000000XX", gdo=True),
+            self.suministro("ES0000000000000001XX", gdo=True)])
+        self.assertIn("del cliente GRUPO DE PRUEBA en España", texto)
+        self.assertIn("• CUPS: ES0000000000000000XX (EMPRESA DE PRUEBA SA)\n", texto)
+        self.assertIn("consumo anual previsto total de 3.000 kWh", texto)
+        self.assertIn("precio fijo (binómica en DH6) y precio indexado (PVPC)", texto)
+        self.assertIn("inicio del contrato: 1 de enero de 2027", texto)
+        self.assertIn("deben incluir garantías de origen (GdO)", texto)
+        self.assertIn("Inicio: 22 de octubre de 2026.", texto)
+        self.assertIn("Fecha máxima: 23 de octubre de 2026, antes de las 12:00 horas.", texto)
+        self.assertIn("\nprueba@example.com\n", texto)
+        self.assertNotIn("—", texto)                     # nada distinto por suministro
+
+    def test_lo_de_algunos_va_junto_al_cups(self):
+        texto = correo.texto_correo(self.cab, [
+            self.suministro("ES0000000000000000XX", exencion=True, pct_consumo_exento=85.0),
+            self.suministro("ES0000000000000001XX", tarifa="2.0TD", excedentes=True)])
+        self.assertIn("ES0000000000000000XX (EMPRESA DE PRUEBA SA) — precio fijo binómica en "
+                      "DH6; sujeto a exención del impuesto eléctrico (85 % del consumo)", texto)
+        self.assertIn("ES0000000000000001XX (EMPRESA DE PRUEBA SA) — precio fijo binómica en "
+                      "DH2; con compensación de excedentes", texto)
+        self.assertIn("precio fijo según la tarifa de cada suministro", texto)
+        self.assertNotIn("Todos los suministros están", texto)
 
 
 if __name__ == "__main__":

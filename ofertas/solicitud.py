@@ -30,10 +30,7 @@ COLS_P = ["P1 kWh", "P2 kWh", "P3 kWh", "P4 kWh", "P5 kWh", "P6 kWh"]
 # colores de las series del grafico (como en la plantilla): p1 rojo ... p6 verde
 COLORES_P = ["FF0000", "7030A0", "FF6600", "FFFF00", "0000FF", "00A000"]
 
-# tipologias de oferta que se pueden pedir (consideraciones de la oferta)
-PRECIO_FIJO = ["Binómica en DH1", "Binómica en DH2", "Binómica en DH3", "Binómica en DH4",
-               "Binómica en DH6", "Monómica en DH1", "Monómica en DH2", "Monómica en DH3",
-               "Monómica en DH4", "Monómica en DH6"]
+# tipologias de precio indexado que se pueden pedir (el fijo sale de la tarifa: precio_fijo)
 PRECIO_INDEXADO = ["PVPC", "Indexada Omie Pass Through + Omip (carga base)",
                    "Indexada Omie Pass Through + Omip (% consumo)",
                    "Indexada Omie Pass Pool + Omip (carga base)",
@@ -61,6 +58,17 @@ def cif_limpio(cif: str) -> str:
 def discriminacion(tarifa: str) -> str:
     """Perfil de discriminacion horaria: DH3 para la 2.0TD, DH6 para el resto."""
     return "DH3" if str(tarifa or "").startswith("2.0") else "DH6"
+
+
+def precio_fijo(tarifa: str) -> str:
+    """Precio fijo que se pide siempre: binomica en DH2 para la 2.0TD, en DH6 para la 3.0TD y
+    las 6.xTD."""
+    return "Binómica en DH2" if str(tarifa or "").startswith("2.0") else "Binómica en DH6"
+
+
+def consumo_anual(s: dict) -> float:
+    """Suma del perfil de consumo (kWh) de un suministro."""
+    return sum(sum(v) for v in (s.get("perfil") or {}).values())
 
 
 def perfil_mensual(facturas: list) -> tuple:
@@ -117,13 +125,24 @@ def _pct(valor):
     return "" if valor is None else f"{valor:g} %".replace(".", ",")
 
 
-def _consideraciones(ws, cab, c, fila):
+def _si_no(ws, fila, texto, extra=()):
+    """Fila doble «texto: Si / Yes», con datos opcionales a la derecha [(texto, valor)]."""
+    _bloque(ws, f"B{fila}:D{fila + 1}", texto, True)
+    _bloque(ws, f"E{fila}:E{fila + 1}", "Sí / Yes")
+    for n, (etiqueta, valor) in enumerate(extra):
+        _bloque(ws, f"F{fila + n}:H{fila + n}", etiqueta, True)
+        _bloque(ws, f"I{fila + n}", valor)
+    return fila + 3
+
+
+def _consideraciones(ws, cab, s, fila):
     """Bloque «Tipologia de ofertas solicitadas» bajo el grafico (empieza en `fila`).
     Devuelve la ultima fila usada."""
+    c = s.get("consideraciones") or {}
     _bloque(ws, f"B{fila}:I{fila}", "Tipología de ofertas solicitadas / Typology of requested "
                                     "offers", True)
-    # precio fijo: tres opciones por fila (D:E, F:G, H:I)
-    fijo = c.get("fijo") or []
+    # precio fijo (segun la tarifa): tres por fila (D:E, F:G, H:I)
+    fijo = [precio_fijo(s.get("tarifa"))]
     filas_fijo = max(1, -(-len(fijo) // 3))
     ini = fila + 1
     _bloque(ws, f"B{ini}:C{ini + filas_fijo - 1}", "Precio fijo / Fixed price", True)
@@ -155,23 +174,32 @@ def _consideraciones(ws, cab, c, fila):
         _bloque(ws, f"D{fila + n}:E{fila + n}", "Hasta / Until", True)
         _bloque(ws, f"F{fila + n}", plazos[n] if n < len(plazos) else "")
     fila += max(len(plazos), 2) + 1
+    # particularidades: solo salen si se aplican al suministro
     if c.get("exencion"):
-        _bloque(ws, f"B{fila}:D{fila + 1}", "Sujeto a exención de impuesto eléctrico / Subject "
-                                            "to electricity tax exemption", True)
-        _bloque(ws, f"E{fila}:E{fila + 1}", "Sí / Yes")
-        _bloque(ws, f"F{fila}:H{fila}", "% consumo sujeto a exención / % exempt consumption",
-                True)
-        _bloque(ws, f"I{fila}", _pct(c.get("pct_consumo_exento")))
-        _bloque(ws, f"F{fila + 1}:H{fila + 1}", "% tipo de exención / % exemption rate", True)
-        _bloque(ws, f"I{fila + 1}", _pct(c.get("pct_tipo_exencion")))
-        fila += 3
+        fila = _si_no(ws, fila, "Sujeto a exención de impuesto eléctrico / Subject to "
+                                "electricity tax exemption",
+                      [("% consumo sujeto a exención / % exempt consumption",
+                        _pct(c.get("pct_consumo_exento"))),
+                       ("% tipo de exención / % exemption rate",
+                        _pct(c.get("pct_tipo_exencion")))])
+    if c.get("gdo"):
+        fila = _si_no(ws, fila, "Garantías de origen (GdO) incluidas / Guarantees of origin "
+                                "included")
+    if c.get("excedentes"):
+        fila = _si_no(ws, fila, "Compensación de excedentes / Surplus compensation")
     _bloque(ws, f"B{fila}:D{fila + 1}", "Periodo para la recepción de las ofertas / Period "
                                         "for reception of offers", True)
+    hora = cab.get("recepcion_hora", "")
     for n, (texto, valor) in enumerate((("Desde/Since:", cab.get("recepcion_desde", "")),
                                         ("Hasta/Until:", cab.get("recepcion_hasta", "")))):
         _bloque(ws, f"E{fila + n}", texto, True)
         celda = _celda(ws, f"F{fila + n}", valor, negrita=True)
         celda.fill = PatternFill("solid", fgColor=NARANJA)
+    if hora:
+        _bloque(ws, f"G{fila + 1}:H{fila + 1}", f"antes de las {hora} h / before {hora}")
+        for col in "GH":
+            ws[f"{col}{fila + 1}"].fill = PatternFill("solid", fgColor=NARANJA)
+            ws[f"{col}{fila + 1}"].font = Font(name="Calibri", size=10, bold=True)
     return fila + 1
 
 
@@ -261,7 +289,7 @@ def _hoja_suministro(wb, nombre_hoja, cab, s):
         serie.graphicalProperties.line.solidFill = color
     grafico.gapWidth = 60
     ws.add_chart(grafico, "B41")
-    ultima = _consideraciones(ws, cab, s.get("consideraciones") or {}, 61)
+    ultima = _consideraciones(ws, cab, s, 61)
     ws.print_area = f"A1:J{ultima + 1}"
     ws.page_setup.orientation = "portrait"
     ws.page_setup.fitToWidth = 1
