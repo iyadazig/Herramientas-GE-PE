@@ -51,7 +51,7 @@ ICONOS_MODULO = {
     "admin": _icono("<path d='M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'/>"
                     "<path d='M9 12l2 2 4-4'/>"),
 }
-MODULOS_MENU = {"Revisión de SSAA": "ssaa", "Gemweb": "gemweb",
+MODULOS_MENU = {"Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
                 "Solicitud de ofertas": "ofertas", "Administración": "admin"}
 
 CSS = """
@@ -302,9 +302,14 @@ def _b64(ruta):
 
 
 def aplicar():
-    """CSS corporativo (el logo va en la cabecera de cada pagina). Llamar justo tras
-    set_page_config."""
+    """CSS corporativo. Llamar justo tras set_page_config."""
     st.markdown(CSS, unsafe_allow_html=True)
+
+
+def logo_menu():
+    """Logo pequeno arriba a la izquierda, sobre el menu (solo con la sesion iniciada)."""
+    if LOGO_PEQ.exists():
+        st.logo(str(LOGO_PEQ), size="large")
 
 
 def cabecera(titulo, subtitulo=""):

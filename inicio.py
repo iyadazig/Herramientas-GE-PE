@@ -25,6 +25,7 @@ st.set_page_config(page_title="Herramientas GE&PE",
                    layout="wide", menu_items={})
 estilo.aplicar()
 usuario = paginas.acceso()          # detiene la pagina hasta que se inicia sesion
+estilo.logo_menu()                  # no sale en la pagina de inicio de sesion
 
 with st.sidebar:
     paginas.barra_usuario()
@@ -60,7 +61,7 @@ menu = {
         _pagina(paginas.pagina_historial, "Historial de revisiones", SUB_SSAA, "historial"),
         _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas"),
     ],
-    "Gemweb": [
+    "API de Gemweb": [
         _pagina(funcion, titulo, SUB_GEMWEB, ruta) for funcion, titulo, ruta in (
             (gw.pagina_inventario, "Inventario", "gemweb-inventario"),
             (gw.pagina_consumo_periodo, "Consumo por periodo", "gemweb-consumo-periodo"),

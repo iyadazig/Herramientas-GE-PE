@@ -16,7 +16,7 @@ pago. La factura y la curva no salen del PC.
 (`paginas.acceso`), barra de usuario y menú `st.navigation` por grupos:
 - **Revisión de SSAA**: `app_revision_ssaa.py` (página de fichero, por defecto),
   `paginas.pagina_historial`, `paginas.pagina_fichas`.
-- **Gemweb**: `gemweb_extractor/paginas.py`, convertido de `API_Gemweb/app.py` (una función por
+- **API de Gemweb**: `gemweb_extractor/paginas.py`, convertido de `API_Gemweb/app.py` (una función por
   operación: inventario, consumo por periodo, telelecturas, descarga masiva por CUPS,
   coste/consumo mensual, optimización de potencia, incoherencias, factura calculada).
 - **Solicitud de ofertas**: `ofertas/paginas.py` (consulta Gemweb con las funciones de
