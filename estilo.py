@@ -32,14 +32,16 @@ LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del me
 
 
 def _icono(trazos):
-    """Icono de linea (24x24) como imagen SVG para la mascara CSS del menu."""
+    """Icono de linea (24x24) en granate como imagen SVG en base64 (la forma que entienden
+    todos los navegadores; si no se cargara, no se ve nada en vez de un recuadro)."""
     svg = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
-           "stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
-           + trazos + "</svg>")
-    return "data:image/svg+xml;utf8," + svg.replace("<", "%3C").replace(">", "%3E")
+           "stroke='%s' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+           % GRANATE + trazos + "</svg>")
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
-# icono de cada modulo del menu (inicio.py: el titulo del grupo -> MODULOS_MENU)
+# icono de cada modulo del menu, en el orden de los grupos de inicio.py (el CSS los coloca
+# por posicion: no depende del script del navegador)
 ICONOS_MODULO = {
     "ssaa": _icono("<path d='M5 21V3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5z'/>"
                    "<path d='M9 8h6M9 12h6M9 16h3'/>"),
@@ -51,8 +53,6 @@ ICONOS_MODULO = {
     "admin": _icono("<path d='M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'/>"
                     "<path d='M9 12l2 2 4-4'/>"),
 }
-MODULOS_MENU = {"Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
-                "Solicitud de ofertas": "ofertas", "Administración": "admin"}
 
 CSS = """
 <style>
@@ -139,14 +139,13 @@ h3, .stMarkdown h3 {
     margin-top: 0.3rem;
 }
 [data-testid="stNavSectionHeader"]::before {
-    content: ""; flex: none; width: 18px; height: 18px; background: %(granate)s;
-    -webkit-mask: var(--gp-icono) no-repeat center / contain;
-    mask: var(--gp-icono) no-repeat center / contain;
+    content: ""; flex: none; width: 18px; height: 18px;
+    background: no-repeat center / contain;
 }
-[data-gp-modulo="ssaa"] { --gp-icono: url("%(ico_ssaa)s"); }
-[data-gp-modulo="gemweb"] { --gp-icono: url("%(ico_gemweb)s"); }
-[data-gp-modulo="ofertas"] { --gp-icono: url("%(ico_ofertas)s"); }
-[data-gp-modulo="admin"] { --gp-icono: url("%(ico_admin)s"); }
+[data-testid="stNavSectionHeader"]:nth-of-type(1)::before { background-image: url("%(ico_ssaa)s"); }
+[data-testid="stNavSectionHeader"]:nth-of-type(2)::before { background-image: url("%(ico_gemweb)s"); }
+[data-testid="stNavSectionHeader"]:nth-of-type(3)::before { background-image: url("%(ico_ofertas)s"); }
+[data-testid="stNavSectionHeader"]:nth-of-type(4)::before { background-image: url("%(ico_admin)s"); }
 [data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
 [data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }
 [data-testid="stSidebarNavLink"]:hover { background: %(rosa)s; }
@@ -225,13 +224,9 @@ def traducir():
     import json
     import streamlit.components.v1 as components
     components.html("""<script>
-    const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s;
+    const T = %s, EN = %s, ES = %s, OCULTAR = %s;
     const doc = window.parent.document;
     function menu() {
-        doc.querySelectorAll('[data-testid="stNavSectionHeader"]').forEach(h => {
-            const m = MODULOS[h.textContent.trim()];
-            if (m && h.dataset.gpModulo !== m) h.dataset.gpModulo = m;
-        });
         const aqui = window.parent.location.pathname.replace(/\\/$/, "");
         doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(a => {
             const activa = new URL(a.href, window.parent.location.href).pathname
@@ -293,8 +288,7 @@ def traducir():
     window.parent.__gpTraductor.observe(doc.body, {childList: true, subtree: true,
                                                    characterData: true});
     </script>""" % (json.dumps(TRADUCCIONES, ensure_ascii=False), json.dumps(MESES_EN),
-                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR),
-                    json.dumps(MODULOS_MENU, ensure_ascii=False)), height=0)
+                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR)), height=0)
 
 
 def _b64(ruta):
