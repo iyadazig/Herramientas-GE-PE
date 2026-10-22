@@ -7,7 +7,7 @@ solicitud, los datos del suministro, las potencias de la ultima factura y el per
 consumo de los ultimos 12 meses por periodos (cada factura en el mes de su fecha de fin),
 con su grafico de columnas apiladas.
 
-Los datos salen de la descarga masiva de consumos por periodos (gemweb_extractor.paginas);
+Los datos salen de Gemweb (ofertas.paginas, con las funciones de gemweb_extractor.paginas);
 aqui solo se da formato.
 """
 

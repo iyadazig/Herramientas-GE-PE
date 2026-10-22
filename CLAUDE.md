@@ -19,6 +19,9 @@ pago. La factura y la curva no salen del PC.
 - **Gemweb**: `gemweb_extractor/paginas.py`, convertido de `API_Gemweb/app.py` (una función por
   operación: inventario, consumo por periodo, telelecturas, descarga masiva por CUPS,
   coste/consumo mensual, optimización de potencia, incoherencias, factura calculada).
+- **Solicitud de ofertas**: `ofertas/paginas.py` (consulta Gemweb con las funciones de
+  `gemweb_extractor/paginas.py`) y `ofertas/solicitud.py` (formato del Excel). Sección propia
+  porque se le van a añadir más funciones.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.

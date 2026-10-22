@@ -862,9 +862,8 @@ def excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif=None) -> bytes:
     return buffer.getvalue()
 
 
-def descarga_consumo_periodos(cliente, cups_list):
-    """Opcion «Consumo mensual por periodos» de la descarga masiva."""
-    st.subheader("2. Periodo")
+def elegir_periodo():
+    """Radio «Ultimos 12 meses con factura» / «Un periodo concreto» -> (modo, ini, fin)."""
     modo = st.radio(
         "¿Qué facturas?", ["ultimos12", "periodo"], horizontal=True,
         format_func=lambda m: ("Últimos 12 meses con factura" if m == "ultimos12"
@@ -881,6 +880,13 @@ def descarga_consumo_periodos(cliente, cups_list):
         ini_s, fin_s = selector_fechas(inicio=date(hoy.year - 1, hoy.month, 1),
                                        fin=mes_anterior()[1])
         ini, fin = date.fromisoformat(ini_s), date.fromisoformat(fin_s)
+    return modo, ini, fin
+
+
+def descarga_consumo_periodos(cliente, cups_list):
+    """Opcion «Consumo mensual por periodos» de la descarga masiva."""
+    st.subheader("2. Periodo")
+    modo, ini, fin = elegir_periodo()
     st.caption("El Excel trae lo **facturado** (una fila por factura, con P1–P6 y su periodo), "
                "las **telelecturas** del contador por mes natural (solo el total: Gemweb no las "
                "reparte por periodos) y sus **diferencias** mes a mes (cada factura cuenta en el "
@@ -895,7 +901,6 @@ def descarga_consumo_periodos(cliente, cups_list):
     res = st.session_state.get("consumo_periodos")
     if res and res["clave"] == clave:
         mostrar_consumo_periodos(res)
-        seccion_solicitud_ofertas(res)
 
 
 def _primer_registro(cliente, categoria, campo, valor):
@@ -910,8 +915,10 @@ def _primer_registro(cliente, categoria, campo, valor):
     return {h.tag: h.text for h in raiz[0]} if len(raiz) else None
 
 
-def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin) -> dict:
-    """Facturas, telelecturas y datos del suministro de cada CUPS (con la barra de progreso)."""
+def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin, telelecturas=True,
+                              fichas_solicitud=False) -> dict:
+    """Facturas, telelecturas y datos del suministro de cada CUPS (con la barra de progreso).
+    La solicitud de ofertas no necesita las telelecturas, pero si las fichas."""
     cache_sum = st.session_state.setdefault("cache_cups_suministro", {})
     cache_inv = st.session_state.setdefault("cache_inventario", {})
     progreso = st.progress(0.0, text="Preparando descarga...")
@@ -947,7 +954,7 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin) -> dict:
                     break
             id_sum = sumi.get("id") if sumi else None
             m_ini, m_fin = meses_naturales(elegidas, modo, ini, fin)
-            if id_sum and m_ini:
+            if telelecturas and id_sum and m_ini:
                 df_tel, fallidos = cliente.get_metering_por_tramos(
                     id=int(id_sum), date_from=m_ini.isoformat(), date_to=m_fin.isoformat(),
                     period="quart-horari", field="consum", data_source="comptador")
@@ -983,7 +990,7 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin) -> dict:
             "Diferencia kWh": c_fact - c_tel if comunes else None,
             "Diferencia %": _pct(c_fact - c_tel, c_tel) if comunes else None,
             "Facturas descartadas": descartadas, "Estado": estado})
-        if sumi or elegidas:
+        if fichas_solicitud and (sumi or elegidas):
             fichas.append(ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv))
     progreso.progress(1.0, text="Descarga completada")
 
@@ -1003,7 +1010,7 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin) -> dict:
 def ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv) -> dict:
     """Datos de un suministro para la solicitud de ofertas: Gemweb + potencias de la ultima
     factura + perfil por meses. Razon social y CIF de la entidad; direccion del centro."""
-    from gemweb_extractor import solicitud_ofertas as so
+    from ofertas import solicitud as so
     sumi = sumi or {}
 
     def registro(categoria, campo, valor):
@@ -1066,97 +1073,8 @@ def mostrar_consumo_periodos(res: dict) -> None:
                        type="primary")
 
 
-# columnas de la tabla editable, en este orden (grupo = division de la entidad en Gemweb,
-# razon social = nombre de la entidad, alias = final del nombre del suministro)
-COLUMNAS_FICHA = {"grupo": "Cliente/Grupo", "razon": "Razón social", "cif": "CIF",
-                  "alias": "Alias", "cups": "CUPS", "direccion": "Dirección de suministro",
-                  "tarifa": "Tarifa", "fecha_fin": "Fecha fin contrato actual"}
-
-
-def seccion_solicitud_ofertas(res: dict) -> None:
-    """Excel de solicitud de ofertas (Resumen + una hoja por suministro) con los datos
-    descargados, revisables antes de generarlo."""
-    from gemweb_extractor import solicitud_ofertas as so
-    fichas = res.get("fichas") or []
-    if not fichas:
-        return
-    st.markdown("---")
-    st.subheader("Solicitud de ofertas")
-    st.caption("Excel con el formato de GE&PE: una hoja «Resumen» y otra por suministro con sus "
-               "datos, las potencias de su última factura y el perfil de consumo de los últimos "
-               "12 meses (cada factura en el mes de su fecha de fin).")
-    usuario = st.session_state.get("usuario") or {}
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        ref = st.text_input("Ref.", key="sol_ref")
-        fecha = st.date_input("Fecha", value=date.today(), format="DD/MM/YYYY", key="sol_fecha")
-    with c2:
-        gestor = st.text_input("Gestor de cuenta", value=usuario.get("nombre", ""),
-                               key="sol_gestor")
-        telefono = st.text_input("Teléfono", value=so.TELEFONO_GEYPE, key="sol_tel")
-    with c3:
-        email = st.text_input("Email", value=usuario.get("email") or "", key="sol_email",
-                              help="El del usuario conectado. Si sale vacío, un administrador "
-                                   "puede añadirlo en Administración → Usuarios.")
-        producto = st.text_input("Producto", key="sol_producto",
-                                 placeholder="p. ej. ELECTRICIDAD / ELECTRICITY")
-
-    st.caption("Revisa los datos de cada suministro (salen de Gemweb). Gemweb no tiene la fecha "
-               "fin del contrato actual: elige una para todos y cambia en la tabla la de los "
-               "suministros que tengan otra.")
-    comun = st.date_input("Fecha fin del contrato actual (para todos los suministros)",
-                          value=None, format="DD/MM/YYYY", key="sol_fecha_fin_comun")
-    tabla = pd.DataFrame([{v: (comun if k == "fecha_fin" else f.get(k, ""))
-                           for k, v in COLUMNAS_FICHA.items()} for f in fichas])
-    tabla["Fecha fin contrato actual"] = pd.to_datetime(tabla["Fecha fin contrato actual"])
-    # al cambiar la fecha comun, la tabla vuelve a empezar con ella en todos los suministros
-    editada = st.data_editor(
-        tabla, hide_index=True, use_container_width=True, disabled=["CUPS", "Tarifa"],
-        column_config={"Fecha fin contrato actual": st.column_config.DateColumn(
-            format="DD/MM/YYYY")},
-        key="sol_tabla_%d_%s" % (hash(res["nombre"]), comun))
-    with st.expander("Potencias que se usarán (última factura de cada suministro)"):
-        st.dataframe(pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f["ultima_factura"]},
-                                        **{p: f["potencias"][n] for n, p in
-                                           enumerate(so.PERIODOS)}) for f in fichas]),
-                     hide_index=True, use_container_width=True)
-    for f in fichas:
-        if f.get("aviso"):
-            st.warning(f"{f['cups']}: {f['aviso']}. El perfil Ene–Dic mezcla años; usa «Últimos "
-                       "12 meses con factura» o un periodo de 12 meses.")
-    inversa = {v: k for k, v in COLUMNAS_FICHA.items()}
-    suministros = []
-    for f, (_, fila) in zip(fichas, editada.iterrows()):
-        s = dict(f)
-        for col, valor in fila.items():
-            if valor is None or valor is pd.NaT or (isinstance(valor, float) and pd.isna(valor)):
-                s[inversa[col]] = ""
-            elif hasattr(valor, "strftime"):
-                s[inversa[col]] = valor.strftime("%d/%m/%Y")
-            else:
-                s[inversa[col]] = str(valor).strip()
-        suministros.append(s)
-    cabecera = {"ref": ref, "fecha": fecha.strftime("%d/%m/%Y") if fecha else "",
-                "gestor": gestor, "telefono": telefono, "email": email, "producto": producto}
-    nombre = "solicitud_ofertas_%s.xlsx" % (re.sub(r"[^\w-]", "_", ref) if ref else
-                                             date.today().strftime("%d%m%Y"))
-    st.download_button("Descargar solicitud de ofertas",
-                       data=so.excel_solicitud(cabecera, suministros), file_name=nombre,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       type="primary")
-
-
-# ===== DESCARGA MASIVA POR CUPS =====
-def pagina_descarga_masiva():
-    cliente = obtener_cliente()
-    st.markdown(
-        "Descarga telelecturas o el **consumo mensual por periodos** de **varios suministros a "
-        "la vez** identificándolos por su CUPS. Límite recomendado: 80 CUPS por descarga "
-        "(máximo absoluto: 150)."
-    )
-
-    # --- 1. Recogida de CUPS: dos métodos ---
-    st.subheader("1. Suministros a descargar")
+def pedir_cups() -> list:
+    """CUPS pegados o leidos de un Excel/CSV, sin duplicados y como mucho 150."""
     metodo = st.radio(
         "¿Cómo quieres introducir los CUPS?",
         ["Pegar lista de CUPS", "Subir Excel/CSV"],
@@ -1222,6 +1140,20 @@ def pagina_descarga_masiva():
                 f"Has introducido {len(cups_list)} CUPS. Es una descarga grande "
                 "y puede tardar varios minutos. Se procesará igualmente."
             )
+    return cups_list
+
+
+# ===== DESCARGA MASIVA POR CUPS =====
+def pagina_descarga_masiva():
+    cliente = obtener_cliente()
+    st.markdown(
+        "Descarga telelecturas o el **consumo mensual por periodos** de **varios suministros a "
+        "la vez** identificándolos por su CUPS. Límite recomendado: 80 CUPS por descarga "
+        "(máximo absoluto: 150)."
+    )
+
+    st.subheader("1. Suministros a descargar")
+    cups_list = pedir_cups()
 
     que = st.radio("¿Qué quieres descargar?", ["telelecturas", "periodos"], horizontal=True,
                    format_func=lambda x: ("Telelecturas (curva)" if x == "telelecturas"

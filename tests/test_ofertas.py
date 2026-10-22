@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import openpyxl
 
-from gemweb_extractor import solicitud_ofertas as so
+from ofertas import solicitud as so
 
 
 def factura(anio, mes, dia, p1=0.0, p6=0.0):

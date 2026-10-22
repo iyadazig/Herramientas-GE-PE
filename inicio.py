@@ -7,7 +7,8 @@ HERRAMIENTAS GE&PE — entrada unica de la plataforma
 
 Acceso con usuario y contrasena (paginas.acceso), imagen corporativa (estilo) y menu por
 secciones (st.navigation). Cada pagina es un fichero o una funcion; las de Gemweb estan
-en gemweb_extractor/paginas.py.
+en gemweb_extractor/paginas.py y las de la
+solicitud de ofertas en ofertas/paginas.py.
 """
 
 import functools
@@ -17,6 +18,7 @@ import streamlit as st
 import estilo
 import paginas
 from gemweb_extractor import paginas as gw
+from ofertas import paginas as ofertas
 
 st.set_page_config(page_title="Herramientas GE&PE",
                    page_icon=str(estilo.ICONO) if estilo.ICONO.exists() else None,
@@ -70,6 +72,10 @@ menu = {
             (gw.pagina_factura_calculada, "Factura calculada", "gemweb-factura-calculada"),
             (gw.pagina_simulacion_contrato, "Simulación de contrato",
              "gemweb-simulacion-contrato"))
+    ],
+    "Solicitud de ofertas": [
+        _pagina(ofertas.pagina_solicitud_ofertas, "Solicitud de ofertas",
+                "Excel de solicitud de ofertas con los datos de Gemweb", "solicitud-ofertas"),
     ],
 }
 if usuario["admin"]:
