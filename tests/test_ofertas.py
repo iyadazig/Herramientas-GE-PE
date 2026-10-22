@@ -52,7 +52,7 @@ class Excel(unittest.TestCase):
         s = {"grupo": "GRUPO DE PRUEBA", "alias": "TC1", "cups": "ES0000000000000000XX",
              "razon": "EMPRESA DE PRUEBA SA",
              "direccion": "Calle Falsa 1", "cif": "A00000000", "tarifa": "6.1TD",
-             "fecha_fin": "31/12/2026", "potencias": [100, 100, 100, 100, 100, 200],
+             "fecha_inicio": "31/12/2026", "potencias": [100, 100, 100, 100, 100, 200],
              "perfil": perfil}
         cab = {"ref": "R-1", "fecha": "01/01/2026", "gestor": "Persona de prueba",
                "telefono": so.TELEFONO_GEYPE, "email": "prueba@example.com", "producto": "X"}
@@ -81,6 +81,44 @@ class Excel(unittest.TestCase):
         self.assertEqual((r["T5"].value, r["U5"].value), ("TOTAL", "=SUM(U4:U4)"))
         self.assertEqual([r.cell(5, n).value for n in range(1, 20)], [None] * 19)
         self.assertFalse([m for m in r.merged_cells.ranges if m.min_row == 5])
+
+    def test_consideraciones_en_la_hoja(self):
+        c = {"fijo": ["Binómica en DH6"], "indexado": ["Indexada Omie Pass Through",
+                                                      "Indexada Omie Pass Pool"],
+             "inicio": "01/01/2027", "duracion": "31/12/2027", "duracion2": "31/12/2028",
+             "temporada": False, "exencion": False}
+        cab = {"recepcion_desde": "22/10/2026", "recepcion_hasta": "23/10/2026"}
+        h = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud(
+            cab, [{"cups": "ES0000000000000000XX", "consideraciones": c}])))["1. 000000XX"]
+        valores = {celda.value for fila in h.iter_rows(min_row=61) for celda in fila}
+        self.assertEqual(h["B61"].value[:32], "Tipología de ofertas solicitadas")
+        self.assertEqual((h["B62"].value, h["D62"].value), ("Precio fijo / Fixed price",
+                                                            "Binómica en DH6"))
+        self.assertEqual((h["D63"].value, h["D64"].value, h["D65"].value),
+                         ("Indexada Omie Pass Through", "Indexada Omie Pass Pool", None))
+        self.assertEqual(h["E67"].value, "Anual / Annual")
+        self.assertEqual(h["E70"].value, "01/01/2027")
+        self.assertEqual((h["F73"].value, h["F74"].value), ("31/12/2027", "31/12/2028"))
+        self.assertEqual((h["F76"].value, h["F77"].value), ("22/10/2026", "23/10/2026"))
+        self.assertEqual(h["F77"].fill.fgColor.rgb[-6:], so.NARANJA)
+        self.assertNotIn("Sí / Yes", valores)          # sin exencion no sale su bloque
+
+
+class TablaConsideraciones(unittest.TestCase):
+    def test_comunes_y_cambio_por_suministro(self):
+        from ofertas import paginas as op
+        comun = {o: False for o in op.COLUMNAS_CASILLA}
+        comun.update({"PVPC": True, op.INICIO: dt.date(2027, 1, 1), op.DURACION: None,
+                      op.DURACION2: None, op.PCT_CONSUMO: None, op.PCT_TIPO: None})
+        t = op.tabla_consideraciones([{"cups": "A"}, {"cups": "B"}], comun)
+        t.loc[1, "Binómica en DH3"] = True
+        t.loc[1, op.EXENCION] = True
+        t.loc[1, op.PCT_CONSUMO] = 50.0
+        a, b = (op.consideraciones_de(f) for _, f in t.iterrows())
+        self.assertEqual((a["fijo"], a["indexado"], a["inicio"]), ([], ["PVPC"], "01/01/2027"))
+        self.assertEqual((a["exencion"], a["pct_consumo_exento"]), (False, None))
+        self.assertEqual((b["fijo"], b["exencion"], b["pct_consumo_exento"], b["duracion"]),
+                         (["Binómica en DH3"], True, 50.0, ""))
 
 
 if __name__ == "__main__":

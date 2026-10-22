@@ -30,7 +30,17 @@ COLS_P = ["P1 kWh", "P2 kWh", "P3 kWh", "P4 kWh", "P5 kWh", "P6 kWh"]
 # colores de las series del grafico (como en la plantilla): p1 rojo ... p6 verde
 COLORES_P = ["FF0000", "7030A0", "FF6600", "FFFF00", "0000FF", "00A000"]
 
-OSCURO, CLARO = "1F497D", "DAEEF3"
+# tipologias de oferta que se pueden pedir (consideraciones de la oferta)
+PRECIO_FIJO = ["Binómica en DH1", "Binómica en DH2", "Binómica en DH3", "Binómica en DH4",
+               "Binómica en DH6", "Monómica en DH1", "Monómica en DH2", "Monómica en DH3",
+               "Monómica en DH4", "Monómica en DH6"]
+PRECIO_INDEXADO = ["PVPC", "Indexada Omie Pass Through + Omip (carga base)",
+                   "Indexada Omie Pass Through + Omip (% consumo)",
+                   "Indexada Omie Pass Pool + Omip (carga base)",
+                   "Indexada Omie Pass Pool + Omip (% consumo)",
+                   "Indexada Omie Pass Through", "Indexada Omie Pass Pool"]
+
+OSCURO, CLARO, NARANJA = "1F497D", "DAEEF3", "FFC000"
 _borde = Side(style="thin", color="FFFFFF")
 BORDE = Border(left=_borde, right=_borde, top=_borde, bottom=_borde)
 CENTRO = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -101,6 +111,68 @@ def _logo(ws, celda, alto_px=85):
         img = Image(str(LOGO))
         img.width, img.height = int(img.width * alto_px / img.height), alto_px
         ws.add_image(img, celda)
+
+
+def _pct(valor):
+    return "" if valor is None else f"{valor:g} %".replace(".", ",")
+
+
+def _consideraciones(ws, cab, c, fila):
+    """Bloque «Tipologia de ofertas solicitadas» bajo el grafico (empieza en `fila`).
+    Devuelve la ultima fila usada."""
+    _bloque(ws, f"B{fila}:I{fila}", "Tipología de ofertas solicitadas / Typology of requested "
+                                    "offers", True)
+    # precio fijo: tres opciones por fila (D:E, F:G, H:I)
+    fijo = c.get("fijo") or []
+    filas_fijo = max(1, -(-len(fijo) // 3))
+    ini = fila + 1
+    _bloque(ws, f"B{ini}:C{ini + filas_fijo - 1}", "Precio fijo / Fixed price", True)
+    for n in range(filas_fijo * 3):
+        f, col = ini + n // 3, "DFH"[n % 3]
+        _bloque(ws, f"{col}{f}:{chr(ord(col) + 1)}{f}", fijo[n] if n < len(fijo) else "")
+    # precio indexado: una opcion por fila, al menos tres filas
+    indexado = c.get("indexado") or []
+    ini += filas_fijo
+    filas_ind = max(3, len(indexado))
+    _bloque(ws, f"B{ini}:C{ini + filas_ind - 1}", "Precio indexado / Indexed price", True)
+    for n in range(filas_ind):
+        ws.row_dimensions[ini + n].height = 27
+        _bloque(ws, f"D{ini + n}:I{ini + n}", indexado[n] if n < len(indexado) else "")
+    fila = ini + filas_ind + 1
+
+    _bloque(ws, f"B{fila}:D{fila + 1}", "Tipo de contrato / Type of contract", True)
+    _bloque(ws, f"E{fila}:E{fila + 1}",
+            "De temporada / Seasonal" if c.get("temporada") else "Anual / Annual")
+    fila += 3
+    _bloque(ws, f"B{fila}:D{fila + 1}", "Fecha prevista de inicio del contrato / Expected date "
+                                        "the contract starts", True)
+    _bloque(ws, f"E{fila}:E{fila + 1}", c.get("inicio", ""))
+    fila += 3
+    plazos = [d for d in (c.get("duracion"), c.get("duracion2")) if d] or [""]
+    _bloque(ws, f"B{fila}:C{fila + max(len(plazos), 2) - 1}",
+            "Duración del contrato / contract duration", True)
+    for n in range(max(len(plazos), 2)):
+        _bloque(ws, f"D{fila + n}:E{fila + n}", "Hasta / Until", True)
+        _bloque(ws, f"F{fila + n}", plazos[n] if n < len(plazos) else "")
+    fila += max(len(plazos), 2) + 1
+    if c.get("exencion"):
+        _bloque(ws, f"B{fila}:D{fila + 1}", "Sujeto a exención de impuesto eléctrico / Subject "
+                                            "to electricity tax exemption", True)
+        _bloque(ws, f"E{fila}:E{fila + 1}", "Sí / Yes")
+        _bloque(ws, f"F{fila}:H{fila}", "% consumo sujeto a exención / % exempt consumption",
+                True)
+        _bloque(ws, f"I{fila}", _pct(c.get("pct_consumo_exento")))
+        _bloque(ws, f"F{fila + 1}:H{fila + 1}", "% tipo de exención / % exemption rate", True)
+        _bloque(ws, f"I{fila + 1}", _pct(c.get("pct_tipo_exencion")))
+        fila += 3
+    _bloque(ws, f"B{fila}:D{fila + 1}", "Periodo para la recepción de las ofertas / Period "
+                                        "for reception of offers", True)
+    for n, (texto, valor) in enumerate((("Desde/Since:", cab.get("recepcion_desde", "")),
+                                        ("Hasta/Until:", cab.get("recepcion_hasta", "")))):
+        _bloque(ws, f"E{fila + n}", texto, True)
+        celda = _celda(ws, f"F{fila + n}", valor, negrita=True)
+        celda.fill = PatternFill("solid", fgColor=NARANJA)
+    return fila + 1
 
 
 # ------------------------------------------------------------------- hojas
@@ -189,7 +261,8 @@ def _hoja_suministro(wb, nombre_hoja, cab, s):
         serie.graphicalProperties.line.solidFill = color
     grafico.gapWidth = 60
     ws.add_chart(grafico, "B41")
-    ws.print_area = "A1:J60"
+    ultima = _consideraciones(ws, cab, s.get("consideraciones") or {}, 61)
+    ws.print_area = f"A1:J{ultima + 1}"
     ws.page_setup.orientation = "portrait"
     ws.page_setup.fitToWidth = 1
     ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -203,7 +276,7 @@ def _hoja_resumen(wb, suministros, nombres_hojas):
     campos = [("grupo", "Cliente/Grupo", 28), ("alias", "Alias", 10), ("cups", "CUPS", 25),
               ("razon", "Razón social", 32), ("direccion", "Dirección de suministro", 45),
               ("cif", "CIF", 12), ("tarifa", "Tarifa de acceso", 10),
-              ("fecha_fin", "Fecha fin contrato actual", 13)]
+              ("fecha_inicio", "Fecha prevista de inicio del contrato", 13)]
     pot0 = len(campos) + 1                  # primera columna de potencias
     con0 = pot0 + 6                         # primera columna de consumos
     total = con0 + 6                        # consumo anual
@@ -268,7 +341,8 @@ def nombres_de_hojas(suministros: list) -> list:
 
 def excel_solicitud(cabecera: dict, suministros: list) -> bytes:
     """cabecera: ref, fecha, gestor, telefono, email, producto. suministros: dicts con alias,
-    cups, razon, direccion, cif, tarifa, fecha_fin, potencias [6] y perfil {mes: [6]}."""
+    cups, razon, direccion, cif, tarifa, fecha_inicio, potencias [6], perfil {mes: [6]} y
+    consideraciones (ver ofertas.paginas.consideraciones_de)."""
     wb = Workbook()
     nombres = nombres_de_hojas(suministros)
     _hoja_resumen(wb, suministros, nombres)
