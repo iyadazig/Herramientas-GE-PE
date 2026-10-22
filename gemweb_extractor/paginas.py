@@ -915,19 +915,46 @@ def _primer_registro(cliente, categoria, campo, valor):
     return {h.tag: h.text for h in raiz[0]} if len(raiz) else None
 
 
+def registro_inventario(cliente, categoria, campo, valor) -> dict:
+    """Primer registro del inventario, guardado en la sesion ({} si no existe o falla)."""
+    if not valor:
+        return {}
+    cache = st.session_state.setdefault("cache_inventario", {})
+    clave = (categoria, str(valor))
+    if clave not in cache:
+        try:
+            cache[clave] = _primer_registro(cliente, categoria, campo, valor) or {}
+        except GemwebError:
+            cache[clave] = {}
+    return cache[clave]
+
+
+def suministro_de(cliente, cups) -> dict:
+    """Suministro de Gemweb de un CUPS (prueba sus variantes), guardado en la sesion.
+    {} si no existe. Los errores de la API se propagan y no se guardan."""
+    cache = st.session_state.setdefault("cache_cups_suministro", {})
+    if cups not in cache:
+        sumi = {}
+        for variante in variantes_cups(cups):
+            sumi = _primer_registro(cliente, "subministraments", "subministraments.cups",
+                                    variante) or {}
+            if sumi:
+                break
+        cache[cups] = sumi
+    return cache[cups]
+
+
 def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin, telelecturas=True,
                               fichas_solicitud=False) -> dict:
     """Facturas, telelecturas y datos del suministro de cada CUPS (con la barra de progreso).
     La solicitud de ofertas no necesita las telelecturas, pero si las fichas."""
-    cache_sum = st.session_state.setdefault("cache_cups_suministro", {})
-    cache_inv = st.session_state.setdefault("cache_inventario", {})
     progreso = st.progress(0.0, text="Preparando descarga...")
     filas_fact, filas_mes, resumen, fichas = [], [], [], []
     total = len(cups_list)
     for i, cups in enumerate(cups_list, start=1):
         progreso.progress(i / total, text=f"Procesando {i}/{total}: {cups}")
         estado, elegidas, mensuales, descartadas = "OK", [], [], 0
-        validas, hay_facturas, sumi = [], False, cache_sum.get(cups)
+        validas, hay_facturas, sumi = [], False, None
         try:
             for variante in variantes_cups(cups):
                 try:
@@ -946,12 +973,7 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin, telelecturas=T
         except GemwebError as e:
             estado = f"Facturas: {str(e)[:200]}"
         try:
-            for variante in variantes_cups(cups) if sumi is None else []:
-                sumi = _primer_registro(cliente, "subministraments", "subministraments.cups",
-                                        variante)
-                if sumi:
-                    cache_sum[cups] = sumi
-                    break
+            sumi = suministro_de(cliente, cups)
             id_sum = sumi.get("id") if sumi else None
             m_ini, m_fin = meses_naturales(elegidas, modo, ini, fin)
             if telelecturas and id_sum and m_ini:
@@ -991,7 +1013,7 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin, telelecturas=T
             "Diferencia %": _pct(c_fact - c_tel, c_tel) if comunes else None,
             "Facturas descartadas": descartadas, "Estado": estado})
         if fichas_solicitud and (sumi or elegidas):
-            fichas.append(ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv))
+            fichas.append(ficha_solicitud(cliente, cups, sumi, validas, elegidas))
     progreso.progress(1.0, text="Descarga completada")
 
     df_fact = pd.DataFrame(filas_fact, columns=["CUPS", "Inicio factura", "Fin factura", "Tarifa",
@@ -1007,25 +1029,14 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin, telelecturas=T
             "nombre": nombre, "fichas": fichas}
 
 
-def ficha_solicitud(cliente, cups, sumi, validas, elegidas, cache_inv) -> dict:
+def ficha_solicitud(cliente, cups, sumi, validas, elegidas) -> dict:
     """Datos de un suministro para la solicitud de ofertas: Gemweb + potencias de la ultima
     factura + perfil por meses. Razon social y CIF de la entidad; direccion del centro."""
     from ofertas import solicitud as so
     sumi = sumi or {}
-
-    def registro(categoria, campo, valor):
-        if not valor:
-            return {}
-        clave = (categoria, str(valor))
-        if clave not in cache_inv:
-            try:
-                cache_inv[clave] = _primer_registro(cliente, categoria, campo, valor) or {}
-            except GemwebError:
-                cache_inv[clave] = {}
-        return cache_inv[clave]
-
-    entidad = registro("entitats", "entitats.id", sumi.get("id_entitats"))
-    centro = registro("centres_consum", "centres_consum.id", sumi.get("id_centres_consum"))
+    entidad = registro_inventario(cliente, "entitats", "entitats.id", sumi.get("id_entitats"))
+    centro = registro_inventario(cliente, "centres_consum", "centres_consum.id",
+                                 sumi.get("id_centres_consum"))
     ultima = max(validas, key=lambda f: f["Fin factura"]) if validas else None
     potencias = ultima["_potencias"] if ultima else [None] * 6
     if not any(p is not None for p in potencias):          # sin potencias en la factura
@@ -1071,6 +1082,25 @@ def mostrar_consumo_periodos(res: dict) -> None:
                        file_name=res["nombre"],
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        type="primary")
+
+
+def datos_de_cups(cups_list) -> pd.DataFrame:
+    """CUPS con la division (de su entidad) y el nombre del suministro en el inventario."""
+    cliente = obtener_cliente()
+    filas = []
+    with st.spinner("Buscando los CUPS en el inventario de Gemweb..."):
+        for cups in cups_list:
+            try:
+                sumi = suministro_de(cliente, cups)
+            except GemwebError as e:
+                filas.append({"CUPS": cups, "División": "", "Nombre": f"Error: {str(e)[:120]}"})
+                continue
+            entidad = registro_inventario(cliente, "entitats", "entitats.id",
+                                          sumi.get("id_entitats"))
+            filas.append({"CUPS": cups, "División": entidad.get("divisio") or "",
+                          "Nombre": sumi.get("nom") or ("" if sumi else
+                                                        "No encontrado en Gemweb")})
+    return pd.DataFrame(filas, columns=["CUPS", "División", "Nombre"])
 
 
 def pedir_cups() -> list:
@@ -1127,7 +1157,8 @@ def pedir_cups() -> list:
     if cups_list:
         st.success(f"{len(cups_list)} CUPS únicos preparados para descarga")
         with st.expander(f"Ver los {len(cups_list)} CUPS"):
-            st.code("\n".join(cups_list))
+            st.dataframe(datos_de_cups(cups_list[:150]), hide_index=True,
+                         use_container_width=True)
 
         if len(cups_list) > 150:
             st.error(
