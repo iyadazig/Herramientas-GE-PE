@@ -1,6 +1,6 @@
 openpyxl
 xlrd
 PyMuPDF
-streamlit
+streamlit==1.44.1
 pandas
 requests

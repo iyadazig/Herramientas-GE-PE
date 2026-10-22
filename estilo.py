@@ -28,6 +28,8 @@ ICONO = config.RECURSOS / "assets" / "icono.ico"
 COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
+MODULOS_MENU = {"Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
+                "Solicitud de ofertas": "ofertas", "Administración": "admin"}
 LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
 
 
@@ -40,8 +42,9 @@ def _icono(trazos):
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
-# icono de cada modulo del menu, en el orden de los grupos de inicio.py (el CSS los coloca
-# por posicion: no depende del script del navegador)
+# icono de cada modulo del menu. El script del navegador marca cada titulo de grupo de
+# inicio.py con su clave (MODULOS_MENU) segun su texto, no su posicion: la estructura del
+# menu cambia entre versiones de Streamlit. Sin marca no hay icono (nunca un recuadro).
 ICONOS_MODULO = {
     "ssaa": _icono("<path d='M5 21V3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5z'/>"
                    "<path d='M9 8h6M9 12h6M9 16h3'/>"),
@@ -142,10 +145,10 @@ h3, .stMarkdown h3 {
     content: ""; flex: none; width: 18px; height: 18px;
     background: no-repeat center / contain;
 }
-[data-testid="stNavSectionHeader"]:nth-of-type(1)::before { background-image: url("%(ico_ssaa)s"); }
-[data-testid="stNavSectionHeader"]:nth-of-type(2)::before { background-image: url("%(ico_gemweb)s"); }
-[data-testid="stNavSectionHeader"]:nth-of-type(3)::before { background-image: url("%(ico_ofertas)s"); }
-[data-testid="stNavSectionHeader"]:nth-of-type(4)::before { background-image: url("%(ico_admin)s"); }
+[data-gp-modulo="ssaa"]::before { background-image: url("%(ico_ssaa)s"); }
+[data-gp-modulo="gemweb"]::before { background-image: url("%(ico_gemweb)s"); }
+[data-gp-modulo="ofertas"]::before { background-image: url("%(ico_ofertas)s"); }
+[data-gp-modulo="admin"]::before { background-image: url("%(ico_admin)s"); }
 [data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
 [data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }
 [data-testid="stSidebarNavLink"]:hover { background: %(rosa)s; }
@@ -224,9 +227,15 @@ def traducir():
     import json
     import streamlit.components.v1 as components
     components.html("""<script>
-    const T = %s, EN = %s, ES = %s, OCULTAR = %s;
+    const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s;
     const doc = window.parent.document;
     function menu() {
+        // el titulo puede traer mas texto segun la version de Streamlit: se busca el nombre
+        doc.querySelectorAll('[data-testid="stNavSectionHeader"]').forEach(h => {
+            const texto = h.textContent.trim();
+            const nombre = Object.keys(MODULOS).find(n => texto.startsWith(n));
+            if (nombre && h.dataset.gpModulo !== MODULOS[nombre]) h.dataset.gpModulo = MODULOS[nombre];
+        });
         const aqui = window.parent.location.pathname.replace(/\\/$/, "");
         doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(a => {
             const activa = new URL(a.href, window.parent.location.href).pathname
@@ -288,7 +297,8 @@ def traducir():
     window.parent.__gpTraductor.observe(doc.body, {childList: true, subtree: true,
                                                    characterData: true});
     </script>""" % (json.dumps(TRADUCCIONES, ensure_ascii=False), json.dumps(MESES_EN),
-                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR)), height=0)
+                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR),
+                    json.dumps(MODULOS_MENU, ensure_ascii=False)), height=0)
 
 
 def _b64(ruta):
