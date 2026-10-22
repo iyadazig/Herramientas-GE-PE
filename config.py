@@ -16,9 +16,25 @@ else:
     CARPETA = Path(__file__).resolve().parent
     RECURSOS = CARPETA
 
-# Excel historicos de ESIOS (los mantiene el proyecto Descarga_datos_ESIOS).
-CARPETA_ESIOS = Path(os.environ.get(
-    "SSAA_CARPETA_ESIOS", CARPETA.parent / "Descarga_datos_ESIOS"))
+# Excel historicos de ESIOS: los de la carpeta de red, que actualizan los scripts de
+# ESIOS_Scraper (Programador de tareas del PC de la oficina). Si no se llega a la red, los
+# locales de Descarga_datos_ESIOS. Se puede cambiar con SSAA_CARPETA_ESIOS (--carpeta-esios).
+CARPETA_ESIOS_RED = Path(r"\\Svplaura-sys\energia 1\Tecnicos\Datos de mercado\ESIOS")
+CARPETA_ESIOS_LOCAL = CARPETA.parent / "Descarga_datos_ESIOS"
+
+
+def _carpeta_esios():
+    if os.environ.get("SSAA_CARPETA_ESIOS"):
+        return Path(os.environ["SSAA_CARPETA_ESIOS"])
+    try:
+        if CARPETA_ESIOS_RED.is_dir():
+            return CARPETA_ESIOS_RED
+    except OSError:
+        pass
+    return CARPETA_ESIOS_LOCAL
+
+
+CARPETA_ESIOS = _carpeta_esios()
 
 # Base de datos compartida (usuarios, fichas, historial). En el servidor se puede llevar a
 # otra carpeta con SSAA_CARPETA_DATOS.

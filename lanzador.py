@@ -13,8 +13,8 @@ MODO SERVIDOR (para todo el equipo; ver servidor/GUIA_SERVIDOR.md):
 escucha en la red (el cortafuegos de Windows limita quien entra: oficina y VPN), no abre
 navegador y no muestra el boton de cerrar.
 
---carpeta-esios RUTA: carpeta de los Excel historicos de ESIOS (p. ej. una carpeta de red
-\\\\servidor\\datos\\ESIOS); por defecto ..\\Descarga_datos_ESIOS.
+--carpeta-esios RUTA: carpeta de los Excel historicos de ESIOS; por defecto la de red
+(config.CARPETA_ESIOS_RED) y, si no se llega a ella, ..\\Descarga_datos_ESIOS.
 """
 
 import os
