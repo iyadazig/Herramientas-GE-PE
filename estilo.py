@@ -28,6 +28,32 @@ ICONO = config.RECURSOS / "assets" / "icono.ico"
 COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
+LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
+
+
+def _icono(trazos):
+    """Icono de linea (24x24) como imagen SVG para la mascara CSS del menu."""
+    svg = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+           "stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+           + trazos + "</svg>")
+    return "data:image/svg+xml;utf8," + svg.replace("<", "%3C").replace(">", "%3E")
+
+
+# icono de cada modulo del menu (inicio.py: el titulo del grupo -> MODULOS_MENU)
+ICONOS_MODULO = {
+    "ssaa": _icono("<path d='M5 21V3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5z'/>"
+                   "<path d='M9 8h6M9 12h6M9 16h3'/>"),
+    "gemweb": _icono("<ellipse cx='12' cy='6' rx='7' ry='3'/>"
+                     "<path d='M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6'/>"
+                     "<path d='M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6'/>"),
+    "ofertas": _icono("<path d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/>"
+                      "<path d='M14 3v5h5M9 13h6M9 17h6'/>"),
+    "admin": _icono("<path d='M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'/>"
+                    "<path d='M9 12l2 2 4-4'/>"),
+}
+MODULOS_MENU = {"Revisión de SSAA": "ssaa", "Gemweb": "gemweb",
+                "Solicitud de ofertas": "ofertas", "Administración": "admin"}
+
 CSS = """
 <style>
 html, body, [class*="css"], .stMarkdown, .stText, button, input, textarea, select {
@@ -102,6 +128,33 @@ h3, .stMarkdown h3 {
 [data-testid="stSidebar"] { background: %(beis)s; border-right: 1px solid %(borde)s; }
 [data-testid="stSidebar"] h2 { color: %(granate_oscuro)s; font-size: 1.05rem; }
 
+/* menu: cada modulo con titulo granate, icono y linea debajo; los submodulos sangrados */
+[data-testid="stNavSectionHeader"] {
+    display: flex; align-items: center; gap: 0.5rem; color: %(granate_oscuro)s;
+    font-size: 0.95rem; font-weight: 600; letter-spacing: 0; text-transform: none;
+    margin: 1.1rem 1rem 0.3rem 1rem; padding: 0 0.25rem 0.35rem 0.25rem;
+    border-bottom: 1px solid %(linea_menu)s;
+}
+[data-testid="stSidebarNavItems"] > [data-testid="stNavSectionHeader"]:first-child {
+    margin-top: 0.3rem;
+}
+[data-testid="stNavSectionHeader"]::before {
+    content: ""; flex: none; width: 18px; height: 18px; background: %(granate)s;
+    -webkit-mask: var(--gp-icono) no-repeat center / contain;
+    mask: var(--gp-icono) no-repeat center / contain;
+}
+[data-gp-modulo="ssaa"] { --gp-icono: url("%(ico_ssaa)s"); }
+[data-gp-modulo="gemweb"] { --gp-icono: url("%(ico_gemweb)s"); }
+[data-gp-modulo="ofertas"] { --gp-icono: url("%(ico_ofertas)s"); }
+[data-gp-modulo="admin"] { --gp-icono: url("%(ico_admin)s"); }
+[data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
+[data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }
+[data-testid="stSidebarNavLink"]:hover { background: %(rosa)s; }
+[data-testid="stSidebarNavLink"][data-gp-activa] { background: %(rosa)s; }
+[data-testid="stSidebarNavLink"][data-gp-activa] span {
+    color: %(granate_oscuro)s; font-weight: 600;
+}
+
 /* expanders */
 [data-testid="stExpander"] details { border: 1px solid %(borde)s; border-radius: 6px; }
 [data-testid="stExpander"] summary:hover { color: %(granate)s; }
@@ -128,7 +181,8 @@ h3, .stMarkdown h3 {
 }
 </style>
 """ % {"granate": GRANATE, "granate_oscuro": GRANATE_OSCURO, "negro": NEGRO, "gris": GRIS,
-       "gris_claro": GRIS_CLARO, "beis": BEIS, "borde": BEIS_BORDE, "rosa": ROSA}
+       "gris_claro": GRIS_CLARO, "beis": BEIS, "borde": BEIS_BORDE, "rosa": ROSA,
+       "linea_menu": LINEA_MENU, **{"ico_" + k: v for k, v in ICONOS_MODULO.items()}}
 
 
 # Textos fijos de los componentes de Streamlit (en ingles y sin opcion de idioma).
@@ -171,8 +225,21 @@ def traducir():
     import json
     import streamlit.components.v1 as components
     components.html("""<script>
-    const T = %s, EN = %s, ES = %s, OCULTAR = %s;
+    const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s;
     const doc = window.parent.document;
+    function menu() {
+        doc.querySelectorAll('[data-testid="stNavSectionHeader"]').forEach(h => {
+            const m = MODULOS[h.textContent.trim()];
+            if (m && h.dataset.gpModulo !== m) h.dataset.gpModulo = m;
+        });
+        const aqui = window.parent.location.pathname.replace(/\\/$/, "");
+        doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(a => {
+            const activa = new URL(a.href, window.parent.location.href).pathname
+                .replace(/\\/$/, "") === aqui;
+            if (activa !== a.hasAttribute("data-gp-activa"))
+                activa ? a.setAttribute("data-gp-activa", "") : a.removeAttribute("data-gp-activa");
+        });
+    }
     // la pagina ya esta en espanol: que el navegador no la traduzca (altera contrasenas y datos)
     doc.documentElement.lang = "es";
     doc.documentElement.setAttribute("translate", "no");
@@ -203,16 +270,31 @@ def traducir():
         });
     }
     pasar(doc.body);
+    menu();
+    // al pulsar en el menu, la pagina abierta se marca enseguida (sin esperar a la recarga);
+    // se llama a la funcion de la ultima ejecucion (el iframe de las anteriores puede no estar)
+    window.parent.__gpMenu = menu;
+    if (!window.parent.__gpMenuClic) {
+        window.parent.__gpMenuClic = true;
+        doc.addEventListener("click", e => {
+            if (e.target.closest('[data-testid="stSidebarNavLink"]'))
+                setTimeout(() => window.parent.__gpMenu(), 50);
+        });
+    }
     // en cada ejecucion se sustituye el observador anterior (su iframe puede haberse borrado)
     if (window.parent.__gpTraductor) window.parent.__gpTraductor.disconnect();
-    window.parent.__gpTraductor = new MutationObserver(ms => ms.forEach(m => {
-        m.addedNodes.forEach(n => n.nodeType === 3 ? nodo(n) : (n.nodeType === 1 && pasar(n)));
-        if (m.type === "characterData") nodo(m.target);
-    }));
+    window.parent.__gpTraductor = new MutationObserver(ms => {
+        ms.forEach(m => {
+            m.addedNodes.forEach(n => n.nodeType === 3 ? nodo(n) : (n.nodeType === 1 && pasar(n)));
+            if (m.type === "characterData") nodo(m.target);
+        });
+        menu();
+    });
     window.parent.__gpTraductor.observe(doc.body, {childList: true, subtree: true,
                                                    characterData: true});
     </script>""" % (json.dumps(TRADUCCIONES, ensure_ascii=False), json.dumps(MESES_EN),
-                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR)), height=0)
+                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR),
+                    json.dumps(MODULOS_MENU, ensure_ascii=False)), height=0)
 
 
 def _b64(ruta):
