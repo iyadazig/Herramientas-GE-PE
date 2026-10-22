@@ -302,10 +302,9 @@ def _b64(ruta):
 
 
 def aplicar():
-    """CSS corporativo y logo en la barra lateral. Llamar justo tras set_page_config."""
+    """CSS corporativo (el logo va en la cabecera de cada pagina). Llamar justo tras
+    set_page_config."""
     st.markdown(CSS, unsafe_allow_html=True)
-    if LOGO_PEQ.exists():
-        st.logo(str(LOGO_PEQ), size="large")
 
 
 def cabecera(titulo, subtitulo=""):
