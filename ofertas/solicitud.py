@@ -4,8 +4,9 @@ SOLICITUD DE OFERTAS (Excel con el formato de GE&PE)
 ====================================================
 Hoja «Resumen» con un suministro por fila y una hoja por suministro con la cabecera de la
 solicitud, los datos del suministro, las potencias de la ultima factura y el perfil de
-consumo de los ultimos 12 meses por periodos (cada factura en el mes de su fecha de fin),
-con su grafico de columnas apiladas.
+consumo de los ultimos 12 meses por periodos (cada factura mensual en el mes con mas dias
+suyos; las bimestrales o mas largas, repartidas por dias: reparto_mensual), con su grafico
+de columnas apiladas.
 
 En gas natural (cabecera producto_tipo = GAS), en lugar de potencias y periodos: los aspectos
 tecnicos del suministro (peaje RL, Qd, telemedida, termino fijo...) y el perfil mensual con
@@ -18,7 +19,7 @@ aqui solo se da formato.
 
 import io
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -76,6 +77,9 @@ MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "
                 "dic"]
 MESES_LARGOS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
                 "septiembre", "octubre", "noviembre", "diciembre"]
+# perfil de consumo: una factura mas larga que esto se reparte entre sus meses; los dias que
+# cubren las facturas pueden alejarse de un año hasta MARGEN_DIAS sin avisar
+FACTURA_MENSUAL_MAX_DIAS, DIAS_ANIO, MARGEN_DIAS = 45, 365, 15
 AMARILLO, ROJO = "FFFF00", "FF0000"
 
 OSCURO, CLARO, NARANJA = "1F497D", "DAEEF3", "FFC000"
@@ -130,19 +134,39 @@ def grupo_rl_de_consumo(consumo: float) -> int:
     return next(n for limite, n in ESCALONES_RL if consumo <= limite)
 
 
+def reparto_mensual(f: dict) -> list:
+    """Meses del perfil de una factura: [(año, mes, fraccion del consumo, dias)]. Una factura
+    de hasta FACTURA_MENSUAL_MAX_DIAS va entera al mes con mas dias suyos (a igualdad, el
+    ultimo); una mas larga (bimestral, trimestral...) se reparte entre sus meses segun los
+    dias de cada uno. Sin fecha de inicio, al mes de su fecha de fin."""
+    fin = f["Fin factura"]
+    ini = f.get("Inicio factura") or fin
+    total = (fin - ini).days + 1
+    tramos, d = [], ini
+    while d <= fin:
+        fin_mes = date(d.year + d.month // 12, d.month % 12 + 1, 1) - timedelta(days=1)
+        hasta = min(fin_mes, fin)
+        tramos.append((d.year, d.month, (hasta - d).days + 1))
+        d = hasta + timedelta(days=1)
+    if total <= FACTURA_MENSUAL_MAX_DIAS:
+        anio, mes, _ = max(tramos, key=lambda t: (t[2], t[0], t[1]))
+        return [(anio, mes, 1.0, total if f.get("Inicio factura") else 0)]
+    return [(anio, mes, dias / total, dias) for anio, mes, dias in tramos]
+
+
 def perfil_gas(facturas: list) -> dict:
-    """Facturas de gas -> {mes 1-12: {anio, kwh, dias, qd}}. Cada factura va al mes de su
-    fecha de fin (como perfil_mensual); dias, los facturados; qd, el Qd aplicado (kWh/dia) de
-    la factura (el mayor si hay varias)."""
+    """Facturas de gas -> {mes 1-12: {anio, kwh, dias, qd}}, con el reparto de
+    reparto_mensual (como perfil_mensual); dias, los facturados en ese mes; qd, el Qd
+    aplicado (kWh/dia) de la factura (el mayor si hay varias)."""
     perfil = {m: {"anio": None, "kwh": 0.0, "dias": 0, "qd": None} for m in range(1, 13)}
     for f in facturas:
-        fin, ini = f["Fin factura"], f.get("Inicio factura")
-        p = perfil[fin.month]
-        p["anio"] = max(p["anio"] or 0, fin.year)
-        p["kwh"] += float(f.get("Total kWh") or 0)
-        p["dias"] += (fin - ini).days + 1 if ini else 0
-        if f.get("_qd"):
-            p["qd"] = max(p["qd"] or 0, float(f["_qd"]))
+        for anio, mes, fraccion, dias in reparto_mensual(f):
+            p = perfil[mes]
+            p["anio"] = max(p["anio"] or 0, anio)
+            p["kwh"] += float(f.get("Total kWh") or 0) * fraccion
+            p["dias"] += dias
+            if f.get("_qd"):
+                p["qd"] = max(p["qd"] or 0, float(f["_qd"]))
     return perfil
 
 
@@ -215,40 +239,56 @@ def avisos_gas(s: dict) -> list:
 
 
 def aviso_perfil(facturas: list) -> tuple:
-    """(texto, grave) si algun mes del perfil junta facturas que terminan en años distintos;
-    ('', False) si no. Grave si ademas las facturas cubren mas de un año (se suma el mismo mes
-    de dos años: el consumo anual sale de mas). Si no, solo informa: pasa con una factura
-    corta (p. ej. por un cambio de peaje) y no se repite ningun dia."""
-    anios = {}
-    for f in facturas:
-        anios.setdefault(f["Fin factura"].month, set()).add(f["Fin factura"].year)
-    repetidos = sorted(m for m, a in anios.items() if len(a) > 1)
-    if not repetidos:
+    """(texto, grave): si los dias que cubren las facturas se alejan de un año mas de
+    MARGEN_DIAS (sobran o faltan) o si hay facturas que se solapan mas de MARGEN_DIAS (p. ej.
+    una complementaria del mismo periodo). ('', False) si todo cuadra, o si alguna factura no
+    trae su fecha de inicio."""
+    if not facturas or not all(f.get("Inicio factura") for f in facturas):
         return "", False
-    nombres = [MESES_LARGOS[m - 1] for m in repetidos]
-    meses = " y ".join([", ".join(nombres[:-1]), nombres[-1]] if len(nombres) > 1 else nombres)
-    inicios = [f.get("Inicio factura") for f in facturas]
-    dias = ((max(f["Fin factura"] for f in facturas) - min(inicios)).days + 1
-            if all(inicios) else None)
-    if dias is None or dias > 366:
-        return (f"las facturas cubren {f'{dias} días, ' if dias else ''}más de un año, y en "
-                f"{meses} se suma el mismo mes de dos años distintos: el consumo anual sale de "
-                "más. Elige «Últimos 12 meses con factura» o un periodo de 12 meses."), True
-    detalle = ", ".join(f"{MESES_LARGOS[m - 1]} ({' y '.join(map(str, sorted(anios[m])))})"
-                        for m in repetidos)
-    return (f"la fila de {detalle} junta facturas que terminan ese mes en años distintos "
-            f"(las facturas cubren {dias} días). No se repite ningún día: el consumo anual "
-            "es correcto."), False
+    dias = set()
+    for f in facturas:
+        dias.update(range(f["Inicio factura"].toordinal(), f["Fin factura"].toordinal() + 1))
+    cubiertos = len(dias)
+    # solapes solo entre facturas con consumo: una de 0 kWh del mismo periodo (complementaria
+    # de otros conceptos, abono...) no suma nada dos veces
+    con_consumo = [f for f in facturas if float(f.get("Total kWh", 1) or 0)]
+    veces = {}
+    for f in con_consumo:
+        for d in range(f["Inicio factura"].toordinal(), f["Fin factura"].toordinal() + 1):
+            veces[d] = veces.get(d, 0) + 1
+    solape = sum(v - 1 for v in veces.values() if v > 1)
+    pares = [(f, g) for n, f in enumerate(con_consumo) for g in con_consumo[n + 1:]
+             if f["Inicio factura"] <= g["Fin factura"] and g["Inicio factura"] <= f["Fin factura"]]
+    avisos = []
+    if cubiertos > DIAS_ANIO + MARGEN_DIAS:
+        avisos.append(f"las facturas cubren {cubiertos} días: sobran {cubiertos - DIAS_ANIO} "
+                      "sobre un año y el consumo anual sale de más")
+    elif cubiertos < DIAS_ANIO - MARGEN_DIAS:
+        avisos.append(f"las facturas solo cubren {cubiertos} días: faltan "
+                      f"{DIAS_ANIO - cubiertos} para un año (meses sin factura) y el consumo "
+                      "anual sale de menos")
+    if solape > MARGEN_DIAS:
+        def periodo(f):
+            kwh = f"{float(f.get('Total kWh') or 0):,.0f}".replace(",", ".")
+            return (f"{f['Inicio factura']:%d/%m/%Y}-{f['Fin factura']:%d/%m/%Y} "
+                    f"({kwh} kWh)" if "Total kWh" in f else
+                    f"{f['Inicio factura']:%d/%m/%Y}-{f['Fin factura']:%d/%m/%Y}")
+        detalle = "; ".join(f"{periodo(f)} y {periodo(g)}" for f, g in pares)
+        avisos.append(f"hay facturas con consumo que se solapan {solape} días ({detalle}), p. "
+                      "ej. una complementaria o rectificativa del mismo periodo: revisa en "
+                      "Gemweb que el consumo no se cuente dos veces")
+    return ("; además, ".join(avisos) + "." if avisos else ""), bool(avisos)
 
 
 def perfil_mensual(facturas: list) -> tuple:
-    """Facturas -> ({mes 1-12: [P1..P6]}, aviso). Cada factura va al mes de su fecha de fin;
-    si un mes tiene varias, se suman. El aviso es el texto de aviso_perfil."""
+    """Facturas -> ({mes 1-12: [P1..P6]}, aviso). Cada factura mensual va al mes con mas dias
+    suyos y las mas largas se reparten por dias (reparto_mensual); si un mes tiene varias, se
+    suman. El aviso es el texto de aviso_perfil."""
     perfil = {m: [0.0] * 6 for m in range(1, 13)}
     for f in facturas:
-        mes = f["Fin factura"].month
-        for n, col in enumerate(COLS_P):
-            perfil[mes][n] += float(f.get(col) or 0)
+        for _, mes, fraccion, _ in reparto_mensual(f):
+            for n, col in enumerate(COLS_P):
+                perfil[mes][n] += float(f.get(col) or 0) * fraccion
     return perfil, aviso_perfil(facturas)[0]
 
 

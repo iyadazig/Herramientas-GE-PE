@@ -176,6 +176,22 @@ class AyudasDePaginas(unittest.TestCase):
         self.assertEqual([f["Fin factura"].month for f in per], [1, 2, 3])
         self.assertEqual(self.p.elegir_facturas([], "ultimos12"), [])
 
+    def test_ultimos_12_solo_facturas_con_la_mayoria_de_dias_dentro(self):
+        import datetime as dt
+        # las lecturas se mueven: la ultima acaba el 23/09/2026 y la de hace un año, el 24/09
+        filas = [{"Inicio factura": dt.date(2025, 8, 26), "Fin factura": dt.date(2025, 9, 24)},
+                 {"Inicio factura": dt.date(2025, 9, 25), "Fin factura": dt.date(2026, 8, 19)},
+                 {"Inicio factura": dt.date(2026, 8, 20), "Fin factura": dt.date(2026, 9, 23)}]
+        ult = self.p.elegir_facturas(filas, "ultimos12")
+        self.assertEqual([f["Inicio factura"] for f in ult],
+                         [dt.date(2025, 9, 25), dt.date(2026, 8, 20)])
+        # periodo: entra la del 26/08 al 24/09/2025 (24 de sus 30 dias son de septiembre)...
+        per = self.p.elegir_facturas(filas, "periodo", dt.date(2025, 9, 1), dt.date(2026, 9, 30))
+        self.assertEqual(len(per), 3)
+        # ...pero no si el periodo empieza el 15/09 (solo 10 dias dentro)
+        per = self.p.elegir_facturas(filas, "periodo", dt.date(2025, 9, 15), dt.date(2026, 9, 30))
+        self.assertEqual(len(per), 2)
+
     def test_meses_naturales_de_los_ultimos_12(self):
         import datetime as dt
         facturas = [{"Fin factura": dt.date(2026, 2, 28)}]

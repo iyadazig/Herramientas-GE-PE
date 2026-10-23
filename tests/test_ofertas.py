@@ -39,23 +39,49 @@ class Datos(unittest.TestCase):
         self.assertEqual(perfil[6], [0.0] * 6)
         self.assertEqual(aviso, "")
 
-    def test_aviso_si_se_mezclan_anios(self):
-        _, aviso = so.perfil_mensual([factura(2025, 3, 31, p1=1), factura(2026, 3, 31, p1=1)])
-        self.assertIn("marzo", aviso)
-        # mas de un año de facturas: el mismo mes se suma dos veces (grave)
-        f = [dict(factura(2025, 3, 31), **{"Inicio factura": dt.date(2025, 3, 1)}),
-             dict(factura(2026, 3, 31), **{"Inicio factura": dt.date(2026, 3, 1)})]
-        texto, grave = so.aviso_perfil(f)
+    def test_aviso_si_los_dias_no_suman_un_anio(self):
+        def fac(ini, fin):
+            return {"Inicio factura": ini, "Fin factura": fin}
+        # facturas del 25 al 24 durante un año, con una corta por un cambio de peaje: sin aviso
+        anio = [fac(dt.date(2025, 9, 25), dt.date(2025, 9, 30)),
+                fac(dt.date(2025, 10, 1), dt.date(2026, 9, 24))]
+        self.assertEqual(so.aviso_perfil(anio), ("", False))
+        # pocos dias de mas o de menos (hasta 15): sin aviso
+        self.assertEqual(so.aviso_perfil([fac(dt.date(2025, 9, 20), dt.date(2026, 9, 30))]),
+                         ("", False))
+        # sobra un mes
+        texto, grave = so.aviso_perfil([fac(dt.date(2025, 8, 26), dt.date(2026, 9, 23))])
         self.assertTrue(grave)
-        self.assertIn("396 días, más de un año, y en marzo", texto)
-        # factura corta por un cambio de peaje: 25/09/2025-24/09/2026, sin dias repetidos
-        f = [dict(factura(2025, 9, 30), **{"Inicio factura": dt.date(2025, 9, 25)}),
-             dict(factura(2026, 9, 24), **{"Inicio factura": dt.date(2026, 8, 25)})]
-        texto, grave = so.aviso_perfil(f)
-        self.assertFalse(grave)
-        self.assertTrue(texto.startswith("la fila de septiembre (2025 y 2026) junta"))
-        self.assertIn("365 días", texto)
-        self.assertEqual(so.aviso_perfil([factura(2026, 1, 31)]), ("", False))
+        self.assertIn("cubren 394 días: sobran 29", texto)
+        # faltan meses
+        texto, _ = so.aviso_perfil([fac(dt.date(2026, 1, 1), dt.date(2026, 9, 30))])
+        self.assertIn("faltan 92 para un año", texto)
+        # dos facturas del mismo periodo (complementaria)
+        compl = dict(fac(dt.date(2025, 11, 8), dt.date(2026, 1, 12)), **{"Total kWh": 8_000})
+        texto, _ = so.aviso_perfil(anio + [compl])
+        self.assertIn("con consumo que se solapan 66 días (01/10/2025-24/09/2026 y "
+                      "08/11/2025-12/01/2026 (8.000 kWh))", texto)
+        # una del mismo periodo con 0 kWh no suma nada dos veces: sin aviso
+        self.assertEqual(so.aviso_perfil(anio + [dict(compl, **{"Total kWh": 0})]), ("", False))
+        self.assertEqual(so.aviso_perfil([factura(2026, 1, 31)]), ("", False))  # sin inicio
+
+    def test_reparto_por_meses(self):
+        def fac(ini, fin, kwh):
+            return {"Inicio factura": ini, "Fin factura": fin, "P1 kWh": kwh, "Total kWh": kwh}
+        # mensual del 25 al 24: entera al mes con mas dias; del 02/09 al 02/10, a septiembre
+        self.assertEqual(so.reparto_mensual(fac(dt.date(2026, 1, 25), dt.date(2026, 2, 24), 1)),
+                         [(2026, 2, 1.0, 31)])
+        self.assertEqual(so.reparto_mensual(fac(dt.date(2026, 9, 2), dt.date(2026, 10, 2), 1)),
+                         [(2026, 9, 1.0, 31)])
+        # bimestral del 12/07 al 10/09: repartida por dias entre julio, agosto y septiembre
+        bim = fac(dt.date(2025, 7, 12), dt.date(2025, 9, 10), 6_100)
+        self.assertEqual([(m, d) for _, m, _, d in so.reparto_mensual(bim)],
+                         [(7, 20), (8, 31), (9, 10)])
+        perfil, _ = so.perfil_mensual([bim])
+        self.assertEqual([round(perfil[m][0]) for m in (7, 8, 9)], [2_000, 3_100, 1_000])
+        gas = so.perfil_gas([dict(bim, _qd=200)])
+        self.assertEqual((round(gas[8]["kwh"]), gas[8]["dias"], gas[8]["qd"], gas[8]["anio"]),
+                         (3_100, 31, 200.0, 2025))
 
     def test_nombres_de_hojas(self):
         self.assertEqual(so.nombres_de_hojas([{"alias": "TC1"}, {"alias": "",

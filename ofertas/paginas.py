@@ -399,8 +399,9 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     st.subheader("4. Solicitud de ofertas")
     st.caption("Excel con el formato de GE&PE: una hoja «Resumen» y otra por suministro con sus "
                "datos, las potencias de su última factura (en gas, los aspectos técnicos), el "
-               "perfil de consumo de los últimos 12 meses (cada factura en el mes de su fecha "
-               "de fin) y las consideraciones de la oferta.")
+               "perfil de consumo de los últimos 12 meses (cada factura mensual en el mes con "
+               "más días suyos; las bimestrales, trimestrales… repartidas entre sus meses según "
+               "sus días) y las consideraciones de la oferta.")
     # producto de cada suministro segun Gemweb (las solicitudes antiguas, de electricidad)
     tipos = [f.get("tipo") or so.ELECTRICIDAD for f in fichas]
     if len(set(tipos)) > 1:

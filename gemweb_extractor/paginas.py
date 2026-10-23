@@ -746,20 +746,31 @@ def facturas_por_periodo(cups: str, root) -> tuple:
     return filas, descartadas
 
 
+def _mayoria_dentro(f: dict, desde: date, hasta: date) -> bool:
+    """La mayor parte de los dias de la factura cae entre desde y hasta (sin fecha de inicio,
+    cuenta su fecha de fin)."""
+    fin = f["Fin factura"]
+    ini = f.get("Inicio factura") or fin
+    dentro = (min(fin, hasta) - max(ini, desde)).days + 1
+    return dentro * 2 > (fin - ini).days + 1
+
+
 def elegir_facturas(filas: list, modo: str, ini: date = None, fin: date = None) -> list:
-    """modo 'ultimos12': las facturas de los 12 meses anteriores al final de la ultima (suelen
-    ser 12; alguna mas si un mes se facturo en dos, p. ej. por un alta a mitad de mes).
-    modo 'periodo': las que terminan entre ini y fin (incluidos)."""
+    """modo 'ultimos12': las facturas del año anterior al final de la ultima (suelen ser 12;
+    alguna mas si un mes se facturo en dos, p. ej. por un alta a mitad de mes).
+    modo 'periodo': las del periodo de ini a fin (incluidos). En los dos, una factura entra
+    solo si la mayor parte de sus dias cae dentro: las fechas de lectura se mueven unos dias y
+    una factura que acaba justo dentro pero empezo un mes antes sumaria un mes de mas."""
     filas = sorted(filas, key=lambda f: f["Fin factura"], reverse=True)
     if not filas:
         return []
     if modo == "ultimos12":
         ultima = filas[0]["Fin factura"]
         dia = 28 if (ultima.month, ultima.day) == (2, 29) else ultima.day
-        hace_un_anio = ultima.replace(year=ultima.year - 1, day=dia)
-        elegidas = [f for f in filas if f["Fin factura"] > hace_un_anio]
+        desde, hasta = ultima.replace(year=ultima.year - 1, day=dia) + timedelta(days=1), ultima
     else:
-        elegidas = [f for f in filas if ini <= f["Fin factura"] <= fin]
+        desde, hasta = ini, fin
+    elegidas = [f for f in filas if _mayoria_dentro(f, desde, hasta)]
     return sorted(elegidas, key=lambda f: f["Fin factura"])
 
 
@@ -874,11 +885,11 @@ def elegir_periodo():
     ini = fin = None
     if modo == "ultimos12":
         st.caption("Para cada CUPS se toman las facturas de los últimos 12 meses, contados hacia "
-                   "atrás desde el final de su factura más reciente. Si algún mes se facturó en "
-                   "dos facturas, se incluyen las dos.")
+                   "atrás desde el final de su factura más reciente; cada una entra si la mayor "
+                   "parte de sus días cae dentro. Si algún mes se facturó en dos facturas, se "
+                   "incluyen las dos.")
     else:
-        st.caption("Facturas cuya fecha de fin cae dentro del periodo (la del 31/07 al 31/08 "
-                   "cuenta como agosto).")
+        st.caption("Facturas con la mayor parte de sus días dentro del periodo.")
         hoy = date.today()
         ini_s, fin_s = selector_fechas(inicio=date(hoy.year - 1, hoy.month, 1),
                                        fin=mes_anterior()[1])
