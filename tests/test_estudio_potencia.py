@@ -85,6 +85,35 @@ class Zona(unittest.TestCase):
                          ("3.0TD", "Nave", "C/ A 1, 41001 Sevilla", [10, 20, 30, 40, 50, 60]))
 
 
+class DatosDelEstudio(unittest.TestCase):
+    def test_titular_comun(self):
+        a = sv.Suministro(cups=CUPS_A, titular="EMPRESA A SA", grupo="GRUPO DE PRUEBA")
+        b = sv.Suministro(cups=CUPS_B, titular="EMPRESA B SA", grupo="GRUPO DE PRUEBA")
+        fuera = sv.Suministro(cups="ES0000000000000003CC0F")        # no esta en Gemweb
+        self.assertEqual(sv.titular_comun([a]), "EMPRESA A SA")
+        self.assertEqual(sv.titular_comun([a, b, fuera]), "GRUPO DE PRUEBA")
+        b.grupo = "OTRO GRUPO"
+        self.assertEqual(sv.titular_comun([a, b]), "")
+        b.titular = "EMPRESA A SA"
+        self.assertEqual(sv.titular_comun([a, b]), "EMPRESA A SA")
+
+    def test_cups_del_fichero(self):
+        self.assertEqual(sv.cups_del_fichero(CUPS_A[:20], [CUPS_B, CUPS_A]), CUPS_A)
+        self.assertEqual(sv.cups_del_fichero(CUPS_A, [CUPS_A[:20]]), CUPS_A[:20])
+        self.assertIsNone(sv.cups_del_fichero(CUPS_A, [CUPS_B]))
+
+    def test_estudio_guardado_con_la_version_anterior(self):
+        import pickle
+        s = sv.Suministro(cups=CUPS_A)
+        antiguo = {k: v for k, v in s.__dict__.items()
+                   if k not in ("titular", "grupo", "en_gemweb", "fuente")}
+        copia = sv.Suministro.__new__(sv.Suministro)
+        copia.__setstate__(antiguo)
+        self.assertEqual((copia.cups, copia.titular, copia.en_gemweb, copia.fuente),
+                         (CUPS_A, "", False, ""))
+        self.assertEqual(pickle.loads(pickle.dumps(s)).cups, CUPS_A)
+
+
 class Curvas(unittest.TestCase):
     def test_fichero_subido_con_su_nombre(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -57,6 +57,10 @@ class Suministro:
     zona_origen: str = ""
     zona_manual: bool = False
     tarifa: str = TARIFAS[0]
+    titular: str = ""                          # razon social (entidad de Gemweb) o a mano
+    grupo: str = ""                            # division de la entidad en Gemweb
+    en_gemweb: bool = False
+    fuente: str = ""                           # de donde sale la curva (Gemweb o el fichero)
     denominacion: str = ""
     direccion: str = ""
     actual: list = field(default_factory=lambda: [None] * N_P)
@@ -75,6 +79,31 @@ class Suministro:
 
     def invalidar(self):
         self.estudio = self.optimo = self.escenarios = self._clave = None
+
+    def __setstate__(self, estado):
+        """Estudios guardados con una version anterior: los campos nuevos, por defecto."""
+        self.__dict__.update({k: v for k, v in Suministro().__dict__.items()
+                              if k not in estado})
+        self.__dict__.update(estado)
+
+
+def titular_comun(suministros) -> str:
+    """Titular del estudio: el del suministro; en multipunto, el grupo si todos los que lo
+    tienen son del mismo, si no la razon social comun ('' si son de varias). Los suministros
+    sin el dato (p. ej. los que no estan en Gemweb) no cuentan."""
+    for campo in (("titular",) if len(suministros) == 1 else ("grupo", "titular")):
+        valores = {getattr(s, campo).strip() for s in suministros} - {""}
+        if len(valores) == 1:
+            return valores.pop()
+    return ""
+
+
+def cups_del_fichero(cups, disponibles):
+    """El CUPS tal como viene en el fichero de curva (con o sin el '0F' final) o None."""
+    for d in disponibles:
+        if d == cups or d[:20] == cups[:20]:
+            return d
+    return None
 
 
 # ------------------------------------------------------------------- curvas
@@ -111,9 +140,12 @@ def interpretar(lector, zona, ajustes=None, cups=None, multipunto=False):
     return curva
 
 
-def leer_suministro(s, lector, ajustes=None, multipunto=False):
-    """(Re)lee la curva del suministro con su zona, conservando los avisos de Gemweb."""
-    s.curva = interpretar(lector, s.zona, ajustes, s.cups if multipunto else None, multipunto)
+def leer_suministro(s, lector, ajustes=None, multipunto=False, cups_fichero=None):
+    """(Re)lee la curva del suministro con su zona, conservando los avisos de Gemweb.
+    cups_fichero: el CUPS tal como viene en el fichero (si no, el del suministro en
+    multipunto)."""
+    s.curva = interpretar(lector, s.zona, ajustes,
+                          cups_fichero or (s.cups if multipunto else None), multipunto)
     s.curva.avisos += [a for a in s.avisos_extra if a not in s.curva.avisos]
     s.zona_curva = s.zona
     s.invalidar()
@@ -592,7 +624,8 @@ def pdf_individual(datos, s, precios_, anexos=True, seleccion=(0, None)) -> byte
 
 
 def pdf_multipunto(datos, suministros, res, precios_, anexos=True, seleccion=(0, None)) -> bytes:
-    sums = [{"datos": {"titular": datos.get("titular", ""), "fecha": datos.get("fecha", ""),
+    sums = [{"datos": {"titular": s.titular.strip() or datos.get("titular", ""),
+                       "fecha": datos.get("fecha", ""),
                        "cups": s.cups, "tarifa": s.tarifa, "instalacion": s.denominacion.strip(),
                        "direccion": s.direccion.strip(), "zona": s.zona},
              "estudio": s.estudio, "escenarios": s.escenarios, "curva": s.curva}

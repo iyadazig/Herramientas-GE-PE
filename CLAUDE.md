@@ -50,8 +50,13 @@ pago. La factura y la curva no salen del PC.
   - `estudio_potencia/servicio.py`: lógica sin Streamlit (curvas subidas o de Gemweb, cálculo,
     tablas, PDF, empaquetar para guardar).
   - `estudio_potencia/paginas.py`: «Nuevo estudio» y «Estudios guardados».
-  - La zona no se elige: sale del código postal de cada suministro en el inventario de
-    Gemweb (`servicio.zona_de`) y se puede cambiar a mano. Así un multipunto mezcla zonas.
+  - Lo primero son los CUPS: con 1 es individual y con varios, multipunto. Se buscan en el
+    inventario de Gemweb, que rellena titular (razón social), denominación, dirección,
+    tarifa, potencias y zona, y se descarga su curva. Los que no están se completan a mano y
+    su curva se sube en un fichero (también para sustituir la de Gemweb).
+  - La zona sale del código postal de cada suministro en Gemweb (`servicio.zona_de`: el del
+    suministro, el del centro, uno escrito en la dirección o la población) y se puede cambiar
+    a mano. Así un multipunto mezcla zonas.
   - Los estudios se guardan en `almacen` (tabla `estudios_potencia`: datos, suministros con
     sus curvas ya leídas en pickle comprimido y PDF), solo en local.
   - Pruebas en `tests/test_potencia.py` (las del programa) y `tests/test_estudio_potencia.py`,

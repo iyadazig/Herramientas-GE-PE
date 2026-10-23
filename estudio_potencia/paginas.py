@@ -3,16 +3,18 @@
 PAGINAS DE «ESTUDIO DE POTENCIA» de Herramientas GE&PE
 ======================================================
 Optimizacion de la potencia contratada (6.1TD y 3.0TD > 50 kW) a partir de la curva de carga,
-como el programa de escritorio EstudioPotencia: individual o multipunto, curva de ficheros o de
-Gemweb, propuestas, anexos, informe PDF y estudios guardados para todo el equipo.
+como el programa de escritorio EstudioPotencia: propuestas, anexos, informe PDF y estudios
+guardados para todo el equipo.
 
-La zona (Peninsula, Baleares, Canarias, Ceuta o Melilla) no se elige: sale del codigo postal de
-cada suministro en el inventario de Gemweb (se puede cambiar a mano). Asi un multipunto puede
-mezclar suministros de zonas distintas. La logica esta en estudio_potencia/servicio.py.
+Lo primero son los CUPS: se buscan en el inventario de Gemweb, que rellena titular (razon
+social), denominacion, direccion, tarifa, potencias contratadas y zona (por el codigo postal),
+y se descarga su curva de carga. Los que no estan en Gemweb se completan a mano y su curva se
+sube en un fichero (tambien se puede subir para sustituir la de Gemweb). Con 1 CUPS el estudio
+es individual y con varios, multipunto. La logica esta en estudio_potencia/servicio.py.
 """
 
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -33,22 +35,27 @@ PAGINA_FORMULARIO = None
 INDIVIDUAL, MULTIPUNTO = "individual", "multipunto"
 PERIODOS = [f"P{i}" for i in range(1, N_P + 1)]
 ANIO = "Año completo"
+AJUSTES_GEMWEB = {"hoja": None, "unidad": UNIDADES[0], "convenio": "Fin de periodo",
+                  "cups": None}
 
 
 # ------------------------------------------------------------------- estado
 def _estado() -> dict:
-    """Estado del estudio en la sesion (el lector de la curva, los suministros, el PDF...)."""
+    """Estado del estudio en la sesion: los suministros, de donde sale la curva de cada uno
+    (lectores: {cups: {lector, ajustes, cups del fichero}}), el PDF..."""
     return st.session_state.setdefault("pot", {
-        "tipo": INDIVIDUAL, "lector": None, "ajustes": {}, "nombre": "", "suministros": [],
-        "errores": [], "avisos_descarga": [], "calculado": False, "cargado": None,
+        "suministros": [], "lectores": {}, "errores": [], "calculado": False, "cargado": None,
         "pdf": None, "pdf_firma": None, "version": 0, "ediciones": {}, "pendiente": {}})
 
 
-def _reiniciar(tipo=INDIVIDUAL):
+def _tipo(pot) -> str:
+    return MULTIPUNTO if len(pot["suministros"]) > 1 else INDIVIDUAL
+
+
+def _reiniciar():
     for k in [k for k in st.session_state if str(k).startswith("pot")]:
         del st.session_state[k]
-    _estado()["tipo"] = tipo
-    st.session_state.pot["pendiente"] = {"pot_tipo": tipo}
+    _estado()
 
 
 def _aplicar_pendiente(pot):
@@ -80,294 +87,275 @@ def _centro(cliente, sumi):
 
 
 def _inventario(cups) -> tuple:
-    """(suministro, centro de consumo, hay credenciales) de Gemweb, guardado en la sesion."""
+    """(suministro, centro de consumo, entidad, hay credenciales) de Gemweb, guardado en la
+    sesion."""
     cache = st.session_state.setdefault("pot_inventario", {})
     if cups not in cache:
         cliente = _cliente_gemweb()
-        sumi = centro = None
+        sumi = centro = entidad = None
         if cliente is not None:
             try:
                 sumi = cliente.buscar_suministro(cups)
                 centro = _centro(cliente, sumi)
-            except Exception:            # sin conexion o fallo de la API: se revisa a mano
+                entidad = gw.registro_inventario(cliente.api, "entitats", "entitats.id",
+                                                 (sumi or {}).get("id_entitats"))
+            except Exception:            # sin conexion o fallo de la API: se completa a mano
                 sumi = None
-        cache[cups] = (sumi, centro, cliente is not None)
+        cache[cups] = (sumi, centro, entidad, cliente is not None)
     return cache[cups]
 
 
-def _zona_auto(s) -> tuple:
-    """(zona, de donde sale) del suministro segun su codigo postal en Gemweb."""
-    if not s.cups:
-        return sv.PENINSULA, "sin CUPS: revisa la zona"
-    sumi, centro, hay = _inventario(s.cups)
-    if not hay:
-        return sv.PENINSULA, "sin credenciales de Gemweb: revisa la zona"
-    return sv.zona_de(sumi, centro)
-
-
-# ------------------------------------------------------------------- carga de curvas
-def _nuevos_suministros(pot, lector, ajustes, nombre, info=None, avisos=(), rellenar=False):
-    """Un suministro por CUPS de la curva, con su zona de Gemweb, y la curva leida con ella."""
-    info = info or {}
-    multipunto = pot["tipo"] == MULTIPUNTO
-    try:
-        primera = sv.interpretar(lector, sv.PENINSULA, ajustes)     # detecta los CUPS
-    except Exception as e:
-        st.error(f"No se ha podido interpretar la curva: {e}")
-        return
-    if multipunto:
-        cups_lista = list(lector.cups_disponibles)
-        if not cups_lista:
-            st.error("Para un estudio multipunto la curva tiene que traer el CUPS de cada "
-                     "registro (una columna con el CUPS, o el CUPS en el nombre de cada fichero).")
-            return
+def _suministro_de_gemweb(cups) -> sv.Suministro:
+    """Suministro con los datos del inventario de Gemweb (o vacio si no esta)."""
+    s = sv.Suministro(cups=cups)
+    sumi, centro, entidad, hay = _inventario(cups)
+    if sumi:
+        s.en_gemweb = True
+        sv.rellenar_desde_gemweb(s, sumi)
+        s.titular = (entidad or {}).get("nom") or ""
+        s.grupo = (entidad or {}).get("divisio") or ""
+        s.zona, s.zona_origen = sv.zona_de(sumi, centro)
     else:
-        cups_lista = [primera.cups or st.session_state.get("pot_cups", "").strip().upper()]
-    suministros, errores = [], []
-    for cups in cups_lista:
-        s = sv.Suministro(cups=cups or "")
-        sumi = info.get(cups)
-        if sumi:
-            s.avisos_extra = sv.avisos_gemweb(cups, list(avisos), sumi)
-            if rellenar:
-                sv.rellenar_desde_gemweb(s, sumi)
-        s.zona, s.zona_origen = _zona_auto(s)
-        try:
-            sv.leer_suministro(s, lector, ajustes, multipunto)
-            suministros.append(s)
-        except Exception as e:
-            errores.append(f"{cups}: {e}")
-    if not suministros:
-        st.error("No se ha podido interpretar la curva de ningún CUPS.\n\n" + "\n".join(errores))
+        s.zona_origen = ("no está en Gemweb: elige la zona" if hay
+                         else "sin credenciales de Gemweb: elige la zona")
+    return s
+
+
+# ------------------------------------------------------------------- curvas
+def _leer(pot, s):
+    """(Re)lee la curva del suministro con su zona desde su origen (Gemweb o fichero)."""
+    origen = pot["lectores"].get(s.cups)
+    if origen is None:
+        s.invalidar()                    # estudio guardado: se recalcula con la curva guardada
         return
-    pot.update(lector=lector, ajustes=ajustes, nombre=nombre, suministros=suministros,
-               errores=errores, avisos_descarga=list(avisos), calculado=False, cargado=None,
+    try:
+        sv.leer_suministro(s, origen["lector"], origen["ajustes"], True, origen["cups"])
+    except Exception as e:
+        s.curva = None
+        st.error(f"{s.cups}: no se ha podido leer la curva: {e}")
+
+
+def _buscar(pot, lista, desde, hasta):
+    """Busca los CUPS en Gemweb, rellena sus datos y descarga la curva de los que estan."""
+    with st.spinner("Buscando los CUPS en el inventario de Gemweb…"):
+        sums = [_suministro_de_gemweb(c) for c in lista]
+    pot.update(suministros=sums, lectores={}, errores=[], calculado=False, cargado=None,
                pdf=None, pdf_firma=None, version=pot["version"] + 1, ediciones={})
-    if not multipunto:
-        s = suministros[0]
-        pendiente = {}
-        if s.cups and not st.session_state.get("pot_cups", "").strip():
-            pendiente["pot_cups"] = s.cups
-        if rellenar and info:
-            pendiente.update(pot_cups=s.cups, pot_instalacion=s.denominacion,
-                             pot_direccion=s.direccion, pot_tarifa=s.tarifa)
-        pot["pendiente"] = pendiente
+    en_gemweb = [s.cups for s in sums if s.en_gemweb]
+    if en_gemweb:
+        _descargar(pot, en_gemweb, desde, hasta)
+    pot["pendiente"] = {"pot_titular": sv.titular_comun(sums)}
     st.rerun()
 
 
-def _cargar_ficheros(pot, subidos):
-    carpeta = Path(tempfile.mkdtemp(prefix="potencia_"))
-    rutas = sv.guardar_subidos([(f.name, f.getvalue()) for f in subidos], carpeta)
-    try:
-        lector = sv.abrir(rutas)
-    except Exception as e:
-        st.error(f"No se ha podido leer {'el fichero' if len(rutas) == 1 else 'los ficheros'}: {e}")
-        return
-    nombre = rutas[0].name if len(rutas) == 1 else f"{len(rutas)} ficheros de curva"
-    _nuevos_suministros(pot, lector, {"hoja": lector.hoja_defecto, "unidad": UNIDADES[0],
-                                      "convenio": CONVENIOS[0], "cups": None}, nombre)
-
-
-def _descargar_gemweb(pot, lista, desde, hasta, rellenar):
+def _descargar(pot, lista, desde, hasta):
     cliente = _cliente_gemweb()
-    if cliente is None:
-        st.error("No hay credenciales de Gemweb: un administrador las configura en "
-                 "Administración → Credenciales de Gemweb.")
-        return
-    barra = st.progress(0.0, text="Buscando en el inventario de Gemweb…")
+    barra = st.progress(0.0, text="Descargando la curva de carga de Gemweb…")
     try:
         ruta, info, avisos = sv.descargar_gemweb(
             cliente, lista, desde, hasta, tempfile.mkdtemp(prefix="potencia_"),
             al_avanzar=lambda fraccion, texto: barra.progress(min(fraccion, 1.0), text=texto))
     except gemweb.GemwebError as e:
+        pot["errores"].append(f"Error de Gemweb al descargar las curvas: {e}")
+        return
+    finally:
         barra.empty()
-        st.error(f"Error de Gemweb: {e}")
-        return
-    barra.empty()
+    pot["errores"] += [a for a in avisos if not any(a.startswith(c) for c in info)]
     if ruta is None:
-        st.warning("No se ha descargado la curva de ningún CUPS.\n\n"
-                   + "\n".join(f"- {a}" for a in avisos[:10]))
         return
-    cache = st.session_state.setdefault("pot_inventario", {})
-    for cups, sumi in info.items():
-        cache[cups] = (sumi, _centro(cliente, sumi), True)
-    _nuevos_suministros(pot, LectorCurva(ruta),
-                        {"hoja": None, "unidad": UNIDADES[0], "convenio": "Fin de periodo",
-                         "cups": None},
-                        f"Gemweb · descargada el {date.today():%d/%m/%Y}", info, avisos, rellenar)
+    lector = LectorCurva(ruta)
+    for s in pot["suministros"]:
+        if s.cups in info:
+            s.avisos_extra = sv.avisos_gemweb(s.cups, avisos, info[s.cups])
+            pot["lectores"][s.cups] = {"lector": lector, "ajustes": dict(AJUSTES_GEMWEB),
+                                       "cups": s.cups}
+            s.fuente = f"Gemweb ({desde:%d/%m/%Y} – {hasta:%d/%m/%Y})"
+            _leer(pot, s)
 
 
-def _releer(pot, s):
-    """Vuelve a leer la curva del suministro (otra zona u otros ajustes de lectura)."""
-    if pot["lector"] is None:
-        s.invalidar()                    # estudio guardado: se recalcula con la curva guardada
-        return
+def _cargar_ficheros(pot, subidos, destino):
+    """Lee los ficheros subidos y los asigna a sus CUPS (por la columna de CUPS o el nombre
+    del fichero; con un solo CUPS en el estudio, a ese). destino: CUPS a los que se aplica."""
+    carpeta = Path(tempfile.mkdtemp(prefix="potencia_"))
+    rutas = sv.guardar_subidos([(f.name, f.getvalue()) for f in subidos], carpeta)
+    nombre = rutas[0].name if len(rutas) == 1 else f"{len(rutas)} ficheros"
     try:
-        sv.leer_suministro(s, pot["lector"], pot["ajustes"], pot["tipo"] == MULTIPUNTO)
+        lector = sv.abrir(rutas)
+        ajustes = {"hoja": lector.hoja_defecto, "unidad": UNIDADES[0],
+                   "convenio": CONVENIOS[0], "cups": None}
+        sv.interpretar(lector, sv.PENINSULA, ajustes)              # detecta los CUPS
     except Exception as e:
-        st.error(f"{s.cups}: no se ha podido volver a leer la curva: {e}")
-
-
-# ------------------------------------------------------------------- pasos del formulario
-def _datos(pot) -> dict:
-    st.subheader("1. Datos del estudio")
-    c1, c2 = st.columns(2)
-    st.session_state.setdefault("pot_fecha", date.today().strftime("%d/%m/%Y"))
-    titular = c1.text_input("Titular", key="pot_titular")
-    fecha = c2.text_input("Fecha", key="pot_fecha")
-    datos = {"titular": titular.strip(), "fecha": fecha.strip()}
-    if pot["tipo"] == INDIVIDUAL:
-        c1, c2, c3 = st.columns([2, 2, 1])
-        datos["cups"] = c1.text_input("CUPS", key="pot_cups").strip().upper()
-        datos["instalacion"] = c2.text_input("Instalación", key="pot_instalacion").strip()
-        datos["tarifa"] = c3.selectbox("Tarifa", sv.TARIFAS, key="pot_tarifa")
-        datos["direccion"] = st.text_input("Dirección", key="pot_direccion").strip()
-    return datos
-
-
-def _curva(pot):
-    st.subheader("2. Curva de carga")
-    multipunto = pot["tipo"] == MULTIPUNTO
-    t_fich, t_gem = st.tabs(["Ficheros", "Descargar de Gemweb"])
-    with t_fich:
-        st.caption("CSV, TXT o Excel con la curva cuartohoraria u horaria (kW o kWh). Se pueden "
-                   "subir varios a la vez, p. ej. uno por mes"
-                   + (" y por CUPS: el CUPS se toma de su columna o del nombre del fichero."
-                      if multipunto else "."))
-        subidos = st.file_uploader("Ficheros de curva", type=sv.EXTENSIONES,
-                                   accept_multiple_files=True,
-                                   key="pot_subidos_%d" % pot["version"])
-        if st.button("Leer los ficheros", disabled=not subidos, type="primary"):
-            _cargar_ficheros(pot, subidos)
-    with t_gem:
-        st.caption("Curva cuartohoraria de la telemedida en Gemweb. Por defecto, los 12 últimos "
-                   "meses completos.")
-        texto = st.text_area("CUPS" + (" (uno por línea)" if multipunto else ""),
-                             key="pot_gw_cups", height=110 if multipunto else 68,
-                             placeholder="ES0000000000000000XX")
-        ini, fin = sv.periodo_defecto()
-        c1, c2 = st.columns(2)
-        desde = c1.date_input("Desde", value=ini, format="DD/MM/YYYY", key="pot_gw_desde")
-        hasta = c2.date_input("Hasta", value=fin, format="DD/MM/YYYY", key="pot_gw_hasta")
-        rellenar = st.checkbox("Rellenar tarifa, potencias contratadas, denominación y dirección "
-                               "con los datos de Gemweb", value=True, key="pot_gw_rellenar")
-        lista = sv.lista_cups(texto)
-        if lista and not multipunto and len(lista) > 1:
-            st.warning("En un estudio individual se descarga un solo CUPS.")
-        if st.button("Descargar de Gemweb", disabled=not lista or hasta <= desde or (
-                not multipunto and len(lista) > 1)):
-            _descargar_gemweb(pot, lista, desde, hasta, rellenar)
-
-
-def _interpretacion(pot):
-    """Lo que se ha entendido de la curva y los ajustes para corregirlo."""
-    lector, sums = pot["lector"], pot["suministros"]
-    multipunto = pot["tipo"] == MULTIPUNTO
-    with st.expander("Interpretación de la curva de carga", expanded=not pot["calculado"]):
-        st.caption(f"Origen: {pot['nombre']}")
-        if lector is not None:
-            a = dict(pot["ajustes"])
-            c1, c2, c3, c4 = st.columns(4)
-            v = pot["version"]
-            if len(lector.hojas) > 1:
-                hojas = [str(h) for h in lector.hojas]
-                actual = str(a.get("hoja") or lector.hoja_defecto)
-                a["hoja"] = c1.selectbox("Hoja", hojas, key="pot_hoja_%d" % v,
-                                         index=hojas.index(actual) if actual in hojas else 0)
-            a["unidad"] = c2.selectbox("Unidad de los valores", UNIDADES, key="pot_unidad_%d" % v,
-                                       index=UNIDADES.index(a.get("unidad") or UNIDADES[0]))
-            a["convenio"] = c3.selectbox("La hora de cada registro marca", CONVENIOS,
-                                         key="pot_convenio_%d" % v,
-                                         index=CONVENIOS.index(a.get("convenio") or CONVENIOS[0]))
-            if not multipunto and len(lector.cups_disponibles) > 1:
-                opciones = list(lector.cups_disponibles)
-                elegido = sums[0].curva.cups if sums[0].curva.cups in opciones else opciones[0]
-                a["cups"] = c4.selectbox("CUPS", opciones, key="pot_cups_curva_%d" % v,
-                                         index=opciones.index(a.get("cups") or elegido))
-            if a != pot["ajustes"]:
-                pot["ajustes"] = a
-                for s in sums:
-                    if not multipunto and a.get("cups"):
-                        s.cups = a["cups"]
-                    _releer(pot, s)
-                pot["pdf"] = None
-        primera = sums[0].curva
-        st.markdown("\n".join(f"- {l}" for l in sv.resumen_interpretacion(primera, lector,
-                                                                            multipunto)))
-        for s in sums:
-            for aviso in s.curva.avisos:
-                st.warning((f"{s.cups}: " if multipunto else "") + aviso)
-        for e in pot["errores"]:
-            st.error(e)
-        st.caption("Primeros registros interpretados" + (" (del primer CUPS)" if multipunto else ""))
-        st.dataframe(sv.primeros_registros(primera), hide_index=True, use_container_width=True)
-
-
-def _zona_individual(pot, s):
-    """Zona del suministro individual: la de Gemweb (segun el CUPS) salvo que se cambie."""
-    if not s.zona_manual:
-        zona, origen = _zona_auto(s)
-        if (zona, origen) != (s.zona, s.zona_origen):
-            s.zona, s.zona_origen = zona, origen
-            if s.zona_curva != zona:
-                _releer(pot, s)
-    c1, c2 = st.columns([1, 3])
-    elegida = c1.selectbox("Zona", ZONAS, index=ZONAS.index(s.zona),
-                           key="pot_zona_%d_%s" % (pot["version"], s.zona_origen))
-    c2.caption(f"Según el código postal del suministro: {s.zona_origen}" if not s.zona_manual
-               else "Zona elegida a mano.")
-    if elegida != s.zona:
-        s.zona, s.zona_manual, s.zona_origen = elegida, True, "elegida a mano"
-        _releer(pot, s)
+        st.error(f"No se ha podido leer {nombre}: {e}")
+        return
+    disponibles = list(lector.cups_disponibles)
+    asignados, sin_curva = [], []
+    for s in pot["suministros"]:
+        if s.cups not in destino:
+            continue
+        cups_fichero = sv.cups_del_fichero(s.cups, disponibles)
+        if cups_fichero is None and len(pot["suministros"]) == 1 and len(disponibles) <= 1:
+            cups_fichero = disponibles[0] if disponibles else None
+        elif cups_fichero is None:
+            sin_curva.append(s.cups)
+            continue
+        pot["lectores"][s.cups] = {"lector": lector, "ajustes": dict(ajustes),
+                                   "cups": cups_fichero}
+        s.fuente, s.avisos_extra = f"fichero: {nombre}", []
+        _leer(pot, s)
+        asignados.append(s.cups)
+    if sin_curva:
+        st.warning("Los ficheros no traen la curva de: " + ", ".join(sin_curva)
+                   + ". Su CUPS tiene que estar en una columna o en el nombre del fichero.")
+    if asignados:
+        pot.update(calculado=False, pdf=None, version=pot["version"] + 1)
         st.rerun()
 
 
-def _suministros(pot, datos):
-    st.subheader("3. Suministros y potencias contratadas actuales")
-    sums = pot["suministros"]
-    v = pot["version"]
-    if pot["tipo"] == INDIVIDUAL:
-        s = sums[0]
-        if datos["cups"] and datos["cups"] != s.cups:
-            s.cups = datos["cups"]
-        s.denominacion, s.direccion = datos["instalacion"], datos["direccion"]
-        if s.tarifa != datos["tarifa"]:
-            s.tarifa = datos["tarifa"]
-            s.invalidar()
-        _zona_individual(pot, s)
-        editada = st.data_editor(
-            pd.DataFrame([dict(zip(PERIODOS, s.actual))], dtype=float), hide_index=True,
-            key="pot_actual_%d" % v,
-            column_config={p: st.column_config.NumberColumn(f"{p} (kW)", min_value=0,
-                                                            format="%g") for p in PERIODOS})
-        s.actual = [None if pd.isna(x) else float(x) for x in editada.iloc[0][PERIODOS]]
-        return
-    st.caption("La zona sale del código postal de cada suministro en el inventario de Gemweb; "
-               "si la cambias, su curva se vuelve a leer con esa zona.")
-    tabla = pd.DataFrame([dict({"CUPS": s.cups, "Denominación": s.denominacion,
+# ------------------------------------------------------------------- pasos del formulario
+def _paso_cups(pot):
+    st.subheader("1. CUPS")
+    st.caption("Pega los CUPS del estudio: con uno es un estudio individual y con varios, "
+               "multipunto. Se buscan en el inventario de Gemweb, que rellena sus datos y "
+               "descarga su curva de carga.")
+    texto = st.text_area("CUPS (uno por línea, o separados por comas o espacios)",
+                         key="pot_cups_texto", height=110, placeholder="ES0000000000000000XX")
+    ini, fin = sv.periodo_defecto()
+    c1, c2, _ = st.columns([1, 1, 2])
+    desde = c1.date_input("Curva desde", value=ini, format="DD/MM/YYYY", key="pot_desde")
+    hasta = c2.date_input("hasta", value=fin, format="DD/MM/YYYY", key="pot_hasta")
+    lista = sv.lista_cups(texto)
+    if st.button("Buscar en Gemweb y descargar las curvas", type="primary",
+                 disabled=not lista or hasta <= desde):
+        _buscar(pot, lista, desde, hasta)
+
+
+def _paso_datos(pot) -> dict:
+    """Titular del estudio y tabla de datos de los suministros (de Gemweb o a mano)."""
+    st.subheader("2. Datos de los suministros")
+    sums, v = pot["suministros"], pot["version"]
+    multipunto = _tipo(pot) == MULTIPUNTO
+    st.session_state.setdefault("pot_fecha", date.today().strftime("%d/%m/%Y"))
+    c1, c2 = st.columns([3, 1])
+    datos = {"titular": c1.text_input("Titular del estudio" if multipunto else "Titular",
+                                      key="pot_titular").strip(),
+             "fecha": c2.text_input("Fecha", key="pot_fecha").strip()}
+    fuera = [s.cups for s in sums if not s.en_gemweb and (
+        not s.titular.strip() or any(p is None for p in s.actual) or s.curva is None)]
+    if fuera:
+        st.warning("No están en Gemweb: " + ", ".join(fuera) + ". Completa sus datos en la tabla "
+                   "(titular, denominación, dirección, tarifa, zona y potencias) y sube su curva "
+                   "de carga en el paso 3.")
+    st.caption("Los datos salen del inventario de Gemweb y se pueden cambiar. La zona sale del "
+               "código postal del suministro; si la cambias, su curva se vuelve a leer con ella.")
+    tabla = pd.DataFrame([dict({"CUPS": s.cups, "En Gemweb": "Sí" if s.en_gemweb else "No",
+                                "Titular": s.titular, "Denominación": s.denominacion,
                                 "Dirección": s.direccion, "Tarifa": s.tarifa, "Zona": s.zona,
                                 "Origen de la zona": s.zona_origen},
                                **dict(zip(PERIODOS, s.actual))) for s in sums])
     for p in PERIODOS:
         tabla[p] = pd.to_numeric(tabla[p])
     editada = st.data_editor(
-        tabla, hide_index=True, use_container_width=True, key="pot_sums_%d" % v,
-        disabled=["CUPS", "Origen de la zona"],
+        tabla, hide_index=True, use_container_width=True, key="pot_datos_%d" % v,
+        disabled=["CUPS", "En Gemweb", "Origen de la zona"],
         column_config={"Tarifa": st.column_config.SelectboxColumn(options=sv.TARIFAS,
                                                                   required=True),
                        "Zona": st.column_config.SelectboxColumn(options=ZONAS, required=True),
                        **{p: st.column_config.NumberColumn(f"{p} (kW)", min_value=0, format="%g")
                           for p in PERIODOS}})
     for s, (_, fila) in zip(sums, editada.iterrows()):
-        s.denominacion = str(fila["Denominación"] or "")
-        s.direccion = str(fila["Dirección"] or "")
+        for campo, columna in (("titular", "Titular"), ("denominacion", "Denominación"),
+                               ("direccion", "Dirección")):
+            setattr(s, campo, "" if pd.isna(fila[columna]) else str(fila[columna]))
         if fila["Tarifa"] != s.tarifa:
             s.tarifa = fila["Tarifa"]
             s.invalidar()
         if fila["Zona"] != s.zona:
             s.zona, s.zona_manual, s.zona_origen = fila["Zona"], True, "elegida a mano"
-            _releer(pot, s)
+            _leer(pot, s)
         s.actual = [None if pd.isna(fila[p]) else float(fila[p]) for p in PERIODOS]
+    if not multipunto:
+        s = sums[0]
+        datos.update(cups=s.cups, instalacion=s.denominacion.strip(),
+                     direccion=s.direccion.strip())
+    return datos
+
+
+def _paso_curvas(pot):
+    st.subheader("3. Curva de carga")
+    sums = pot["suministros"]
+    st.dataframe(pd.DataFrame([{
+        "CUPS": s.cups, "Curva": s.fuente if s.curva is not None else "FALTA",
+        "Periodo": (f"{s.curva.fecha_inicio:%d/%m/%Y} – "
+                    f"{s.curva.fecha_fin - pd.Timedelta(days=1):%d/%m/%Y}") if s.curva is not None
+        else "", "Avisos": str(len(s.curva.avisos)) if s.curva is not None else ""}
+        for s in sums]),
+        hide_index=True, use_container_width=True)
+    for e in pot["errores"]:
+        st.warning(e)
+    sin_curva = [s.cups for s in sums if s.curva is None]
+    if pot["cargado"]:
+        return
+    with st.expander("Subir ficheros de curva" + (f" ({len(sin_curva)} CUPS sin curva)"
+                                                  if sin_curva else ""),
+                     expanded=bool(sin_curva)):
+        st.caption("CSV, TXT o Excel con la curva cuartohoraria u horaria (kW o kWh); se pueden "
+                   "subir varios a la vez, p. ej. uno por mes. Cada fichero se asigna a su CUPS por "
+                   "la columna de CUPS o por el nombre del fichero.")
+        opciones = [s.cups for s in sums]
+        destino = st.multiselect("CUPS a los que se aplican", opciones,
+                                 default=sin_curva or opciones[:1],
+                                 key="pot_destino_%d" % pot["version"],
+                                 help="Los que ya tienen la curva de Gemweb la sustituyen por la "
+                                      "del fichero.")
+        subidos = st.file_uploader("Ficheros de curva", type=sv.EXTENSIONES,
+                                   accept_multiple_files=True,
+                                   key="pot_subidos_%d" % pot["version"])
+        if st.button("Leer los ficheros", disabled=not subidos or not destino):
+            _cargar_ficheros(pot, subidos, destino)
+
+
+def _interpretacion(pot):
+    """Lo que se ha entendido de la curva de un suministro y los ajustes para corregirlo."""
+    sums = [s for s in pot["suministros"] if s.curva is not None]
+    if not sums:
+        return
+    multipunto = _tipo(pot) == MULTIPUNTO
+    with st.expander("Interpretación de la curva de carga", expanded=False):
+        s = sums[0]
+        if len(sums) > 1:
+            cups = st.selectbox("CUPS", [x.cups for x in sums], key="pot_interp_cups")
+            s = next(x for x in sums if x.cups == cups)
+        origen = pot["lectores"].get(s.cups)
+        st.caption(f"Origen: {s.fuente or 'estudio guardado'}")
+        if origen is not None and not s.fuente.startswith("Gemweb"):
+            lector, a = origen["lector"], dict(origen["ajustes"])
+            c1, c2, c3 = st.columns(3)
+            v = f"{pot['version']}_{s.cups}"
+            if len(lector.hojas) > 1:
+                hojas = [str(h) for h in lector.hojas]
+                actual = str(a.get("hoja") or lector.hoja_defecto)
+                a["hoja"] = c1.selectbox("Hoja", hojas, key=f"pot_hoja_{v}",
+                                         index=hojas.index(actual) if actual in hojas else 0)
+            a["unidad"] = c2.selectbox("Unidad de los valores", UNIDADES, key=f"pot_unidad_{v}",
+                                       index=UNIDADES.index(a.get("unidad") or UNIDADES[0]))
+            a["convenio"] = c3.selectbox("La hora de cada registro marca", CONVENIOS,
+                                         key=f"pot_convenio_{v}",
+                                         index=CONVENIOS.index(a.get("convenio") or CONVENIOS[0]))
+            if a != origen["ajustes"]:
+                # los demas CUPS del mismo fichero se leen con los mismos ajustes
+                for otro in pot["suministros"]:
+                    o = pot["lectores"].get(otro.cups)
+                    if o is not None and o["lector"] is lector:
+                        o["ajustes"] = dict(a)
+                        _leer(pot, otro)
+                pot["pdf"] = None
+        lector = origen["lector"] if origen else None
+        st.markdown("\n".join(f"- {l}" for l in sv.resumen_interpretacion(s.curva, lector,
+                                                                            False)))
+        for aviso in s.curva.avisos:
+            st.warning(aviso)
+        st.caption("Primeros registros interpretados")
+        st.dataframe(sv.primeros_registros(s.curva), hide_index=True, use_container_width=True)
 
 
 def _propuestas(pot, s, i):
@@ -439,13 +427,12 @@ def _grafico(dibujar, *args, figsize=(10, 4), **kwargs):
     st.pyplot(sv.figura(dibujar, *args, figsize=figsize, **kwargs), use_container_width=True)
 
 
-def _calculo(pot, precios):
-    """Calcula todo; devuelve el resumen multipunto (o None) si no hay errores."""
-    sums, multipunto = pot["suministros"], pot["tipo"] == MULTIPUNTO
+def _calculo(pot, precios) -> bool:
+    """Prepara el estudio de cada suministro; False si falta algo."""
     errores = []
-    for s in sums:
-        if s.zona_curva != s.zona and pot["lector"] is not None:
-            _releer(pot, s)
+    for s in pot["suministros"]:
+        if s.curva is not None and s.zona_curva != s.zona:
+            _leer(pot, s)
         if s.curva is None:
             errores.append(f"{s.nombre}: falta la curva de carga.")
         elif any(p is None or p <= 0 for p in s.actual):
@@ -460,7 +447,7 @@ def _calculo(pot, precios):
 
 def _propuestas_y_resultados(pot, precios):
     st.subheader("4. Propuestas y resultados")
-    sums, multipunto = pot["suministros"], pot["tipo"] == MULTIPUNTO
+    sums, multipunto = pot["suministros"], _tipo(pot) == MULTIPUNTO
     if not pot["calculado"]:
         if st.button("Calcular", type="primary"):
             pot["calculado"] = True
@@ -523,7 +510,7 @@ def _anexos(pot, res) -> tuple:
     """Anexos (energia, maximos, detalle de costes, curva, registro). Devuelve la seleccion de
     la curva (periodo, mes) para el PDF."""
     st.subheader("5. Anexos")
-    sums, multipunto = pot["suministros"], pot["tipo"] == MULTIPUNTO
+    sums, multipunto = pot["suministros"], _tipo(pot) == MULTIPUNTO
     s = sums[0]
     if multipunto:
         elegido = st.selectbox("CUPS de los anexos", [sv.TODOS] + [x.cups for x in sums],
@@ -567,14 +554,14 @@ def _anexos(pot, res) -> tuple:
 
 def _informe_y_guardar(pot, datos, res, seleccion, precios):
     st.subheader("6. Informe y guardado")
-    sums, multipunto = pot["suministros"], pot["tipo"] == MULTIPUNTO
+    sums, multipunto = pot["suministros"], _tipo(pot) == MULTIPUNTO
     st.session_state.setdefault("pot_pdf_anexos", True)
     anexos = st.checkbox("Incluir los anexos en el PDF (energía, potencias máximas, coste "
                          "mensual y curva de carga" + (" de cada CUPS" if multipunto else "")
                          + ")", key="pot_pdf_anexos")
     firma = (repr(datos), anexos, seleccion,
              tuple((s.cups, s.zona, s.tarifa, tuple(round(e.coste.total, 2) for e in s.escenarios),
-                    s.denominacion, s.direccion) for s in sums))
+                    s.titular, s.denominacion, s.direccion) for s in sums))
     if pot.get("pdf_firma") != firma:
         pot["pdf"] = None
     nombre = sv.nombre_pdf(datos, multipunto)
@@ -594,10 +581,9 @@ def _informe_y_guardar(pot, datos, res, seleccion, precios):
                 pot["pdf"] = _generar_pdf(pot, datos, res, anexos, seleccion, precios)
                 pot["pdf_firma"] = firma
         usuario = (st.session_state.get("usuario") or {}).get("usuario", "")
-        guardar = {"tipo": pot["tipo"], "datos": datos, "ajustes": pot["ajustes"],
-                   "nombre": pot["nombre"], "anexos": anexos}
+        guardar = {"tipo": _tipo(pot), "datos": datos, "anexos": anexos}
         pot["guardado"] = almacen.guardar_estudio_potencia(
-            usuario, sv.resumen_guardar(pot["tipo"], datos, sums), guardar,
+            usuario, sv.resumen_guardar(_tipo(pot), datos, sums), guardar,
             sv.empaquetar(sums), pot["pdf"])
     if pot.get("guardado"):
         st.success(f"Estudio guardado con el nº {pot['guardado']}. Está en «Estudio de potencia → "
@@ -605,7 +591,7 @@ def _informe_y_guardar(pot, datos, res, seleccion, precios):
 
 
 def _generar_pdf(pot, datos, res, anexos, seleccion, precios) -> bytes:
-    if pot["tipo"] == MULTIPUNTO:
+    if _tipo(pot) == MULTIPUNTO:
         return sv.pdf_multipunto(datos, pot["suministros"], res, precios, anexos, seleccion)
     return sv.pdf_individual(datos, pot["suministros"][0], precios, anexos, seleccion)
 
@@ -618,59 +604,49 @@ def pagina_nuevo_estudio():
     if cargado:
         st.info(f"Estudio nº {cargado['id']} cargado (guardado por {cargado['usuario']} el "
                 f"{cargado['fecha']}). Cambia lo que necesites; al guardar se crea un estudio "
-                "nuevo y el original no se modifica. Para cambiar la zona o los ajustes de "
-                "lectura de la curva, vuelve a cargarla.")
+                "nuevo y el original no se modifica. Para cambiar los ajustes de lectura de la "
+                "curva, empieza un estudio nuevo.")
         if st.button("Empezar un estudio nuevo"):
             _reiniciar()
             st.rerun()
     st.markdown("Optimización de la potencia contratada de suministros **6.1TD** y **3.0TD "
                 "> 50 kW** a partir de la curva de carga de 12 meses (Circular CNMC 3/2020): coste "
                 "actual, potencia óptima, otras propuestas, inversión y periodo de retorno.")
-    tipos = [INDIVIDUAL, MULTIPUNTO]
-    tipo = st.radio("Tipo de estudio", tipos, horizontal=True, key="pot_tipo",
-                    format_func=lambda t: "Individual (un suministro)" if t == INDIVIDUAL
-                    else "Multipunto (varios CUPS a la vez)", disabled=bool(cargado))
-    if tipo != pot["tipo"]:
-        _reiniciar(tipo)
-        st.rerun()
     precios = sv.precios()
-    datos = _datos(pot)
     if not cargado:
-        _curva(pot)
+        _paso_cups(pot)
     if not pot["suministros"]:
         return
+    datos = _paso_datos(pot)
+    _paso_curvas(pot)
     _interpretacion(pot)
-    _suministros(pot, datos)
     res = _propuestas_y_resultados(pot, precios)
     if res is None:
         return
-    seleccion = _anexos(pot, res if pot["tipo"] == MULTIPUNTO else None)
-    _informe_y_guardar(pot, datos, res if pot["tipo"] == MULTIPUNTO else None, seleccion,
-                       precios)
+    multipunto = _tipo(pot) == MULTIPUNTO
+    seleccion = _anexos(pot, res if multipunto else None)
+    _informe_y_guardar(pot, datos, res if multipunto else None, seleccion, precios)
 
 
 def cargar_en_formulario(estudio: dict) -> None:
     """Deja el estudio guardado listo en «Nuevo estudio» (sin la curva original: se usan las
     curvas ya leidas que se guardaron)."""
     datos = estudio["datos"]
-    tipo = datos.get("tipo", INDIVIDUAL)
-    _reiniciar(tipo)
+    _reiniciar()
     pot = st.session_state.pot
     d = datos.get("datos", {})
-    pot.update(suministros=sv.desempaquetar(estudio["curvas"]), ajustes=datos.get("ajustes", {}),
-               nombre=datos.get("nombre", ""), calculado=True,
+    sums = sv.desempaquetar(estudio["curvas"])
+    for s in sums:
+        s.fuente = s.fuente or "estudio guardado"
+    pot.update(suministros=sums, calculado=True,
                cargado={"id": estudio["id"], "usuario": estudio.get("usuario"),
                         "fecha": _fecha_hora(estudio.get("fecha"))})
     pot["pendiente"].update(pot_titular=d.get("titular", ""), pot_fecha=d.get("fecha", ""),
-                            pot_pdf_anexos=bool(datos.get("anexos", True)))
-    if tipo == INDIVIDUAL:
-        s = pot["suministros"][0]
-        pot["pendiente"].update(pot_cups=s.cups, pot_instalacion=s.denominacion,
-                                pot_direccion=s.direccion, pot_tarifa=s.tarifa)
+                            pot_pdf_anexos=bool(datos.get("anexos", True)),
+                            pot_cups_texto="\n".join(s.cups for s in sums))
 
 
 def _fecha_hora(iso):
-    from datetime import datetime
     return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M") if iso else ""
 
 
@@ -714,8 +690,7 @@ def pagina_estudios_guardados():
     datos = estudio["datos"]
     b1, b2 = st.columns(2)
     b1.download_button("Descargar el PDF", data=estudio["pdf"] or b"",
-                       file_name=sv.nombre_pdf(dict(datos.get("datos", {}),
-                                                    instalacion=_instalacion(estudio)),
+                       file_name=sv.nombre_pdf(datos.get("datos", {}),
                                                datos.get("tipo") == MULTIPUNTO),
                        mime="application/pdf", type="primary", disabled=not estudio["pdf"])
     if b2.button("Cargar en el formulario",
@@ -725,10 +700,3 @@ def pagina_estudios_guardados():
         if PAGINA_FORMULARIO is not None:
             st.switch_page(PAGINA_FORMULARIO)
         st.success("Cargado: ve a «Nuevo estudio».")
-
-
-def _instalacion(estudio):
-    try:
-        return sv.desempaquetar(estudio["curvas"])[0].denominacion
-    except Exception:
-        return ""
