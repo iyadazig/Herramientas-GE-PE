@@ -363,6 +363,23 @@ class GasDatos(unittest.TestCase):
         f = filas[0]
         self.assertEqual((f["Total kWh"], f["_qd"], f["P1 kWh"]), (300_000.0, 12_000.0, 0.0))
 
+    def test_complementaria_del_mismo_periodo_no_suma_consumo(self):
+        import xml.etree.ElementTree as ET
+        from gemweb_extractor import paginas as gw
+
+        def factura_xml(ini, fin, kwh, complementaria):
+            return (f"<factura><periode_ini>{ini}</periode_ini><periode_fin>{fin}</periode_fin>"
+                    f"<consum_tot>{kwh}</consum_tot>"
+                    f"<complementaria>{complementaria}</complementaria></factura>")
+        raiz = ET.fromstring(
+            "<r>" + factura_xml("11/12/2025", "09/01/2026", 50000, 0)
+            + factura_xml("11/12/2025", "09/01/2026", 35000, 1)      # corrige un descuento
+            + factura_xml("10/01/2026", "09/02/2026", 40000, 1)      # sin factura normal
+            + "</r>")
+        filas, descartadas = gw.facturas_por_periodo("ES0000000000000000XX", raiz)
+        self.assertEqual(descartadas, 1)
+        self.assertEqual([f["Total kWh"] for f in filas], [50_000.0, 40_000.0])
+
 
 class GasExcel(unittest.TestCase):
     def test_hoja_y_resumen(self):

@@ -720,7 +720,9 @@ def _fecha_gemweb(texto):
 
 
 def facturas_por_periodo(cups: str, root) -> tuple:
-    """Facturas de get_inventory(category=factures) -> (filas validas, nº descartadas)."""
+    """Facturas de get_inventory(category=factures) -> (filas validas, nº descartadas).
+    Tampoco cuenta una complementaria que se solapa con una factura normal: corrige importes
+    de esa factura (mismas lecturas) y su consumo sumaria dos veces el mismo periodo."""
     filas, descartadas = [], 0
     for f in root:
         d = {h.tag: h.text for h in f}
@@ -742,8 +744,16 @@ def facturas_por_periodo(cups: str, root) -> tuple:
         # gas: caudal diario aplicado (kWh/dia)
         fila["_qd"] = float(d["qd_aplicada"]) if d.get("qd_aplicada") not in (None, "") \
             else None
+        fila["_complementaria"] = str(d.get("complementaria") or "0").strip() not in ("0", "")
         filas.append(fila)
-    return filas, descartadas
+    normales = [f for f in filas if not f["_complementaria"]]
+
+    def tapada(c):
+        ini = c["Inicio factura"] or c["Fin factura"]
+        return any((n["Inicio factura"] or n["Fin factura"]) <= c["Fin factura"]
+                   and ini <= n["Fin factura"] for n in normales)
+    sobran = [f for f in filas if f["_complementaria"] and tapada(f)]
+    return [f for f in filas if f not in sobran], descartadas + len(sobran)
 
 
 def _mayoria_dentro(f: dict, desde: date, hasta: date) -> bool:
@@ -904,8 +914,8 @@ def descarga_consumo_periodos(cliente, cups_list):
     st.caption("El Excel trae lo **facturado** (una fila por factura, con P1–P6 y su periodo), "
                "las **telelecturas** del contador por mes natural (solo el total: Gemweb no las "
                "reparte por periodos) y sus **diferencias** mes a mes (cada factura cuenta en el "
-               "mes de su fecha de fin). No se cuentan las facturas anuladas, simuladas, abonos "
-               "ni las abonadas.")
+               "mes de su fecha de fin). No se cuentan las facturas anuladas, simuladas, abonos, "
+               "las abonadas ni las complementarias de un periodo que ya tiene su factura.")
 
     st.subheader("3. Ejecutar")
     clave = (tuple(cups_list), modo, ini, fin)
