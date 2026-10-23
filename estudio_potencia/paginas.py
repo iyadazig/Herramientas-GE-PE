@@ -71,6 +71,16 @@ def _edicion(pot, i):
     return pot["ediciones"].get(i, 0)
 
 
+def _base(pot, clave, construir) -> pd.DataFrame:
+    """Datos de partida de una tabla editable, construidos una sola vez por clave. Si se
+    reconstruyeran en cada recarga con lo ya editado, Streamlit reiniciaria la tabla y la
+    primera edicion se perderia (habria que hacerla dos veces)."""
+    bases = pot.setdefault("bases", {})
+    if clave not in bases:
+        bases[clave] = construir()
+    return bases[clave]
+
+
 # ------------------------------------------------------------------- Gemweb
 def _cliente_gemweb():
     cred, _origen = gemweb.cargar_credenciales()
@@ -211,9 +221,71 @@ def _cargar_ficheros(pot, subidos, destino):
         st.rerun()
 
 
+COMO_SUBIR = """**Cómo tienen que ser los ficheros de curva**
+- CSV, TXT o Excel (.xlsx, .xls) con la curva de carga **cuartohoraria** (o horaria) de los
+  **12 últimos meses**.
+- Una columna con la **fecha y hora** (o una de fecha y otra de hora) y otra con los **valores en
+  kW o kWh**. Mejor si el título de la columna dice la unidad, p. ej. «Consumo (kWh)» o
+  «Potencia (kW)»; si no, se puede indicar después en «Interpretación de la curva de carga».
+- Valen los formatos habituales: P5D de la distribuidora, Datadis, el Excel de GE&PE, una fila
+  por día con 24 columnas…
+- **Varios suministros**: o una columna con el **CUPS** de cada registro, o un fichero por
+  suministro con el **CUPS en el nombre** (p. ej. `ES0000000000000000XX_curva.xlsx`).
+- Se pueden subir **varios ficheros del mismo suministro** (p. ej. uno por mes): se unen en una
+  sola curva.
+- Un solo suministro sin CUPS en el fichero: escribe su CUPS después, en la tabla de datos."""
+
+
+def _crear_desde_ficheros(pot, subidos, titular):
+    """Estudio de CUPS que no estan en Gemweb: un suministro por CUPS de las curvas subidas,
+    con el titular indicado; el resto de datos se rellena a mano en la tabla."""
+    carpeta = Path(tempfile.mkdtemp(prefix="potencia_"))
+    rutas = sv.guardar_subidos([(f.name, f.getvalue()) for f in subidos], carpeta)
+    nombre = rutas[0].name if len(rutas) == 1 else f"{len(rutas)} ficheros"
+    try:
+        lector = sv.abrir(rutas)
+        ajustes = {"hoja": lector.hoja_defecto, "unidad": UNIDADES[0],
+                   "convenio": CONVENIOS[0], "cups": None}
+        sv.interpretar(lector, sv.PENINSULA, ajustes)              # detecta los CUPS
+    except Exception as e:
+        st.error(f"No se ha podido leer {nombre}: {e}")
+        return
+    sums, pot["lectores"] = [], {}
+    for cups in list(lector.cups_disponibles) or [""]:
+        s = sv.Suministro(cups=cups, titular=titular, fuente=f"fichero: {nombre}",
+                          zona_origen="no está en Gemweb: elige la zona")
+        pot["lectores"][cups] = {"lector": lector, "ajustes": dict(ajustes),
+                                 "cups": cups or None}
+        sums.append(s)
+    pot.update(suministros=sums, errores=[], calculado=False, cargado=None, pdf=None,
+               pdf_firma=None, version=pot["version"] + 1, ediciones={})
+    for s in sums:
+        _leer(pot, s)
+    pot["pendiente"] = {"pot_titular": titular}
+    st.rerun()
+
+
 # ------------------------------------------------------------------- pasos del formulario
 def _paso_cups(pot):
     st.subheader("1. CUPS")
+    en_gemweb = st.radio("¿Los CUPS del estudio están en Gemweb?", [True, False],
+                         horizontal=True, key="pot_modo",
+                         format_func=lambda x: "Sí: buscarlos en Gemweb" if x
+                         else "No: introducir los datos y subir las curvas")
+    if not en_gemweb:
+        st.caption("Escribe el titular y sube las curvas de carga: se crea un suministro por "
+                   "cada CUPS de las curvas (con uno es un estudio individual y con varios, "
+                   "multipunto). Después rellenas a mano el resto de sus datos.")
+        titular = st.text_input("Titular", key="pot_titular_manual").strip()
+        st.info(COMO_SUBIR)
+        subidos = st.file_uploader("Ficheros de curva", type=sv.EXTENSIONES,
+                                   accept_multiple_files=True,
+                                   key="pot_subidos_inicio_%d" % pot["version"])
+        if not titular:
+            st.caption("Falta el titular.")
+        if st.button("Leer las curvas", type="primary", disabled=not subidos or not titular):
+            _crear_desde_ficheros(pot, subidos, titular)
+        return
     st.caption("Pega los CUPS del estudio: con uno es un estudio individual y con varios, "
                "multipunto. Se buscan en el inventario de Gemweb, que rellena sus datos y "
                "descarga su curva de carga.")
@@ -239,30 +311,47 @@ def _paso_datos(pot) -> dict:
     datos = {"titular": c1.text_input("Titular del estudio" if multipunto else "Titular",
                                       key="pot_titular").strip(),
              "fecha": c2.text_input("Fecha", key="pot_fecha").strip()}
-    fuera = [s.cups for s in sums if not s.en_gemweb and (
-        not s.titular.strip() or any(p is None for p in s.actual) or s.curva is None)]
-    if fuera:
+    manual = all(not s.en_gemweb for s in sums)
+    fuera = [s.cups or "(sin CUPS)" for s in sums if not s.en_gemweb and (
+        not s.cups or not s.titular.strip() or any(p is None for p in s.actual)
+        or s.curva is None)]
+    if fuera and manual:
+        st.warning("Completa en la tabla los datos de " + ", ".join(fuera) + ": CUPS, "
+                   "denominación, dirección, tarifa, zona y potencias contratadas.")
+    elif fuera:
         st.warning("No están en Gemweb: " + ", ".join(fuera) + ". Completa sus datos en la tabla "
                    "(titular, denominación, dirección, tarifa, zona y potencias) y sube su curva "
                    "de carga en el paso 3.")
-    st.caption("Los datos salen del inventario de Gemweb y se pueden cambiar. La zona sale del "
-               "código postal del suministro; si la cambias, su curva se vuelve a leer con ella.")
-    tabla = pd.DataFrame([dict({"CUPS": s.cups, "En Gemweb": "Sí" if s.en_gemweb else "No",
-                                "Titular": s.titular, "Denominación": s.denominacion,
-                                "Dirección": s.direccion, "Tarifa": s.tarifa, "Zona": s.zona,
-                                "Origen de la zona": s.zona_origen},
-                               **dict(zip(PERIODOS, s.actual))) for s in sums])
-    for p in PERIODOS:
-        tabla[p] = pd.to_numeric(tabla[p])
+    st.caption("Los datos de Gemweb se pueden cambiar. La zona sale del código postal del "
+               "suministro; si la cambias, su curva se vuelve a leer con ella."
+               if not manual else "Rellena los datos de cada suministro (y su CUPS si el fichero "
+               "no lo traía). Pulsa Enter o haz clic fuera de la celda para aplicar cada cambio.")
+
+    def construir():
+        tabla = pd.DataFrame([dict({"CUPS": s.cups, "En Gemweb": "Sí" if s.en_gemweb else "No",
+                                    "Titular": s.titular, "Denominación": s.denominacion,
+                                    "Dirección": s.direccion, "Tarifa": s.tarifa, "Zona": s.zona,
+                                    "Origen de la zona": s.zona_origen},
+                                   **dict(zip(PERIODOS, s.actual))) for s in sums])
+        for p in PERIODOS:
+            tabla[p] = pd.to_numeric(tabla[p])
+        return tabla
     editada = st.data_editor(
-        tabla, hide_index=True, use_container_width=True, key="pot_datos_%d" % v,
-        disabled=["CUPS", "En Gemweb", "Origen de la zona"],
+        _base(pot, "datos_%d" % v, construir), hide_index=True, use_container_width=True,
+        key="pot_datos_%d" % v,
+        disabled=(["En Gemweb", "Origen de la zona"] if manual
+                  else ["CUPS", "En Gemweb", "Origen de la zona"]),
         column_config={"Tarifa": st.column_config.SelectboxColumn(options=sv.TARIFAS,
                                                                   required=True),
                        "Zona": st.column_config.SelectboxColumn(options=ZONAS, required=True),
                        **{p: st.column_config.NumberColumn(f"{p} (kW)", min_value=0, format="%g")
                           for p in PERIODOS}})
     for s, (_, fila) in zip(sums, editada.iterrows()):
+        cups = "" if pd.isna(fila["CUPS"]) else str(fila["CUPS"]).strip().upper()
+        if cups != s.cups:                  # CUPS escrito a mano: su curva sigue con el
+            if s.cups in pot["lectores"]:
+                pot["lectores"][cups] = pot["lectores"].pop(s.cups)
+            s.cups = cups
         for campo, columna in (("titular", "Titular"), ("denominacion", "Denominación"),
                                ("direccion", "Dirección")):
             setattr(s, campo, "" if pd.isna(fila[columna]) else str(fila[columna]))
@@ -298,9 +387,7 @@ def _paso_curvas(pot):
     with st.expander("Subir ficheros de curva" + (f" ({len(sin_curva)} CUPS sin curva)"
                                                   if sin_curva else ""),
                      expanded=bool(sin_curva)):
-        st.caption("CSV, TXT o Excel con la curva cuartohoraria u horaria (kW o kWh); se pueden "
-                   "subir varios a la vez, p. ej. uno por mes. Cada fichero se asigna a su CUPS por "
-                   "la columna de CUPS o por el nombre del fichero.")
+        st.markdown(COMO_SUBIR)
         opciones = [s.cups for s in sums]
         destino = st.multiselect("CUPS a los que se aplican", opciones,
                                  default=sin_curva or opciones[:1],
@@ -378,11 +465,12 @@ def _propuestas(pot, s, i):
         pot["ediciones"][i] = ed + 1
         st.rerun()
     optimo = [float(x) for x in s.optimo]
-    filas = [dict({"Propuesta": f"Propuesta {k}"}, **dict(zip(PERIODOS, p["pc"] or optimo)))
-             for k, p in enumerate(s.propuestas[1:], start=2)]
+    clave = f"pot_prop_{v}_{i}_{ed}_{abs(hash(tuple(optimo)))}"     # otra optima: de nuevo
     editada = st.data_editor(
-        pd.DataFrame(filas), hide_index=True, key=f"pot_prop_{v}_{i}_{ed}",
-        disabled=["Propuesta"],
+        _base(pot, clave, lambda: pd.DataFrame([
+            dict({"Propuesta": f"Propuesta {k}"}, **dict(zip(PERIODOS, p["pc"] or optimo)))
+            for k, p in enumerate(s.propuestas[1:], start=2)])),
+        hide_index=True, key=clave, disabled=["Propuesta"],
         column_config={p: st.column_config.NumberColumn(f"{p} (kW)", min_value=0, format="%g")
                        for p in PERIODOS})
     st.caption("La Propuesta 1 es la potencia óptima. Las demás se pueden cambiar; si se dejan "
@@ -396,13 +484,15 @@ def _propuestas(pot, s, i):
         pc = optimo if k == 1 or not p["pc"] or None in p["pc"] else p["pc"]
         defecto.append(sv.opciones_inversion_defecto(pc, s.actual)
                        if all(x for x in s.actual) else {"enganche": True})
-    inv = pd.DataFrame([dict({"Propuesta": f"Propuesta {k}"},
-                             **{t: bool((p["opciones"] or d).get(c)) for c, t in
-                                sv.CONCEPTOS_INVERSION})
-                        for k, (p, d) in enumerate(zip(s.propuestas, defecto), start=1)])
+    # si cambian las potencias, cambian las opciones por defecto: la tabla vuelve a empezar
+    clave = f"pot_inv_{v}_{i}_{ed}_{abs(hash(repr(defecto)))}"
+    inv = _base(pot, clave, lambda: pd.DataFrame([
+        dict({"Propuesta": f"Propuesta {k}"},
+             **{t: bool((p["opciones"] or d).get(c)) for c, t in sv.CONCEPTOS_INVERSION})
+        for k, (p, d) in enumerate(zip(s.propuestas, defecto), start=1)]))
     with st.popover("Inversión de cada propuesta"):        # cabe dentro del expander del CUPS
         editada = st.data_editor(
-            inv, hide_index=True, key=f"pot_inv_{v}_{i}_{ed}", disabled=["Propuesta"],
+            inv, hide_index=True, key=clave, disabled=["Propuesta"],
             column_config={t: st.column_config.CheckboxColumn() for _, t in
                            sv.CONCEPTOS_INVERSION})
         st.caption("Por defecto: si la potencia máxima de la propuesta supera la actual, "
