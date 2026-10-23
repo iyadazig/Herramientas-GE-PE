@@ -18,6 +18,7 @@ import streamlit as st
 import estilo
 import paginas
 from gemweb_extractor import paginas as gw
+from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
 
 st.set_page_config(page_title="Herramientas GE&PE",
@@ -81,8 +82,16 @@ menu = {
                 "Solicitudes de ofertas guardadas por el equipo y su seguimiento",
                 "solicitudes-guardadas"),
     ],
+    "Estudio de potencia": [
+        _pagina(potencia.pagina_nuevo_estudio, "Nuevo estudio",
+                "Optimización de la potencia contratada (6.1TD y 3.0TD) con la curva de carga",
+                "estudio-potencia"),
+        _pagina(potencia.pagina_estudios_guardados, "Estudios guardados",
+                "Estudios de potencia guardados por el equipo", "estudios-potencia-guardados"),
+    ],
 }
 ofertas.PAGINA_FORMULARIO = menu["Solicitud de ofertas"][0]   # para «Cargar en el formulario»
+potencia.PAGINA_FORMULARIO = menu["Estudio de potencia"][0]
 if usuario["admin"]:
     menu["Administración"] = [
         _pagina(paginas.pagina_usuarios, "Usuarios", "Altas, contraseñas y permisos",

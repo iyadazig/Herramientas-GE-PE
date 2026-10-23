@@ -29,7 +29,8 @@ COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
 MODULOS_MENU = {"Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
-                "Solicitud de ofertas": "ofertas", "Administración": "admin"}
+                "Solicitud de ofertas": "ofertas", "Estudio de potencia": "potencia",
+                "Administración": "admin"}
 LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
 
 
@@ -53,6 +54,7 @@ ICONOS_MODULO = {
                      "<path d='M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6'/>"),
     "ofertas": _icono("<path d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/>"
                       "<path d='M14 3v5h5M9 13h6M9 17h6'/>"),
+    "potencia": _icono("<path d='M13 2L4 14h7l-1 8 9-12h-7z'/>"),
     "admin": _icono("<path d='M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'/>"
                     "<path d='M9 12l2 2 4-4'/>"),
 }
@@ -148,6 +150,7 @@ h3, .stMarkdown h3 {
 [data-gp-modulo="ssaa"]::before { background-image: url("%(ico_ssaa)s"); }
 [data-gp-modulo="gemweb"]::before { background-image: url("%(ico_gemweb)s"); }
 [data-gp-modulo="ofertas"]::before { background-image: url("%(ico_ofertas)s"); }
+[data-gp-modulo="potencia"]::before { background-image: url("%(ico_potencia)s"); }
 [data-gp-modulo="admin"]::before { background-image: url("%(ico_admin)s"); }
 [data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
 [data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }

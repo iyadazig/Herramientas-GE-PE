@@ -40,6 +40,22 @@ pago. La factura y la curva no salen del PC.
     - avisos: RL.x según el consumo (Circular CNMC 6/2020), factor de carga mayor del 80 %,
       plazos de menos de un año sin telemedida y requisitos del interrumpible.
   - La telemedida de gas no está en Gemweb: Datadis no tiene gas.
+- **Estudio de potencia**: optimización de la potencia contratada (6.1TD y 3.0TD > 50 kW)
+  con la curva de carga, individual o multipunto.
+  - `potencia/` es copia del cálculo del programa de escritorio EstudioPotencia
+    (`..\estudio_potencia_cuartohorario`, sin su interfaz tkinter): `calculo`, `calendario`,
+    `lector_curva`, `graficos` (matplotlib) e `informe_pdf` (reportlab).
+  - Sus precios regulados están en `potencia/precios.json`. **Cada año se actualizan aquí y
+    en `config/precios.json` del programa de escritorio**, mientras siga existiendo.
+  - `estudio_potencia/servicio.py`: lógica sin Streamlit (curvas subidas o de Gemweb, cálculo,
+    tablas, PDF, empaquetar para guardar).
+  - `estudio_potencia/paginas.py`: «Nuevo estudio» y «Estudios guardados».
+  - La zona no se elige: sale del código postal de cada suministro en el inventario de
+    Gemweb (`servicio.zona_de`) y se puede cambiar a mano. Así un multipunto mezcla zonas.
+  - Los estudios se guardan en `almacen` (tabla `estudios_potencia`: datos, suministros con
+    sus curvas ya leídas en pickle comprimido y PDF), solo en local.
+  - Pruebas en `tests/test_potencia.py` (las del programa) y `tests/test_estudio_potencia.py`,
+    con curvas sintéticas de `tests/generador_curvas.py`.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.

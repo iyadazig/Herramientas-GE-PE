@@ -11,6 +11,9 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
   solicitudes_ofertas   cada solicitud de ofertas guardada: quien, cuando, cliente, CUPS,
                         periodo de recepcion, seguimiento (estado, comercializadoras), Excel,
                         texto del correo y los datos del formulario para volver a cargarla
+  estudios_potencia     cada estudio de potencia guardado: quien, cuando, titular, CUPS,
+                        ahorro e inversion de la propuesta optima, datos del formulario, los
+                        suministros con sus curvas ya leidas (comprimidos) y el PDF
 
 SQLite en modo WAL admite varios compañeros a la vez desde la misma app (servidor).
 La primera vez se importan las fichas de contratos_ssaa.json si existe.
@@ -57,6 +60,10 @@ CREATE TABLE IF NOT EXISTS solicitudes_ofertas (
     recepcion_desde TEXT, recepcion_hasta TEXT, estado TEXT NOT NULL,
     comercializadoras TEXT, actualizado TEXT, actualizado_por TEXT,
     datos TEXT NOT NULL, texto TEXT, excel BLOB);
+CREATE TABLE IF NOT EXISTS estudios_potencia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
+    tipo TEXT NOT NULL, titular TEXT, cups TEXT, suministros INTEGER, tarifa TEXT,
+    ahorro REAL, inversion REAL, datos TEXT NOT NULL, curvas BLOB, pdf BLOB);
 CREATE INDEX IF NOT EXISTS ix_hist_cups ON contratos_historial(cups);
 """
 
@@ -382,6 +389,41 @@ def actualizar_seguimiento(id_solicitud, estado, comercializadoras, usuario):
                     "actualizado=?, actualizado_por=? WHERE id=?",
                     (estado, (comercializadoras or "").strip(), _ahora(), usuario,
                      id_solicitud))
+
+
+# ------------------------------------------------------------------- estudios de potencia
+def guardar_estudio_potencia(usuario, resumen, datos, curvas, pdf):
+    """resumen: tipo, titular, cups (lista), tarifa, ahorro, inversion. datos: lo necesario para
+    volver a cargar el formulario (JSON); curvas: los suministros empaquetados
+    (estudio_potencia.servicio.empaquetar). Devuelve el id."""
+    with _con(escribir=True) as con:
+        cur = con.execute(
+            "INSERT INTO estudios_potencia (fecha, usuario, tipo, titular, cups, suministros, "
+            "tarifa, ahorro, inversion, datos, curvas, pdf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (_ahora(), usuario, resumen.get("tipo"), resumen.get("titular"),
+             ", ".join(resumen.get("cups") or []), len(resumen.get("cups") or []),
+             resumen.get("tarifa"), resumen.get("ahorro"), resumen.get("inversion"),
+             json.dumps(datos, ensure_ascii=False, default=str), curvas, pdf))
+        return cur.lastrowid
+
+
+def listar_estudios_potencia(limite=1000):
+    """Sin datos, curvas ni PDF."""
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, fecha, usuario, tipo, titular, cups, suministros, tarifa, ahorro, "
+            "inversion FROM estudios_potencia ORDER BY id DESC LIMIT ?", (limite,))]
+
+
+def estudio_potencia(id_estudio):
+    """Estudio completo (datos ya leidos del JSON, curvas y PDF) o None."""
+    with _con() as con:
+        r = con.execute("SELECT * FROM estudios_potencia WHERE id=?", (id_estudio,)).fetchone()
+    if not r:
+        return None
+    r = dict(r)
+    r["datos"] = json.loads(r["datos"])
+    return r
 
 
 # ------------------------------------------------------------------- copias
