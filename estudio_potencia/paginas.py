@@ -413,14 +413,85 @@ def _propuestas(pot, s, i):
         p["opciones"] = None if all(opciones[c] == bool(d.get(c)) for c in opciones) else opciones
 
 
+# ------------------------------------------------------------------- tablas con color
+# como en el programa de escritorio: cabecera azul oscuro, filas alternas, fila de totales
+# destacada y columnas de totales con su color (fondo, fondo de la fila de totales)
+FONDO_PAR, FONDO_TOTAL, ROJO = "#F4F7FB", "#DCE6F1", "#C00000"
+COLOR_FIJO, COLOR_EXCESO, COLOR_TOTAL = ("#FFF7DC", "#FBE7A8"), ("#FDE9E7", "#F6C9C4"), \
+    ("#E3EEF9", "#BFD7EE")
+CSS_TABLA = """<style>
+.gp-tabla {overflow-x: auto; margin: 0.2rem 0 0.8rem 0;}
+.gp-tabla table {border-collapse: collapse; font-size: 0.82rem; width: auto;}
+.gp-tabla th {background: %s; color: white; font-weight: 700; padding: 6px 9px;
+              text-align: center; border: 1px solid white; white-space: nowrap;}
+.gp-tabla td {padding: 4px 9px; text-align: right; border: 1px solid white;
+              white-space: nowrap; color: #1E1E1E;}
+.gp-banda {background: %s; color: white; font-weight: 700; text-align: center;
+           padding: 6px; margin-top: 0.6rem; font-size: 0.95rem;}
+</style>""" % (graficos.AZUL_OSCURO, graficos.AZUL_OSCURO)
+
+
+def _tabla(df, totales=1, columnas=None, izquierda=(), centro=None, celdas=None):
+    """Tabla HTML con el estilo del programa. totales: nº de filas de totales al final;
+    columnas: {columna: (fondo, fondo en la fila de totales)}; izquierda: columnas de texto;
+    centro: columnas centradas (por defecto, la primera); celdas(i, columna, valor) -> css extra."""
+    df = df.reset_index(drop=True)
+    columnas, n = columnas or {}, len(df)
+    centro = [df.columns[0]] if centro is None else centro
+
+    def estilo(fila):
+        i, total = fila.name, fila.name >= n - totales
+        res = []
+        for col in df.columns:
+            css = []
+            if col in columnas:
+                css += [f"background-color: {columnas[col][1 if total else 0]}",
+                        "font-weight: 700"]
+            elif total:
+                css += [f"background-color: {FONDO_TOTAL}", "font-weight: 700"]
+            elif i % 2:
+                css.append(f"background-color: {FONDO_PAR}")
+            if col in izquierda:
+                css.append("text-align: left")
+            elif col in centro:
+                css.append("text-align: center")
+            if celdas:
+                css.append(celdas(i, col, fila[col]) or "")
+            res.append("; ".join(c for c in css if c))
+        return res
+    html = df.style.apply(estilo, axis=1).hide(axis="index").to_html()
+    st.markdown(CSS_TABLA + f'<div class="gp-tabla">{html}</div>', unsafe_allow_html=True)
+
+
+def _negativo(valor) -> bool:
+    return str(valor).strip().startswith("-") and str(valor).strip() != "-"
+
+
 def _resultados(s):
+    """Tabla de optimizacion: cada escenario con su color, como en el programa."""
     tabla = sv.tabla_resultados(s.escenarios)
 
-    def rojo(valor):
-        return "color: #C00000" if str(valor).startswith("-") and str(valor) != "-" else ""
-    st.dataframe(tabla.style.map(rojo, subset=["Ahorro (€) *"]), hide_index=True,
-                 use_container_width=True)
+    def celdas(i, col, valor):
+        if col == "Tipo":
+            return (f"background-color: {graficos.color(i)}; color: white; font-weight: 700; "
+                    "text-align: center")
+        css = [f"background-color: {graficos.COLORES_SUAVES[i % len(graficos.COLORES_SUAVES)]}"]
+        if col in ("Total (€)", "Ahorro (€) *"):
+            css.append("font-weight: 700")
+        if col == "Ahorro (€) *" and _negativo(valor):
+            css.append(f"color: {ROJO}")
+        return "; ".join(css)
+    st.markdown('<div class="gp-banda">OPTIMIZACIÓN DE POTENCIA (sin i.e.)</div>',
+                unsafe_allow_html=True)
+    _tabla(tabla, totales=0, celdas=celdas, centro=[f"P{i} (kW)" for i in range(1, N_P + 1)])
     st.caption(sv.texto_notas(s.estudio, s.escenarios))
+
+
+def _tabla_mensual(etiquetas, escenarios):
+    """Coste mensual por escenario y ahorros (en rojo los negativos)."""
+    def celdas(i, col, valor):
+        return f"color: {ROJO}" if col.startswith("Ahorro") and _negativo(valor) else ""
+    _tabla(sv.tabla_mensual(etiquetas, escenarios), celdas=celdas)
 
 
 def _grafico(dibujar, *args, figsize=(10, 4), **kwargs):
@@ -485,13 +556,15 @@ def _propuestas_y_resultados(pot, precios):
         st.warning(a)
     if multipunto:
         st.markdown("#### Resumen conjunto")
-        st.dataframe(sv.tabla_cups(sv.filas_cups(sums), res), hide_index=True,
-                     use_container_width=True)
+        _tabla(sv.tabla_cups(sv.filas_cups(sums), res),
+               columnas={"Coste actual": ("#E2EFDA", "#C6E0B4"),
+                         "Coste óptimo": ("#FCE4D6", "#F8CBAD"), "Ahorro": COLOR_TOTAL},
+               izquierda=("CUPS", "Denominación"), centro=["Nº", "Tarifa", "Zona"])
         st.caption("Coste de la potencia sin impuesto eléctrico. Ahorro y % respecto al coste "
                    "actual; inversión y PRS de la propuesta óptima (Propuesta 1) de cada CUPS.")
         c1, c2 = st.columns([2, 3])
-        c1.dataframe(sv.tabla_mensual(res.etiquetas_meses, res.escenarios), hide_index=True,
-                     use_container_width=True)
+        with c1:
+            _tabla_mensual(res.etiquetas_meses, res.escenarios)
         with c2:
             _grafico(graficos.dibujar_costes, res, res.escenarios,
                      titulo="Coste de la potencia facturada – conjunto (€)", figsize=(7, 4))
@@ -499,8 +572,8 @@ def _propuestas_y_resultados(pot, precios):
         s = sums[0]
         _resultados(s)
         c1, c2 = st.columns([2, 3])
-        c1.dataframe(sv.tabla_mensual(s.estudio.etiquetas_meses, s.escenarios), hide_index=True,
-                     use_container_width=True)
+        with c1:
+            _tabla_mensual(s.estudio.etiquetas_meses, s.escenarios)
         with c2:
             _grafico(graficos.dibujar_costes, s.estudio, s.escenarios, figsize=(7, 4))
     return res if multipunto else True
@@ -521,19 +594,22 @@ def _anexos(pot, res) -> tuple:
                                        "Detalle de costes", "Curva de carga",
                                        "Registro de carga"])
     with t_e:
-        st.dataframe(sv.tabla_energia(est), hide_index=True, use_container_width=True)
+        _tabla(sv.tabla_energia(est), totales=2)
     with t_m:
         if s:
-            st.dataframe(sv.tabla_maximos(est), hide_index=True, use_container_width=True)
+            _tabla(sv.tabla_maximos(est))
             _grafico(graficos.dibujar_maximos, est, escs[0].pc, figsize=(10, 3.5))
         else:
             st.caption("Potencia máxima anual de cada CUPS por periodo.")
-            st.dataframe(sv.tabla_maximos_cups(sums), hide_index=True, use_container_width=True)
+            _tabla(sv.tabla_maximos_cups(sums), totales=0, izquierda=("CUPS",))
     with t_d:
         nombres = [e.nombre for e in escs]
-        nombre = st.selectbox("Escenario", nombres, key="pot_detalle")
-        st.dataframe(sv.tabla_detalle(est, escs[nombres.index(nombre)]), hide_index=True,
-                     use_container_width=True)
+        c1, c2 = st.columns([1, 2])
+        nombre = c1.selectbox("Escenario", nombres, key="pot_detalle")
+        c2.caption("Importes en € sin impuesto eléctrico.")
+        _tabla(sv.tabla_detalle(est, escs[nombres.index(nombre)]), centro=["Mes", "Días"],
+               columnas={"Total fijo": COLOR_FIJO, "Total excesos": COLOR_EXCESO,
+                         "TOTAL": COLOR_TOTAL})
     with t_c:
         c1, c2 = st.columns(2)
         periodo = c1.selectbox("Periodo", ["Todos"] + PERIODOS, key="pot_sel_periodo")
