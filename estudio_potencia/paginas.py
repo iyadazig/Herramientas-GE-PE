@@ -70,6 +70,15 @@ def _cliente_gemweb():
     return gemweb.ClienteGemweb(*cred) if cred else None
 
 
+def _centro(cliente, sumi):
+    """Centro de consumo del suministro, solo si el suministro no trae su codigo postal."""
+    if not sumi or sv.zona_por_codigo_postal(sumi.get("codi_postal")) \
+            or not sumi.get("id_centres_consum"):
+        return None
+    return gw.registro_inventario(cliente.api, "centres_consum", "centres_consum.id",
+                                  sumi["id_centres_consum"])
+
+
 def _inventario(cups) -> tuple:
     """(suministro, centro de consumo, hay credenciales) de Gemweb, guardado en la sesion."""
     cache = st.session_state.setdefault("pot_inventario", {})
@@ -79,10 +88,7 @@ def _inventario(cups) -> tuple:
         if cliente is not None:
             try:
                 sumi = cliente.buscar_suministro(cups)
-                if sumi and not sumi.get("codi_postal") and sumi.get("id_centres_consum"):
-                    centro = gw.registro_inventario(cliente.api, "centres_consum",
-                                                    "centres_consum.id",
-                                                    sumi["id_centres_consum"])
+                centro = _centro(cliente, sumi)
             except Exception:            # sin conexion o fallo de la API: se revisa a mano
                 sumi = None
         cache[cups] = (sumi, centro, cliente is not None)
@@ -184,7 +190,7 @@ def _descargar_gemweb(pot, lista, desde, hasta, rellenar):
         return
     cache = st.session_state.setdefault("pot_inventario", {})
     for cups, sumi in info.items():
-        cache[cups] = (sumi, None, True)
+        cache[cups] = (sumi, _centro(cliente, sumi), True)
     _nuevos_suministros(pot, LectorCurva(ruta),
                         {"hoja": None, "unidad": UNIDADES[0], "convenio": "Fin de periodo",
                          "cups": None},

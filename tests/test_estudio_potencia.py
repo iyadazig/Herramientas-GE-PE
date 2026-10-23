@@ -51,6 +51,27 @@ class Zona(unittest.TestCase):
         self.assertIn("revisa la zona", origen)
         self.assertIn("no está en Gemweb", sv.zona_de(None)[1])
 
+    def test_sin_codigo_postal_lee_la_direccion_y_la_poblacion(self):
+        # codigo postal escrito en la direccion del centro («-» en su campo)
+        centro = {"codi_postal": "-", "direccio": "CM FINCA 1 CM 35110 SANTA LUCIA (LAS PALMAS)",
+                  "poblacio": "Santa Lucía"}
+        self.assertEqual(sv.zona_de({"codi_postal": None}, centro),
+                         ("Canarias", "CP 35110 de la dirección, centro de consumo en Gemweb"))
+        # sin codigo postal: la provincia o la isla por su nombre
+        self.assertEqual(sv.zona_de({}, {"direccio": "C/ MAYOR 3 MANACOR (Illes Balears)",
+                                         "poblacio": "Manacor"})[0], "Illes Balears")
+        self.assertEqual(sv.zona_de({}, {"direccio": "AV. PRINCIPAL 1", "poblacio": "Mallorca"}),
+                         ("Illes Balears", "«Mallorca», centro de consumo en Gemweb"))
+        self.assertEqual(sv.zona_de({"poblacio": "Santa Cruz de La Palma"})[0], "Canarias")
+        self.assertEqual(sv.zona_de({"poblacio": "Melilla"})[0], "Melilla")
+        # una poblacion que no es de las islas, Ceuta ni Melilla: Peninsula
+        self.assertEqual(sv.zona_de({}, {"direccio": "AVENIDA ARAGON 238 MADRID  MADRID",
+                                         "poblacio": "Madrid", "codi_postal": "-"}),
+                         ("Península", "población «Madrid» (sin código postal), centro de "
+                                       "consumo en Gemweb"))
+        # un numero de portal de 5 cifras fuera de rango no es un codigo postal
+        self.assertIsNone(sv._cp_en_texto("POLIGONO 12, NAVE 99999"))
+
     def test_utilidades(self):
         self.assertEqual(sv.periodo_defecto(date(2026, 9, 25)), (date(2025, 9, 1),
                                                                  date(2026, 8, 31)))

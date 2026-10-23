@@ -202,17 +202,74 @@ def zona_por_codigo_postal(cp):
             "52": "Melilla"}.get(cp.zfill(5)[:2], PENINSULA)
 
 
+# islas, Ceuta y Melilla por su nombre (provincia, isla o municipio principal), por si Gemweb
+# no trae el codigo postal: Canarias antes que Baleares por «La Palma» / «Las Palmas»
+ZONAS_POR_NOMBRE = [
+    ("Canarias", ["CANARIA", "LAS PALMAS", "LA PALMA", "TENERIFE", "LANZAROTE",
+                  "FUERTEVENTURA", "GOMERA", "EL HIERRO", "ARRECIFE", "PUERTO DEL ROSARIO",
+                  "LA LAGUNA", "TELDE", "ARONA", "ADEJE"]),
+    ("Illes Balears", ["BALEAR", "MALLORCA", "MENORCA", "IBIZA", "EIVISSA", "FORMENTERA",
+                       "PALMA", "MAO", "MAHON", "CIUTADELLA", "MANACOR", "LLUCMAJOR"]),
+    ("Ceuta", ["CEUTA"]),
+    ("Melilla", ["MELILLA"]),
+]
+
+
+def _sin_acentos(texto) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(texto or "").upper())
+                   if unicodedata.category(c) != "Mn")
+
+
+def zona_por_nombre(texto):
+    """Zona de las islas, Ceuta o Melilla si el texto (poblacion o provincia) las nombra."""
+    texto = " %s " % re.sub(r"[^A-Z]+", " ", _sin_acentos(texto))
+    for zona, nombres in ZONAS_POR_NOMBRE:
+        if any(f" {n} " in texto for n in nombres):
+            return zona
+    return None
+
+
+def _cp_en_texto(texto):
+    """Codigo postal escrito dentro de una direccion ('... CM 41309 LA RINCONADA')."""
+    for cp in re.findall(r"(?<!\d)(\d{5})(?!\d)", str(texto or "")):
+        if 1000 <= int(cp) <= 52999:
+            return cp
+    return None
+
+
+def _valido(texto) -> str:
+    texto = str(texto or "").strip()
+    return "" if texto in ("-", "_") else texto
+
+
 def zona_de(sumi, centro=None) -> tuple:
-    """(zona, de donde sale) del suministro de Gemweb: el codigo postal de su direccion (si
-    falta, el del centro de consumo). Sin el: Peninsula, a revisar."""
-    for registro, origen in ((sumi, "Gemweb"), (centro, "centro de consumo en Gemweb")):
-        cp = (registro or {}).get("codi_postal")
-        zona = zona_por_codigo_postal(cp)
-        if zona:
-            return zona, f"CP {str(cp).strip()}, {origen}"
+    """(zona, de donde sale) del suministro de Gemweb. En este orden, del suministro y si no
+    del centro de consumo: su codigo postal; un codigo postal escrito en la direccion; la
+    poblacion o la provincia (entre parentesis en la direccion) si nombra las islas, Ceuta o
+    Melilla. Si solo hay una poblacion que no es de ellas: Peninsula. Sin nada: Peninsula, a
+    revisar."""
+    registros = [(sumi or {}, "Gemweb"), (centro or {}, "centro de consumo en Gemweb")]
+    for registro, origen in registros:
+        cp = _valido(registro.get("codi_postal"))
+        if zona_por_codigo_postal(cp):
+            return zona_por_codigo_postal(cp), f"CP {cp}, {origen}"
+    for registro, origen in registros:
+        cp = _cp_en_texto(registro.get("direccio"))
+        if cp:
+            return zona_por_codigo_postal(cp), f"CP {cp} de la dirección, {origen}"
+    for registro, origen in registros:
+        provincia = re.findall(r"\(([^()]+)\)", str(registro.get("direccio") or ""))
+        for texto in [_valido(registro.get("poblacio"))] + provincia:
+            if texto and zona_por_nombre(texto):
+                return zona_por_nombre(texto), f"«{texto}», {origen}"
+    for registro, origen in registros:
+        poblacion = _valido(registro.get("poblacio"))
+        if poblacion:
+            return PENINSULA, f"población «{poblacion}» (sin código postal), {origen}"
     if not sumi:
         return PENINSULA, "no está en Gemweb: revisa la zona"
-    return PENINSULA, "sin código postal en Gemweb: revisa la zona"
+    return PENINSULA, "sin código postal ni población en Gemweb: revisa la zona"
 
 
 def numero(texto):
@@ -475,7 +532,7 @@ def filas_cups(suministros) -> list:
 def tabla_cups(filas, res) -> pd.DataFrame:
     datos = []
     for k, f in enumerate(filas, 1):
-        datos.append([k, f["cups"], f["denominacion"] or "-", f["tarifa"], f["zona"],
+        datos.append([str(k), f["cups"], f["denominacion"] or "-", f["tarifa"], f["zona"],
                       fmt(f["actual"]), fmt(f["optima"]), fmt(f["ahorro"]),
                       f"{fmt(100 * f['pct'], 1)} %",
                       fmt(f["inversion"], 2) if f["inversion"] else "-",
