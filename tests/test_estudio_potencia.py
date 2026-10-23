@@ -65,7 +65,7 @@ class Zona(unittest.TestCase):
         self.assertEqual(sv.zona_de({"poblacio": "Santa Cruz de La Palma"})[0], "Canarias")
         self.assertEqual(sv.zona_de({"poblacio": "Melilla"})[0], "Melilla")
         # una poblacion que no es de las islas, Ceuta ni Melilla: Peninsula
-        self.assertEqual(sv.zona_de({}, {"direccio": "AVENIDA ARAGON 238 MADRID  MADRID",
+        self.assertEqual(sv.zona_de({}, {"direccio": "CALLE FALSA 1 MADRID  MADRID",
                                          "poblacio": "Madrid", "codi_postal": "-"}),
                          ("Península", "población «Madrid» (sin código postal), centro de "
                                        "consumo en Gemweb"))

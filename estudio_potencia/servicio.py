@@ -231,7 +231,7 @@ def zona_por_nombre(texto):
 
 
 def _cp_en_texto(texto):
-    """Codigo postal escrito dentro de una direccion ('... CM 41309 LA RINCONADA')."""
+    """Codigo postal escrito dentro de una direccion ('CALLE FALSA 1, 41000 SEVILLA')."""
     for cp in re.findall(r"(?<!\d)(\d{5})(?!\d)", str(texto or "")):
         if 1000 <= int(cp) <= 52999:
             return cp
