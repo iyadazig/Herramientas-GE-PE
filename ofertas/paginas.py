@@ -256,9 +256,12 @@ def editor_tecnicos(fichas: list, clave) -> list:
     with st.expander("Aspectos técnicos de cada suministro (gas)", expanded=True):
         st.caption("Tarifa, consumo y Qd (de la última factura) salen de Gemweb. La telemedida, "
                    "la presión, la cogeneración y la planta satélite no están en Gemweb: "
-                   "revísalos. Término fijo: «Cuota fija» = por cliente; «Variable» = por "
-                   "capacidad (Qd), que exige telemedida. Con más de 5 GWh/año la telemedida es "
-                   "obligatoria (Orden IET/2446/2013) y el término fijo, variable.")
+                   "revísalos.")
+        st.caption("**Término fijo** del peaje: **Cuota fija** = un importe fijo al mes por "
+                   "suministro, que no depende del caudal (lo habitual sin telemedida). "
+                   "**Variable** = se paga según el caudal diario contratado (Qd) y los excesos "
+                   "sobre él; necesita telemedida. Con más de 5 GWh/año la telemedida es "
+                   "obligatoria (Orden IET/2446/2013) y el término fijo es siempre variable.")
         cols = COLUMNAS_TECNICOS
         editada = st.data_editor(
             tabla_tecnicos(fichas), hide_index=True, use_container_width=True,
@@ -463,8 +466,9 @@ def seccion_solicitud_ofertas(res: dict) -> None:
                 key="sol_potencias_%d" % hash(res["clave"]))
     for f in fichas:
         if f.get("aviso"):
-            st.warning(f"{f['cups']}: {f['aviso']}. El perfil Ene–Dic mezcla años; usa «Últimos "
-                       "12 meses con factura» o un periodo de 12 meses.")
+            # solo es un problema si las facturas cubren mas de un año (dias repetidos)
+            (st.warning if f.get("aviso_grave", True) else st.info)(
+                f"{f['cups']}: {f['aviso'][0].upper()}{f['aviso'][1:]}")
 
     comun = consideraciones_comunes_gas() if gas else consideraciones_comunes()
     st.caption("Consideraciones de cada suministro: salen con lo elegido arriba. Si después "

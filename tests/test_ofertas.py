@@ -41,7 +41,21 @@ class Datos(unittest.TestCase):
 
     def test_aviso_si_se_mezclan_anios(self):
         _, aviso = so.perfil_mensual([factura(2025, 3, 31, p1=1), factura(2026, 3, 31, p1=1)])
-        self.assertIn("Mar", aviso)
+        self.assertIn("marzo", aviso)
+        # mas de un año de facturas: el mismo mes se suma dos veces (grave)
+        f = [dict(factura(2025, 3, 31), **{"Inicio factura": dt.date(2025, 3, 1)}),
+             dict(factura(2026, 3, 31), **{"Inicio factura": dt.date(2026, 3, 1)})]
+        texto, grave = so.aviso_perfil(f)
+        self.assertTrue(grave)
+        self.assertIn("396 días, más de un año, y en marzo", texto)
+        # factura corta por un cambio de peaje: 25/09/2025-24/09/2026, sin dias repetidos
+        f = [dict(factura(2025, 9, 30), **{"Inicio factura": dt.date(2025, 9, 25)}),
+             dict(factura(2026, 9, 24), **{"Inicio factura": dt.date(2026, 8, 25)})]
+        texto, grave = so.aviso_perfil(f)
+        self.assertFalse(grave)
+        self.assertTrue(texto.startswith("la fila de septiembre (2025 y 2026) junta"))
+        self.assertIn("365 días", texto)
+        self.assertEqual(so.aviso_perfil([factura(2026, 1, 31)]), ("", False))
 
     def test_nombres_de_hojas(self):
         self.assertEqual(so.nombres_de_hojas([{"alias": "TC1"}, {"alias": "",

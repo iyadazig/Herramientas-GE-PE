@@ -1062,6 +1062,7 @@ def ficha_solicitud(cliente, cups, sumi, validas, elegidas) -> dict:
             "direccion": centro.get("direccio") or entidad.get("direccio") or "",
             "tarifa": sumi.get("tarifa_acces") or (ultima or {}).get("Tarifa") or "",
             "fecha_inicio": "", "potencias": potencias, "perfil": perfil, "aviso": aviso,
+            "aviso_grave": so.aviso_perfil(elegidas)[1],
             "facturas": len(elegidas),
             "ultima_factura": ultima["Fin factura"] if ultima else None}
 

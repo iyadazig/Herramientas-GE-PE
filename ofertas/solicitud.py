@@ -74,6 +74,8 @@ UMBRAL_TELEMEDIDA = 5_000_000
 INTERRUMPIBLE_KWH, INTERRUMPIBLE_QD, INTERRUMPIBLE_BAR = 10_000_000, 26_000, 4
 MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov",
                 "dic"]
+MESES_LARGOS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+                "septiembre", "octubre", "noviembre", "diciembre"]
 AMARILLO, ROJO = "FFFF00", "FF0000"
 
 OSCURO, CLARO, NARANJA = "1F497D", "DAEEF3", "FFC000"
@@ -212,21 +214,42 @@ def avisos_gas(s: dict) -> list:
     return avisos
 
 
-def perfil_mensual(facturas: list) -> tuple:
-    """Facturas -> ({mes 1-12: [P1..P6]}, aviso). Cada factura va al mes de su fecha de fin;
-    si un mes tiene varias, se suman. El aviso dice si se mezclan años en un mismo mes."""
-    perfil = {m: [0.0] * 6 for m in range(1, 13)}
+def aviso_perfil(facturas: list) -> tuple:
+    """(texto, grave) si algun mes del perfil junta facturas que terminan en años distintos;
+    ('', False) si no. Grave si ademas las facturas cubren mas de un año (se suma el mismo mes
+    de dos años: el consumo anual sale de mas). Si no, solo informa: pasa con una factura
+    corta (p. ej. por un cambio de peaje) y no se repite ningun dia."""
     anios = {}
     for f in facturas:
+        anios.setdefault(f["Fin factura"].month, set()).add(f["Fin factura"].year)
+    repetidos = sorted(m for m, a in anios.items() if len(a) > 1)
+    if not repetidos:
+        return "", False
+    nombres = [MESES_LARGOS[m - 1] for m in repetidos]
+    meses = " y ".join([", ".join(nombres[:-1]), nombres[-1]] if len(nombres) > 1 else nombres)
+    inicios = [f.get("Inicio factura") for f in facturas]
+    dias = ((max(f["Fin factura"] for f in facturas) - min(inicios)).days + 1
+            if all(inicios) else None)
+    if dias is None or dias > 366:
+        return (f"las facturas cubren {f'{dias} días, ' if dias else ''}más de un año, y en "
+                f"{meses} se suma el mismo mes de dos años distintos: el consumo anual sale de "
+                "más. Elige «Últimos 12 meses con factura» o un periodo de 12 meses."), True
+    detalle = ", ".join(f"{MESES_LARGOS[m - 1]} ({' y '.join(map(str, sorted(anios[m])))})"
+                        for m in repetidos)
+    return (f"la fila de {detalle} junta facturas que terminan ese mes en años distintos "
+            f"(las facturas cubren {dias} días). No se repite ningún día: el consumo anual "
+            "es correcto."), False
+
+
+def perfil_mensual(facturas: list) -> tuple:
+    """Facturas -> ({mes 1-12: [P1..P6]}, aviso). Cada factura va al mes de su fecha de fin;
+    si un mes tiene varias, se suman. El aviso es el texto de aviso_perfil."""
+    perfil = {m: [0.0] * 6 for m in range(1, 13)}
+    for f in facturas:
         mes = f["Fin factura"].month
-        anios.setdefault(mes, set()).add(f["Fin factura"].year)
         for n, col in enumerate(COLS_P):
             perfil[mes][n] += float(f.get(col) or 0)
-    repetidos = sorted(m for m, a in anios.items() if len(a) > 1)
-    aviso = ("Se suman facturas de años distintos en: %s" % ", ".join(MESES[m - 1][:3]
-                                                                         for m in repetidos)
-             if repetidos else "")
-    return perfil, aviso
+    return perfil, aviso_perfil(facturas)[0]
 
 
 # ------------------------------------------------------------------- formato
