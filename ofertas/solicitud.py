@@ -85,9 +85,9 @@ CENTRO = Alignment(horizontal="center", vertical="center", wrap_text=True)
 # ------------------------------------------------------------------- datos
 def alias_de(nombre_suministro: str) -> str:
     """Todo lo que va tras el PRIMER '_': 'Empresa de prueba SA_TC4' -> 'TC4',
-    'Empresa_Nave_2' -> 'Nave_2'."""
+    'Empresa_Nave_2' -> 'Nave_2'. Sin '_', el nombre entero del suministro en Gemweb."""
     nombre = (nombre_suministro or "").strip()
-    return nombre.split("_", 1)[1].strip() if "_" in nombre else ""
+    return nombre.split("_", 1)[1].strip() if "_" in nombre else nombre
 
 
 def cif_limpio(cif: str) -> str:
@@ -144,14 +144,14 @@ def perfil_gas(facturas: list) -> dict:
     return perfil
 
 
-def tecnicos_por_defecto(consumo: float, qd=None, alquiler=False) -> dict:
+def tecnicos_por_defecto(consumo: float, qd=None) -> dict:
     """Aspectos tecnicos de un suministro de gas con lo que se sabe de Gemweb. La telemedida
     no esta en Gemweb (sale de Datadis, que no tiene gas): se supone si es obligatoria."""
     telemedida = consumo > UMBRAL_TELEMEDIDA
     return {"qd": qd, "telemedida": telemedida,
             "termino_fijo": VARIABLE if telemedida else CUOTA_FIJA, "presion": None,
             "cogeneracion": False, "planta_satelite": False, "dias": None,
-            "alquiler": bool(alquiler), "interrumpible": False}
+            "interrumpible": False}
 
 
 def reglas_tecnicas(t: dict, consumo: float) -> tuple:
@@ -454,9 +454,6 @@ def _aspectos_tecnicos(ws, s, fila=18):
     _bloque(ws, f"B{f + 3}:C{f + 3}", "Qd a contratar (kWh/día) / Daily capacity to contract "
                                       "(kWh/day)", True)
     _bloque(ws, f"D{f + 3}", _o_guion(t.get("qd")), formato="#,##0")
-    _bloque(ws, f"E{f + 3}:H{f + 3}", "Equipo de medida en alquiler (SÍ/NO) / Rented metering "
-                                      "equipment (Y/N)", True)
-    _bloque(ws, f"I{f + 3}", _si_no_texto(t.get("alquiler")))
     _bloque(ws, f"B{f + 4}:C{f + 4}", "Suministro interrumpible (SÍ/NO) / Interruptible supply "
                                       "(Y/N)", True)
     _bloque(ws, f"D{f + 4}", _si_no_texto(t.get("interrumpible")))

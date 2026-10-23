@@ -30,8 +30,8 @@ pago. La factura y la curva no salen del PC.
   Gemweb; una solicitud no mezcla los dos). Gas:
   - El perfil sale de `consum_tot` y `qd_aplicada` de las facturas.
   - Aspectos técnicos editables: Qd, telemedida, término fijo «Cuota fija» (por cliente) /
-    «Variable» (por capacidad), presión, cogeneración, planta satélite, días de uso, equipo en
-    alquiler e interrumpible.
+    «Variable» (por capacidad), presión, cogeneración, planta satélite, días de uso e
+    interrumpible.
   - Tipologías MIBGAS (PVB), TTF y Brent, cada una sin y con coberturas.
   - Impuesto sobre Hidrocarburos (reducido, general o exento, con %) y GdO de gas renovable.
   - Reglas normativas en `ofertas/solicitud.py`:

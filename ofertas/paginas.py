@@ -56,8 +56,7 @@ COLUMNAS_CASILLA_GAS = TIPOLOGIAS_GAS + [GDO_GAS]
 COLUMNAS_TECNICOS = {"qd": "Qd a contratar (kWh/día)", "telemedida": "Telemedida",
                      "termino_fijo": "Término fijo", "presion": "Presión (bar)",
                      "cogeneracion": "Cogeneración", "planta_satelite": "Planta satélite GNL",
-                     "dias": "Días de uso a la semana", "alquiler": "Equipo de medida en alquiler",
-                     "interrumpible": "Interrumpible"}
+                     "dias": "Días de uso a la semana", "interrumpible": "Interrumpible"}
 NUMEROS_TECNICOS = ("qd", "presion", "dias")
 
 # claves de los controles del formulario que se guardan para volver a cargarlo
@@ -272,8 +271,7 @@ def editor_tecnicos(fichas: list, clave) -> list:
                 cols["termino_fijo"]: st.column_config.SelectboxColumn(
                     options=[so.CUOTA_FIJA, so.VARIABLE], required=True),
                 **{cols[k]: st.column_config.CheckboxColumn() for k in (
-                    "telemedida", "cogeneracion", "planta_satelite", "alquiler",
-                    "interrumpible")}},
+                    "telemedida", "cogeneracion", "planta_satelite", "interrumpible")}},
             key="sol_tecnicos_%d" % hash(clave))
     tecnicos, corregidos = [], []
     for f, (_, fila) in zip(fichas, editada.iterrows()):

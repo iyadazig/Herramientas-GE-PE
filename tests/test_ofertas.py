@@ -26,7 +26,8 @@ class Datos(unittest.TestCase):
     def test_alias_y_cif(self):
         self.assertEqual(so.alias_de("Empresa de prueba SA_TC4"), "TC4")
         self.assertEqual(so.alias_de("Empresa de prueba_Nave_2 Norte"), "Nave_2 Norte")
-        self.assertEqual(so.alias_de("Sin alias"), "")
+        self.assertEqual(so.alias_de("Nombre sin guion bajo"), "Nombre sin guion bajo")
+        self.assertEqual(so.alias_de(None), "")
         self.assertEqual(so.cif_limpio("a-00.000.000"), "A00000000")
 
     def test_perfil_por_mes_de_fin_de_factura(self):
@@ -231,15 +232,15 @@ class Correo(unittest.TestCase):
         self.assertNotIn("—", texto)
 
 
-def factura_gas(anio, mes, kwh, qd=None, alquiler=0.0):
+def factura_gas(anio, mes, kwh, qd=None):
     fin = (dt.date(anio + mes // 12, mes % 12 + 1, 1) - dt.timedelta(days=1))
     return {"Inicio factura": dt.date(anio, mes, 1), "Fin factura": fin, "Total kWh": kwh,
-            "_qd": qd, "_alquiler": alquiler}
+            "_qd": qd}
 
 
 def suministro_gas(cups="ES0000000000000000XX", kwh=100_000, tarifa="RL.5", **tecnicos):
     perfil = so.perfil_gas([factura_gas(2026, m, kwh, qd=500) for m in range(1, 13)])
-    t = so.tecnicos_por_defecto(sum(p["kwh"] for p in perfil.values()), 500, True)
+    t = so.tecnicos_por_defecto(sum(p["kwh"] for p in perfil.values()), 500)
     t.update(tecnicos)
     return {"grupo": "GRUPO DE PRUEBA", "alias": "G1", "cups": cups,
             "razon": "EMPRESA DE PRUEBA SA", "direccion": "Calle Falsa 1", "cif": "A00000000",
@@ -275,9 +276,10 @@ class GasDatos(unittest.TestCase):
 
     def test_telemedida_y_termino_fijo(self):
         # hasta 5 GWh: sin obligacion de telemedida, cuota fija (por cliente)
-        t = so.tecnicos_por_defecto(4_200_000, 12_000, True)
-        self.assertEqual((t["telemedida"], t["termino_fijo"], t["alquiler"], t["qd"]),
-                         (False, so.CUOTA_FIJA, True, 12_000))
+        t = so.tecnicos_por_defecto(4_200_000, 12_000)
+        self.assertEqual((t["telemedida"], t["termino_fijo"], t["qd"]),
+                         (False, so.CUOTA_FIJA, 12_000))
+        self.assertNotIn("alquiler", t)
         self.assertEqual(so.reglas_tecnicas(t, 4_200_000), (t, []))
         # mas de 5 GWh: telemedida obligatoria y termino variable aunque se cambie a mano
         t2, cambios = so.reglas_tecnicas(dict(t, telemedida=False), 6_000_000)
@@ -319,8 +321,7 @@ class GasDatos(unittest.TestCase):
         filas, descartadas = gw.facturas_por_periodo("ES0000000000000000XX", raiz)
         self.assertEqual(descartadas, 0)
         f = filas[0]
-        self.assertEqual((f["Total kWh"], f["_qd"], f["_alquiler"], f["P1 kWh"]),
-                         (300_000.0, 12_000.0, 150.00, 0.0))
+        self.assertEqual((f["Total kWh"], f["_qd"], f["P1 kWh"]), (300_000.0, 12_000.0, 0.0))
 
 
 class GasExcel(unittest.TestCase):
@@ -335,8 +336,8 @@ class GasExcel(unittest.TestCase):
                          ("RL05", "-", "=E40"))
         self.assertEqual((h["D20"].value, h["D21"].value, h["I21"].value),
                          ("SÍ", "NO", "-"))
-        self.assertEqual((h["D22"].value, h["I22"].value, h["D23"].value, h["I23"].value),
-                         (500, "SÍ", "NO", "NO"))
+        self.assertEqual((h["D22"].value, h["E22"].value, h["D23"].value, h["I23"].value),
+                         (500, None, "NO", "NO"))
         self.assertEqual(h["D24"].value, "Cuota fija / Fixed fee")
         self.assertEqual(h["D24"].fill.fgColor.rgb[-6:], so.AMARILLO)
         # perfil: mes con su año, Qd media (kWh/dias), energia y Qd aplicada; total en E40
