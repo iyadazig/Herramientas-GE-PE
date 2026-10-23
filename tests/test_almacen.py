@@ -133,8 +133,12 @@ class Almacen(unittest.TestCase):
                     "recepcion_desde": "22/10/2026", "recepcion_hasta": "23/10/2026 12:00"},
             {"formulario": {"sol_ref": "R-1"}}, "Estimado comercializador:", b"xlsx")
         r = almacen.listar_solicitudes()[0]
-        self.assertEqual((r["id"], r["usuario"], r["suministros"], r["estado"]),
-                         (sid, "ana", 2, "Preparada"))
+        self.assertEqual((r["id"], r["usuario"], r["suministros"], r["estado"], r["producto"]),
+                         (sid, "ana", 2, "Preparada", None))      # antigua: sin producto
+        gas = almacen.guardar_solicitud("ana", {"cups": ["ES0000000000000000XX"]},
+                                        {"cabecera": {"producto_tipo": "gas"}}, "", b"")
+        self.assertEqual(almacen.listar_solicitudes()[0]["producto"], "gas")
+        self.assertEqual(almacen.listar_solicitudes()[0]["id"], gas)
         almacen.actualizar_seguimiento(sid, "Enviada", " Comercializadora A ", "luis")
         sol = almacen.solicitud(sid)
         self.assertEqual((sol["estado"], sol["comercializadoras"], sol["actualizado_por"]),

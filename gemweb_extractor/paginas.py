@@ -739,6 +739,10 @@ def facturas_por_periodo(cups: str, root) -> tuple:
         # potencias contratadas de la factura (no salen en las hojas; para la solicitud)
         fila["_potencias"] = [float(d[f"pot_contract_p{n}"]) if d.get(f"pot_contract_p{n}")
                               not in (None, "") else None for n in range(1, 7)]
+        # gas: caudal diario aplicado (kWh/dia) y alquiler del equipo de medida
+        fila["_qd"] = float(d["qd_aplicada"]) if d.get("qd_aplicada") not in (None, "") \
+            else None
+        fila["_alquiler"] = float(d.get("import_lloguer") or 0)
         filas.append(fila)
     return filas, descartadas
 
@@ -1031,7 +1035,9 @@ def calcular_consumo_periodos(cliente, cups_list, modo, ini, fin, telelecturas=T
 
 def ficha_solicitud(cliente, cups, sumi, validas, elegidas) -> dict:
     """Datos de un suministro para la solicitud de ofertas: Gemweb + potencias de la ultima
-    factura + perfil por meses. Razon social y CIF de la entidad; direccion del centro."""
+    factura + perfil por meses. Razon social y CIF de la entidad; direccion del centro. En gas,
+    ademas, el perfil de gas (con el Qd) y los aspectos tecnicos por defecto (Qd de la ultima
+    factura que lo trae, equipo de medida en alquiler si la ultima factura lo cobra)."""
     from ofertas import solicitud as so
     sumi = sumi or {}
     entidad = registro_inventario(cliente, "entitats", "entitats.id", sumi.get("id_entitats"))
@@ -1043,7 +1049,16 @@ def ficha_solicitud(cliente, cups, sumi, validas, elegidas) -> dict:
         potencias = [float(sumi[f"pot_contract_p{n}"]) if sumi.get(f"pot_contract_p{n}")
                      else None for n in range(1, 7)]
     perfil, aviso = so.perfil_mensual(elegidas)
-    return {"cups": cups, "alias": so.alias_de(sumi.get("nom")),
+    tipo = so.producto_de(sumi.get("tipus_submin"))
+    gas = {}
+    if tipo == so.GAS:
+        perfil_g = so.perfil_gas(elegidas)
+        con_qd = [f for f in validas if f.get("_qd")]
+        qd = max(con_qd, key=lambda f: f["Fin factura"])["_qd"] if con_qd else None
+        gas = {"perfil_gas": perfil_g, "tecnicos": so.tecnicos_por_defecto(
+            sum(p["kwh"] for p in perfil_g.values()), qd,
+            bool(ultima and ultima.get("_alquiler")))}
+    return {"cups": cups, "alias": so.alias_de(sumi.get("nom")), "tipo": tipo, **gas,
             "grupo": entidad.get("divisio") or "",
             "razon": entidad.get("nom") or "", "cif": so.cif_limpio(entidad.get("cif")),
             "direccion": centro.get("direccio") or entidad.get("direccio") or "",

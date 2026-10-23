@@ -26,6 +26,20 @@ pago. La factura y la curva no salen del PC.
   (`ofertas.paginas.pagina_solicitudes_guardadas`): las solicitudes se guardan en la base de
   datos (`almacen`, tabla `solicitudes_ofertas`: Excel, texto, datos del formulario y
   seguimiento); todos las ven y pueden volver a cargarlas en el formulario.
+  **Electricidad o gas natural** (desplegable «Producto», preseleccionado con `tipus_submin` de
+  Gemweb; una solicitud no mezcla los dos). Gas:
+  - El perfil sale de `consum_tot` y `qd_aplicada` de las facturas.
+  - Aspectos técnicos editables: Qd, telemedida, término fijo «Cuota fija» (por cliente) /
+    «Variable» (por capacidad), presión, cogeneración, planta satélite, días de uso, equipo en
+    alquiler e interrumpible.
+  - Tipologías MIBGAS (PVB), TTF y Brent, cada una sin y con coberturas.
+  - Impuesto sobre Hidrocarburos (reducido, general o exento, con %) y GdO de gas renovable.
+  - Reglas normativas en `ofertas/solicitud.py`:
+    - telemedida obligatoria y término variable con más de 5 GWh/año (Orden IET/2446/2013);
+    - con cogeneración no cabe el tipo reducido del impuesto;
+    - avisos: RL.x según el consumo (Circular CNMC 6/2020), factor de carga mayor del 80 %,
+      plazos de menos de un año sin telemedida y requisitos del interrumpible.
+  - La telemedida de gas no está en Gemweb: Datadis no tiene gas.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.

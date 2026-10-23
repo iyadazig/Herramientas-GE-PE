@@ -7,6 +7,10 @@ exencion del impuesto electrico y la compensacion de excedentes (si las tiene). 
 resumen, para el resto de condiciones, lo mas habitual entre los suministros y, si alguno es
 distinto, la excepcion con sus CUPS. Del precio fijo solo se dice si se pide (la binomica
 segun la tarifa va en el Excel).
+
+En gas natural, junto al CUPS: el Impuesto sobre Hidrocarburos si no es el tipo reducido, la
+cogeneracion y la planta satelite. En el resumen, ademas, el Qd total, el impuesto, el termino
+fijo y la telemedida.
 """
 
 from collections import Counter
@@ -61,6 +65,28 @@ def _duracion(c: dict) -> str:
     return plazos[0] if plazos else ""
 
 
+def _ieh(c: dict) -> str:
+    """'tipo reducido 0,15 €/GJ (usos profesionales)', 'exento (60 % del consumo)'..."""
+    tipo = c.get("ieh") or so.IEH_REDUCIDO
+    texto = tipo[0].lower() + tipo[1:]
+    if c.get("pct_ieh") is not None:
+        texto += f" ({_pct(c['pct_ieh'])} del consumo)"
+    return texto
+
+
+def _nota_cups_gas(s: dict) -> str:
+    """Gas: junto al CUPS, el impuesto si no es el reducido, cogeneracion y planta satelite."""
+    c, t = s.get("consideraciones") or {}, s.get("tecnicos") or {}
+    notas = []
+    if (c.get("ieh") or so.IEH_REDUCIDO) != so.IEH_REDUCIDO:
+        notas.append(f"Impuesto sobre Hidrocarburos: {_ieh(c)}")
+    if t.get("cogeneracion"):
+        notas.append("con cogeneración")
+    if t.get("planta_satelite"):
+        notas.append("suministrado desde planta satélite de GNL")
+    return "; ".join(notas)
+
+
 def _nota_cups(c: dict) -> str:
     """Lo que se indica junto al CUPS en el listado: exencion y excedentes."""
     notas = []
@@ -90,11 +116,16 @@ def _con_excepciones(texto: str, otros: list, describir) -> str:
     return texto + " (" + "; ".join(f"{_lista(cups)}: {describir(v)}" for v, cups in otros) + ")"
 
 
-def _resumen(suministros: list) -> list:
+def _resumen(suministros: list, gas: bool = False) -> list:
     cons = [s.get("consideraciones") or {} for s in suministros]
-    datos = [dict(s, _c=c) for s, c in zip(suministros, cons)]
+    datos = [dict(s, _c=c, _t=s.get("tecnicos") or {}) for s, c in zip(suministros, cons)]
     lineas = [f"Número de suministros: {len(suministros)}, con un consumo anual previsto total "
               f"de {_kwh(sum(so.consumo_anual(s) for s in suministros))}."]
+    if gas:
+        qd = sum(s["_t"].get("qd") or 0 for s in datos)
+        if qd:
+            lineas[0] = lineas[0][:-1] + (f" y un caudal diario (Qd) total de "
+                                          f"{_kwh(qd)}/día.")
 
     def tipologia(v):
         return _lista(v) if v else "ninguna"
@@ -111,6 +142,16 @@ def _resumen(suministros: list) -> list:
     principal, otros = _mas_habitual(
         datos, lambda s: "de temporada" if s["_c"].get("temporada") else "anual")
     lineas.append(_con_excepciones(f"Tipo de contrato: {principal}", otros, str) + ".")
+    if gas:
+        terminos = {so.CUOTA_FIJA: "cuota fija (por cliente)",
+                    so.VARIABLE: "variable (por caudal)"}
+        for nombre, valor in (
+                ("Impuesto sobre Hidrocarburos", lambda s: _ieh(s["_c"])),
+                ("Término fijo", lambda s: terminos.get(s["_t"].get("termino_fijo"),
+                                                        terminos[so.CUOTA_FIJA])),
+                ("Telemedida", lambda s: "sí" if s["_t"].get("telemedida") else "no")):
+            principal, otros = _mas_habitual(datos, valor)
+            lineas.append(_con_excepciones(f"{nombre}: {principal}", otros, str) + ".")
 
     def inicio(v):
         return fecha_larga(v) or "por determinar"
@@ -126,22 +167,23 @@ def _resumen(suministros: list) -> list:
         lineas.append(_con_excepciones(f"Duración del contrato: {duracion(principal)}", otros,
                                        duracion) + ".")
 
+    gdo = "garantías de origen de gas renovable" if gas else "garantías de origen (GdO)"
     con_gdo = [s.get("cups", "") for s, c in zip(suministros, cons) if c.get("gdo")]
     if len(con_gdo) == len(suministros):
-        lineas.append("Las ofertas deben incluir garantías de origen (GdO).")
+        lineas.append(f"Las ofertas deben incluir {gdo}.")
     elif con_gdo and len(con_gdo) * 2 >= len(suministros):
         sin = [s.get("cups", "") for s, c in zip(suministros, cons) if not c.get("gdo")]
-        lineas.append(f"Las ofertas deben incluir garantías de origen (GdO), salvo en "
-                      f"{_lista(sin)}.")
+        lineas.append(f"Las ofertas deben incluir {gdo}, salvo en {_lista(sin)}.")
     elif con_gdo:
-        lineas.append(f"Las ofertas de {_lista(con_gdo)} deben incluir garantías de origen "
-                      f"(GdO).")
+        lineas.append(f"Las ofertas de {_lista(con_gdo)} deben incluir {gdo}.")
     return lineas
 
 
 def texto_correo(cabecera: dict, suministros: list) -> str:
     """Texto para pegar en el correo de peticion de ofertas a los gestores de las
     comercializadoras."""
+    gas = cabecera.get("producto_tipo") == so.GAS
+    energia = "gas natural" if gas else "electricidad"
     cliente = _lista(_unicos([s.get("grupo") for s in suministros])
                      or _unicos([s.get("razon") for s in suministros]) or ["(cliente)"])
     listado = []
@@ -149,7 +191,7 @@ def texto_correo(cabecera: dict, suministros: list) -> str:
         linea = f"    • CUPS: {s.get('cups', '')}"
         if s.get("razon"):
             linea += f" ({s['razon']})"
-        nota = _nota_cups(s.get("consideraciones") or {})
+        nota = _nota_cups_gas(s) if gas else _nota_cups(s.get("consideraciones") or {})
         listado.append(linea + (f" — {nota}" if nota else ""))
 
     desde, hasta = (fecha_larga(cabecera.get("recepcion_desde")),
@@ -164,11 +206,12 @@ def texto_correo(cabecera: dict, suministros: list) -> str:
     partes = [
         "Estimado comercializador:",
         f"GE&PE va a ser el encargado de realizar el proceso de licitación de los suministros de "
-        f"electricidad del cliente {cliente} en España.",
+        f"{energia} del cliente {cliente} en España.",
         f"Nos ponemos en contacto con usted para trasladarle el interés de {cliente} en recibir "
-        f"ofertas de electricidad para los siguientes suministros ubicados en España:",
+        f"ofertas de {energia} para los siguientes suministros ubicados en España:",
         "\n".join(listado),
-        "Resumen de la solicitud:\n" + "\n".join("    • " + l for l in _resumen(suministros)),
+        "Resumen de la solicitud:\n" + "\n".join("    • " + l
+                                                 for l in _resumen(suministros, gas)),
         "Adjuntamos la documentación necesaria para la preparación de las ofertas. En ella se "
         "detallan las tipologías de las ofertas solicitadas, las condiciones requeridas y los "
         "datos de consumo esperados para el próximo año de contrato, entre otros datos. Rogamos "

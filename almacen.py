@@ -354,11 +354,14 @@ def guardar_solicitud(usuario, resumen, datos, texto, excel, estado="Preparada")
 
 
 def listar_solicitudes(limite=1000):
+    """Sin datos, Excel ni texto. producto: 'gas' o 'electricidad' (None en las guardadas
+    antes de haber solicitudes de gas, que son de electricidad)."""
     with _con() as con:
         return [dict(r) for r in con.execute(
             "SELECT id, fecha, usuario, ref, cliente, cups, suministros, consumo, "
             "recepcion_desde, recepcion_hasta, estado, comercializadoras, actualizado, "
-            "actualizado_por FROM solicitudes_ofertas ORDER BY id DESC LIMIT ?", (limite,))]
+            "actualizado_por, json_extract(datos, '$.cabecera.producto_tipo') AS producto "
+            "FROM solicitudes_ofertas ORDER BY id DESC LIMIT ?", (limite,))]
 
 
 def solicitud(id_solicitud):

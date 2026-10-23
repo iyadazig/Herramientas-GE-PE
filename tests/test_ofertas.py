@@ -231,5 +231,185 @@ class Correo(unittest.TestCase):
         self.assertNotIn("—", texto)
 
 
+def factura_gas(anio, mes, kwh, qd=None, alquiler=0.0):
+    fin = (dt.date(anio + mes // 12, mes % 12 + 1, 1) - dt.timedelta(days=1))
+    return {"Inicio factura": dt.date(anio, mes, 1), "Fin factura": fin, "Total kWh": kwh,
+            "_qd": qd, "_alquiler": alquiler}
+
+
+def suministro_gas(cups="ES0000000000000000XX", kwh=100_000, tarifa="RL.5", **tecnicos):
+    perfil = so.perfil_gas([factura_gas(2026, m, kwh, qd=500) for m in range(1, 13)])
+    t = so.tecnicos_por_defecto(sum(p["kwh"] for p in perfil.values()), 500, True)
+    t.update(tecnicos)
+    return {"grupo": "GRUPO DE PRUEBA", "alias": "G1", "cups": cups,
+            "razon": "EMPRESA DE PRUEBA SA", "direccion": "Calle Falsa 1", "cif": "A00000000",
+            "tarifa": tarifa, "fecha_inicio": "01/01/2027", "tipo": so.GAS,
+            "perfil_gas": perfil, "tecnicos": t,
+            "consideraciones": {"fijo": True, "indexado": ["Indexado TTF con coberturas"],
+                                "inicio": "01/01/2027", "duracion": "31/12/2027",
+                                "gdo": False, "ieh": so.IEH_REDUCIDO, "pct_ieh": None}}
+
+
+CAB_GAS = {"ref": "R-G", "producto": so.PRODUCTOS[so.GAS], "producto_tipo": so.GAS,
+           "email": "prueba@example.com", "recepcion_desde": "22/10/2026",
+           "recepcion_hasta": "23/10/2026", "recepcion_hora": "12:00"}
+
+
+class GasDatos(unittest.TestCase):
+    def test_tarifas_rl(self):
+        self.assertEqual([so.grupo_rl(t) for t in ("RL.6", "RL06", "RLTB.6", "RL.11", "6.1TD")],
+                         [6, 6, 6, 11, None])
+        self.assertEqual((so.tarifa_gas("RL.6"), so.tarifa_gas("RL.10")), ("RL06", "RL10"))
+        self.assertEqual([so.grupo_rl_de_consumo(c) for c in (5_000, 5_001, 4_200_000,
+                                                              5_000_001, 6e8)], [1, 2, 6, 7, 11])
+        self.assertEqual((so.producto_de("gas"), so.producto_de("electricitat"),
+                          so.producto_de(None)), (so.GAS, so.ELECTRICIDAD, so.ELECTRICIDAD))
+
+    def test_perfil_gas(self):
+        perfil = so.perfil_gas([factura_gas(2025, 12, 31_000, qd=1_200),
+                                factura_gas(2026, 1, 62_000, qd=1_300)])
+        self.assertEqual(perfil[12], {"anio": 2025, "kwh": 31_000.0, "dias": 31, "qd": 1_200.0})
+        self.assertEqual((perfil[1]["anio"], perfil[1]["qd"]), (2026, 1_300.0))
+        self.assertEqual(perfil[6], {"anio": None, "kwh": 0.0, "dias": 0, "qd": None})
+        self.assertEqual(so.consumo_anual({"perfil_gas": perfil}), 93_000.0)
+
+    def test_telemedida_y_termino_fijo(self):
+        # hasta 5 GWh: sin obligacion de telemedida, cuota fija (por cliente)
+        t = so.tecnicos_por_defecto(4_200_000, 12_000, True)
+        self.assertEqual((t["telemedida"], t["termino_fijo"], t["alquiler"], t["qd"]),
+                         (False, so.CUOTA_FIJA, True, 12_000))
+        self.assertEqual(so.reglas_tecnicas(t, 4_200_000), (t, []))
+        # mas de 5 GWh: telemedida obligatoria y termino variable aunque se cambie a mano
+        t2, cambios = so.reglas_tecnicas(dict(t, telemedida=False), 6_000_000)
+        self.assertEqual((t2["telemedida"], t2["termino_fijo"], len(cambios)),
+                         (True, so.VARIABLE, 2))
+        self.assertTrue(so.tecnicos_por_defecto(6_000_000)["telemedida"])
+
+    def test_cogeneracion_sin_tipo_reducido(self):
+        self.assertEqual(so.ieh_valido(so.IEH_REDUCIDO, True), so.IEH_EXENTO)
+        self.assertEqual(so.ieh_valido(so.IEH_GENERAL, True), so.IEH_GENERAL)
+        self.assertEqual(so.ieh_valido(so.IEH_REDUCIDO, False), so.IEH_REDUCIDO)
+
+    def test_avisos(self):
+        self.assertEqual(so.avisos_gas(suministro_gas()), [])        # 1,2 GWh en RL.5
+        s = suministro_gas(tarifa="RL.6")
+        self.assertIn("no corresponde", so.avisos_gas(s)[0])
+        s = suministro_gas(telemedida=True, termino_fijo=so.VARIABLE, qd=5_000)
+        self.assertEqual(len(so.avisos_gas(s)), 0)
+        s["tecnicos"]["qd"] = 4_000            # 1,2 GWh / (4.000 x 365) = 82 %
+        self.assertIn("factor de carga del 82 %", so.avisos_gas(s)[0])
+        s = suministro_gas(termino_fijo=so.VARIABLE)
+        self.assertIn("variable sin telemedida", so.avisos_gas(s)[0])
+        s = suministro_gas()
+        s["consideraciones"]["duracion"] = "30/06/2027"
+        self.assertIn("menos de 12 meses", so.avisos_gas(s)[0])
+        s = suministro_gas(interrumpible=True)
+        self.assertEqual(so.avisos_gas(s), ["interrumpible sin cumplir los requisitos: más de "
+                                            "10 GWh/año, más de 26.000 kWh/día, más de 4 bar, "
+                                            "telemedida"])
+
+    def test_facturas_de_gas_de_gemweb(self):
+        import xml.etree.ElementTree as ET
+        from gemweb_extractor import paginas as gw
+        raiz = ET.fromstring(
+            "<r><factura><periode_ini>01/09/2026</periode_ini><periode_fin>30/09/2026"
+            "</periode_fin><tarifa>RL06</tarifa><consum_tot>300000</consum_tot><consum_p1/>"
+            "<qd_aplicada>12000</qd_aplicada><import_lloguer>150.00</import_lloguer>"
+            "</factura></r>")
+        filas, descartadas = gw.facturas_por_periodo("ES0000000000000000XX", raiz)
+        self.assertEqual(descartadas, 0)
+        f = filas[0]
+        self.assertEqual((f["Total kWh"], f["_qd"], f["_alquiler"], f["P1 kWh"]),
+                         (300_000.0, 12_000.0, 150.00, 0.0))
+
+
+class GasExcel(unittest.TestCase):
+    def test_hoja_y_resumen(self):
+        s = suministro_gas(presion=None, cogeneracion=True)
+        s["consideraciones"].update(ieh=so.IEH_EXENTO, pct_ieh=60.0, gdo=True)
+        wb = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud(CAB_GAS, [s])))
+        h = wb["1. G1"]
+        self.assertEqual(h["D10"].value, "GAS NATURAL / NATURAL GAS")
+        self.assertEqual(h["B18"].value, "Aspectos técnicos / Technical aspects")
+        self.assertEqual((h["D19"].value, h["G19"].value, h["I19"].value),
+                         ("RL05", "-", "=E40"))
+        self.assertEqual((h["D20"].value, h["D21"].value, h["I21"].value),
+                         ("SÍ", "NO", "-"))
+        self.assertEqual((h["D22"].value, h["I22"].value, h["D23"].value, h["I23"].value),
+                         (500, "SÍ", "NO", "NO"))
+        self.assertEqual(h["D24"].value, "Cuota fija / Fixed fee")
+        self.assertEqual(h["D24"].fill.fgColor.rgb[-6:], so.AMARILLO)
+        # perfil: mes con su año, Qd media (kWh/dias), energia y Qd aplicada; total en E40
+        self.assertEqual((h["B28"].value, h["C28"].value, h["E28"].value, h["G28"].value),
+                         ("ene-26", round(100_000 / 31), 100_000, 500))
+        self.assertEqual(h["E40"].value, "=SUM(E28:E39)")
+        self.assertEqual(len(h._charts), 1)
+        valores = [c.value for fila in h.iter_rows(min_row=62) for c in fila if c.value]
+        self.assertIn("Indexado TTF (con coberturas / with hedging)", valores)
+        self.assertIn("Sí / Yes", valores)                          # precio fijo, sin binomica
+        self.assertIn("Exento / Exempt", valores)
+        self.assertIn("60 %", valores)
+        self.assertTrue(any(str(v).startswith("Garantías de origen de gas renovable")
+                            for v in valores))
+        self.assertFalse(any("inómica" in str(v) or "eléctrico" in str(v) for v in valores))
+        r = wb["Resumen"]
+        self.assertEqual([r.cell(4, n).value for n in (7, 9, 10, 11, 12)],
+                         ["RL05", 500, "NO", so.CUOTA_FIJA, "='1. G1'!E40"])
+        self.assertEqual((r["I2"].value, r["L2"].value), ("ASPECTOS TÉCNICOS",
+                                                          "Consumo anual (kWh)"))
+        self.assertEqual((r["K5"].value, r["L5"].value), ("TOTAL", "=SUM(L4:L4)"))
+
+    def test_impuesto_reducido_sin_porcentaje(self):
+        h = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud(CAB_GAS, [suministro_gas()])))[
+            "1. G1"]
+        valores = [c.value for fila in h.iter_rows(min_row=62) for c in fila if c.value]
+        self.assertIn(f"{so.IEH_REDUCIDO} / Reduced rate (professional use)", valores)
+        self.assertFalse(any("renovable" in str(v) for v in valores))
+
+
+class GasFormulario(unittest.TestCase):
+    def test_consideraciones_ida_y_vuelta(self):
+        from ofertas import paginas as op
+        c = {"fijo": False, "indexado": ["Indexado MIBGAS (PVB)", "Indexado Brent con coberturas"],
+             "inicio": "01/01/2027", "duracion": "31/12/2027", "duracion2": "", "duracion3": "",
+             "temporada": False, "gdo": True, "ieh": so.IEH_GENERAL, "pct_ieh": 40.0}
+        fila = pd.Series(op.fila_de_gas(c))
+        for col in (op.INICIO, op.DURACION):
+            fila[col] = pd.Timestamp(fila[col])
+        self.assertEqual(op.consideraciones_de_gas(fila), c)
+
+    def test_tabla_de_aspectos_tecnicos(self):
+        from ofertas import paginas as op
+        s = suministro_gas(presion=6.0, dias=5)
+        t = op.tabla_tecnicos([s])
+        self.assertEqual((t.loc[0, "Tarifa"], t.loc[0, "Consumo anual kWh"]),
+                         ("RL05", 1_200_000))
+        self.assertEqual(op.tecnicos_de(t.iloc[0]), s["tecnicos"])
+        t.loc[0, op.COLUMNAS_TECNICOS["presion"]] = None
+        self.assertIsNone(op.tecnicos_de(t.iloc[0])["presion"])
+
+
+class GasCorreo(unittest.TestCase):
+    def test_correo_de_gas(self):
+        a = suministro_gas()
+        b = suministro_gas("ES0000000000000001XX", cogeneracion=True, telemedida=True,
+                           termino_fijo=so.VARIABLE)
+        b["consideraciones"].update(ieh=so.IEH_EXENTO, pct_ieh=60.0)
+        texto = correo.texto_correo(CAB_GAS, [a, b])
+        self.assertIn("suministros de gas natural del cliente GRUPO DE PRUEBA", texto)
+        self.assertIn("ofertas de gas natural para", texto)
+        self.assertIn("• CUPS: ES0000000000000000XX (EMPRESA DE PRUEBA SA)\n", texto)
+        self.assertIn("ES0000000000000001XX (EMPRESA DE PRUEBA SA) — Impuesto sobre "
+                      "Hidrocarburos: exento (60 % del consumo); con cogeneración\n", texto)
+        self.assertIn("total de 2.400.000 kWh y un caudal diario (Qd) total de 1.000 kWh/día.",
+                      texto)
+        self.assertIn("• Tipología de precios: Precio fijo y Indexado TTF con coberturas.", texto)
+        self.assertIn("• Impuesto sobre Hidrocarburos: tipo reducido 0,15 €/GJ (usos "
+                      "profesionales) (ES0000000000000001XX: exento (60 % del consumo)).", texto)
+        self.assertIn("• Término fijo: cuota fija (por cliente) (ES0000000000000001XX: variable "
+                      "(por caudal)).", texto)
+        self.assertNotIn("electricidad", texto)
+
+
 if __name__ == "__main__":
     unittest.main()
