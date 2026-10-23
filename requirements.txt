@@ -4,3 +4,6 @@ PyMuPDF
 streamlit==1.44.1
 pandas
 requests
+numpy
+matplotlib
+reportlab
