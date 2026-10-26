@@ -4,7 +4,8 @@ ALMACEN COMPARTIDO (SQLite)
 ===========================
 Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS) con:
 
-  usuarios              usuario, nombre, contrasena (PBKDF2-SHA256 con sal), admin, activo
+  usuarios              usuario, nombre, contrasena (PBKDF2-SHA256 con sal), admin, supervisor
+                        (ve el panel del equipo), activo
   contratos             ficha vigente de cada CUPS y quien/cuando la guardo
   contratos_historial   todas las versiones de cada ficha (quien, cuando, que)
   revisiones            cada revision: usuario, fecha, factura, importes, veredicto e informe
@@ -14,6 +15,8 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
   estudios_potencia     cada estudio de potencia guardado: quien, cuando, titular, CUPS,
                         ahorro e inversion de la propuesta optima, datos del formulario, los
                         suministros con sus curvas ya leidas (comprimidos) y el PDF
+  actividad             lo que no se guarda en otra tabla: accesos, paginas abiertas, consultas
+                        a Gemweb y descargas (quien, cuando, modulo, accion, detalle breve)
 
 SQLite en modo WAL admite varios compañeros a la vez desde la misma app (servidor).
 La primera vez se importan las fichas de contratos_ssaa.json si existe.
@@ -65,6 +68,10 @@ CREATE TABLE IF NOT EXISTS estudios_potencia (
     tipo TEXT NOT NULL, titular TEXT, cups TEXT, suministros INTEGER, tarifa TEXT,
     ahorro REAL, inversion REAL, datos TEXT NOT NULL, curvas BLOB, pdf BLOB);
 CREATE INDEX IF NOT EXISTS ix_hist_cups ON contratos_historial(cups);
+CREATE TABLE IF NOT EXISTS actividad (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
+    modulo TEXT, accion TEXT NOT NULL, detalle TEXT);
+CREATE INDEX IF NOT EXISTS ix_act_fecha ON actividad(fecha);
 """
 
 
@@ -100,6 +107,8 @@ def _migrar(con):
     columnas = {r["name"] for r in con.execute("PRAGMA table_info(usuarios)")}
     if "email" not in columnas:
         con.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+    if "supervisor" not in columnas:
+        con.execute("ALTER TABLE usuarios ADD COLUMN supervisor INTEGER NOT NULL DEFAULT 0")
 
 
 @contextmanager
@@ -163,7 +172,8 @@ def validar_clave(clave):
     return None
 
 
-def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email=None):
+def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email=None,
+                  supervisor=False):
     usuario = usuario.strip().lower()
     if not usuario or not nombre.strip():
         raise ValueError("Usuario y nombre son obligatorios.")
@@ -175,9 +185,9 @@ def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email
         if con.execute("SELECT 1 FROM usuarios WHERE usuario=?", (usuario,)).fetchone():
             raise ValueError("Ya existe el usuario %s." % usuario)
         con.execute("INSERT INTO usuarios (usuario, nombre, sal, clave, admin, activo, "
-                    "cambiar_clave, creado, email) VALUES (?,?,?,?,?,1,?,?,?)",
+                    "cambiar_clave, creado, email, supervisor) VALUES (?,?,?,?,?,1,?,?,?,?)",
                     (usuario, nombre.strip(), sal, _hash(clave, sal), int(admin),
-                     int(cambiar_clave), _ahora(), _email(email)))
+                     int(cambiar_clave), _ahora(), _email(email), int(supervisor)))
 
 
 def comprobar(usuario, clave):
@@ -202,9 +212,12 @@ def comprobar(usuario, clave):
         else:
             con.execute("UPDATE usuarios SET intentos_fallidos=0, bloqueado_hasta=NULL, "
                         "ultimo_acceso=? WHERE usuario=?", (_ahora(), usuario))
-            datos = {k: u[k] for k in ("usuario", "nombre", "admin", "cambiar_clave", "email")}
+            datos = {k: u[k] for k in ("usuario", "nombre", "admin", "supervisor",
+                                       "cambiar_clave", "email")}
     if error:                    # fuera del with: el contador de fallos ya esta guardado
+        registrar_actividad(usuario, "Acceso", "Acceso fallido", error)
         raise ValueError(error)
+    registrar_actividad(usuario, "Acceso", "Inicio de sesión")
     return datos
 
 
@@ -222,7 +235,8 @@ def cambiar_clave(usuario, nueva, obligar_cambio=False):
 def listar_usuarios():
     with _con() as con:
         return [dict(r) for r in con.execute(
-            "SELECT usuario, nombre, email, admin, activo, creado, ultimo_acceso FROM usuarios "
+            "SELECT usuario, nombre, email, admin, supervisor, activo, creado, ultimo_acceso "
+            "FROM usuarios "
             "ORDER BY nombre")]
 
 
@@ -236,7 +250,8 @@ def _email(email):
     return email
 
 
-def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None):
+def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None,
+                       supervisor=None):
     """Si el cambio dejara sin administradores activos, se deshace y da error. email="" lo
     borra; None lo deja como esta."""
     if nombre is not None and not nombre.strip():
@@ -250,11 +265,19 @@ def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None
             con.execute("UPDATE usuarios SET nombre=? WHERE usuario=?", (nombre.strip(), usuario))
         if admin is not None:
             con.execute("UPDATE usuarios SET admin=? WHERE usuario=?", (int(admin), usuario))
+        if supervisor is not None:
+            con.execute("UPDATE usuarios SET supervisor=? WHERE usuario=?",
+                        (int(supervisor), usuario))
         if activo is not None:
             con.execute("UPDATE usuarios SET activo=? WHERE usuario=?", (int(activo), usuario))
         if (admin is not None or activo is not None) and not con.execute(
                 "SELECT COUNT(*) FROM usuarios WHERE admin=1 AND activo=1").fetchone()[0]:
             raise ValueError("Tiene que quedar al menos un administrador activo.")
+
+
+def puede_supervisar(u):
+    """Los administradores y los supervisores ven el panel del equipo."""
+    return bool(u and (u.get("admin") or u.get("supervisor")))
 
 
 # sin caracteres que se confunden al dictarla o copiarla (l, I, 1, O, 0)
@@ -298,6 +321,15 @@ def guardar_contrato(cups, datos, usuario):
                     "VALUES (?,?,?,?,?)", (cups, txt, ahora, usuario,
                                            "modificada" if previa else "creada"))
     return True
+
+
+def listar_historial_contratos(desde=None, hasta=None):
+    """Altas y cambios de fichas (sin los datos) entre dos fechas AAAA-MM-DD, incluidas."""
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, cups, fecha, usuario, accion FROM contratos_historial "
+            "WHERE substr(fecha, 1, 10) BETWEEN ? AND ? ORDER BY id DESC",
+            (desde or "0000", hasta or "9999"))]
 
 
 def historial_contrato(cups):
@@ -424,6 +456,33 @@ def estudio_potencia(id_estudio):
     r = dict(r)
     r["datos"] = json.loads(r["datos"])
     return r
+
+
+# ------------------------------------------------------------------- actividad
+def registrar_actividad(usuario, modulo, accion, detalle=None):
+    """Anota un evento (acceso, pagina, consulta, descarga). Nunca rompe la pagina: si la base
+    de datos falla, el evento se pierde sin mas."""
+    try:
+        with _con(escribir=True) as con:
+            con.execute("INSERT INTO actividad (fecha, usuario, modulo, accion, detalle) "
+                        "VALUES (?,?,?,?,?)",
+                        (_ahora(), usuario, modulo, accion,
+                         None if detalle is None else str(detalle)[:300]))
+    except Exception:                                     # noqa: BLE001
+        pass
+
+
+def listar_actividad(desde=None, hasta=None, usuario=None, limite=20000):
+    """Eventos entre dos fechas AAAA-MM-DD (incluidas), del mas reciente al mas antiguo."""
+    sql = ("SELECT id, fecha, usuario, modulo, accion, detalle FROM actividad "
+           "WHERE substr(fecha, 1, 10) BETWEEN ? AND ?")
+    args = [desde or "0000", hasta or "9999"]
+    if usuario:
+        sql += " AND usuario = ?"
+        args.append(usuario)
+    with _con() as con:
+        return [dict(r) for r in con.execute(sql + " ORDER BY id DESC LIMIT ?",
+                                             args + [limite])]
 
 
 # ------------------------------------------------------------------- copias

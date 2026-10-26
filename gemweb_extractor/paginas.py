@@ -14,6 +14,8 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+import almacen
+import estilo
 import gemweb
 from gemweb_extractor.cliente import (
     GemwebError,
@@ -99,19 +101,17 @@ def mostrar_resultado(df: pd.DataFrame, nombre_descarga: str) -> None:
 
     c1, c2 = st.columns(2)
     with c1:
-        st.download_button(
-            "Descargar Excel",
-            data=df_to_excel_bytes(df),
-            file_name=f"{nombre_descarga}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        estilo.boton_descarga("API de Gemweb", st, "Descargar Excel",
+                              data=df_to_excel_bytes(df),
+                              file_name=f"{nombre_descarga}.xlsx",
+                              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                              )
     with c2:
-        st.download_button(
-            "Descargar CSV",
-            data=df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"{nombre_descarga}.csv",
-            mime="text/csv",
-        )
+        estilo.boton_descarga("API de Gemweb", st, "Descargar CSV",
+                              data=df.to_csv(index=False).encode("utf-8-sig"),
+                              file_name=f"{nombre_descarga}.csv",
+                              mime="text/csv",
+                              )
 
 
 
@@ -193,6 +193,13 @@ def ejecutar(nombre_operacion: str, fn, parser, archivo: str, alternativa: str =
             st.exception(e)
 
 
+def registrar_consulta(pagina, detalle=None):
+    """Anota la consulta a Gemweb en la actividad (panel de supervision)."""
+    almacen.registrar_actividad((st.session_state.get("usuario") or {}).get("usuario"),
+                                "API de Gemweb", "Consulta Gemweb",
+                                pagina + (": " + detalle if detalle else ""))
+
+
 # ===== INVENTARIO =====
 def pagina_inventario():
     cliente = obtener_cliente()
@@ -258,6 +265,7 @@ def pagina_inventario():
         limit = st.number_input("Límite de registros (0 = sin límite)", min_value=0, value=100)
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Inventario")
         ejecutar(
             "inventario",
             lambda: cliente.get_inventory(
@@ -287,6 +295,8 @@ def pagina_consumo_periodo():
     f_ini, f_fin = selector_fechas(default_dias_atras=30)
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Consumo por periodo",
+                           "suministro %d, %s a %s" % (id_sum, f_ini, f_fin))
         ejecutar(
             "consumo",
             lambda: cliente.get_consumption_by_period(
@@ -325,6 +335,8 @@ def pagina_telelecturas():
     f_ini, f_fin = selector_fechas(default_dias_atras=15)
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Telelecturas",
+                           "suministro %d, %s a %s" % (id_sum, f_ini, f_fin))
         with st.spinner("Consultando Gemweb..."):
             aviso = st.empty()
             try:
@@ -370,6 +382,8 @@ def pagina_coste_consumo():
     f_ini, f_fin = selector_fechas(default_dias_atras=365)
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Coste y consumo mensual",
+                           "suministro %d, %s a %s" % (id_sum, f_ini, f_fin))
         with st.spinner("Consultando Gemweb..."):
             try:
                 try:
@@ -430,19 +444,17 @@ def pagina_coste_consumo():
                     nombre_archivo = f"analisis_{tipo}_{id_sum}_{f_ini}_{f_fin}"
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.download_button(
-                            "Descargar Excel",
-                            data=df_to_excel_bytes(df_vista),
-                            file_name=f"{nombre_archivo}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
+                        estilo.boton_descarga("API de Gemweb", st, "Descargar Excel",
+                                              data=df_to_excel_bytes(df_vista),
+                                              file_name=f"{nombre_archivo}.xlsx",
+                                              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                              )
                     with c2:
-                        st.download_button(
-                            "Descargar CSV",
-                            data=df_vista.to_csv(index=False).encode("utf-8-sig"),
-                            file_name=f"{nombre_archivo}.csv",
-                            mime="text/csv",
-                        )
+                        estilo.boton_descarga("API de Gemweb", st, "Descargar CSV",
+                                              data=df_vista.to_csv(index=False).encode("utf-8-sig"),
+                                              file_name=f"{nombre_archivo}.csv",
+                                              mime="text/csv",
+                                              )
             except GemwebError as e:
                 error_api(e, "Prueba con el origen «factures»." if source == "telelectures"
                           else None)
@@ -478,6 +490,8 @@ def pagina_optimizacion():
     f_ini, f_fin = selector_fechas(default_dias_atras=365)
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Optimización de potencia",
+                           "suministro %d, %s a %s" % (id_sum, f_ini, f_fin))
         ejecutar(
             "optimizacion_potencia",
             lambda: cliente.get_power_optimization(
@@ -521,6 +535,7 @@ def pagina_incoherencias():
                     placeholder="vacío", key=f"pct_{tipo}"))
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Incoherencias en facturas", "%s %d" % (category, id_elemento))
         # El parser para incoherencias es más enrevesado; lo hacemos inline
         with st.spinner("Consultando Gemweb..."):
             try:
@@ -580,6 +595,7 @@ def pagina_factura_calculada():
         f_ini, f_fin = selector_fechas(*((0,) + mes_anterior()))
 
     if st.button("Ejecutar consulta", type="primary"):
+        registrar_consulta("Factura calculada", "suministro %d" % id_sum)
         with st.spinner("Generando factura..."):
             try:
                 xml = cliente.get_calculated_invoice(
@@ -672,6 +688,7 @@ def pagina_simulacion_contrato():
     campos, valores = campos_simulacion(precios_ene, precios_pot)
 
     if st.button("Simular", type="primary", disabled=not campos):
+        registrar_consulta("Simulación de contrato", "suministro %d" % id_sum)
         with st.spinner("Simulando en Gemweb..."):
             try:
                 xml = cliente.get_contract_simulation(
@@ -920,6 +937,8 @@ def descarga_consumo_periodos(cliente, cups_list):
     st.subheader("3. Ejecutar")
     clave = (tuple(cups_list), modo, ini, fin)
     if st.button("Descargar consumos", type="primary", disabled=not cups_list):
+        registrar_consulta("Descarga masiva por CUPS", "consumo por periodos, %d CUPS"
+                           % len(cups_list))
         st.session_state.consumo_periodos = dict(
             calcular_consumo_periodos(cliente, cups_list, modo, ini, fin), clave=clave)
     res = st.session_state.get("consumo_periodos")
@@ -1112,11 +1131,11 @@ def mostrar_consumo_periodos(res: dict) -> None:
                    "coincide con el mes natural, parte de la diferencia es solo de calendario. "
                    "Los meses con telelecturas incompletas no se comparan (ver «Nota»).")
         st.dataframe(df_dif, use_container_width=True, hide_index=True, height=350)
-    st.download_button("Descargar Excel",
-                       data=excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif),
-                       file_name=res["nombre"],
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       type="primary")
+    estilo.boton_descarga("API de Gemweb", st, "Descargar Excel",
+                          data=excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif),
+                          file_name=res["nombre"],
+                          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                          type="primary")
 
 
 def datos_de_cups(cups_list) -> pd.DataFrame:
@@ -1261,6 +1280,8 @@ def pagina_descarga_masiva():
     st.subheader("4. Ejecutar")
 
     if st.button("Descargar todo", type="primary", disabled=not cups_list):
+        registrar_consulta("Descarga masiva por CUPS",
+                           "%d CUPS, %s a %s" % (len(cups_list), f_ini, f_fin))
         # Inicializar caché de CUPS→ID si no existe (persiste durante la sesión)
         if "cache_cups_id" not in st.session_state:
             st.session_state.cache_cups_id = {}
@@ -1389,18 +1410,16 @@ def pagina_descarga_masiva():
 
             c1, c2 = st.columns(2)
             with c1:
-                st.download_button(
-                    "Descargar Excel completo",
-                    data=buffer.getvalue(),
-                    file_name=nombre,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+                estilo.boton_descarga("API de Gemweb", st, "Descargar Excel completo",
+                                      data=buffer.getvalue(),
+                                      file_name=nombre,
+                                      mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                      )
             with c2:
-                st.download_button(
-                    "Descargar CSV (solo datos)",
-                    data=df_final.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=nombre.replace(".xlsx", ".csv"),
-                    mime="text/csv",
-                )
+                estilo.boton_descarga("API de Gemweb", st, "Descargar CSV (solo datos)",
+                                      data=df_final.to_csv(index=False).encode("utf-8-sig"),
+                                      file_name=nombre.replace(".xlsx", ".csv"),
+                                      mime="text/csv",
+                                      )
         else:
             st.warning("No se ha descargado ningún dato. Revisa el resumen para ver los errores.")

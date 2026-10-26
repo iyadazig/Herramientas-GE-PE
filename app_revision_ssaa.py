@@ -60,6 +60,7 @@ with st.sidebar:
 
 estilo.cabecera("Revisión de servicios de ajuste en facturas",
                 "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)")
+estilo.registrar_pagina("Revisar factura", "Revisión de SSAA")
 
 # valores iniciales de los campos (los widgets no llevan value= para no chocar
 # con los que se rellenan al leer el PDF o al cargar una ficha)
@@ -628,8 +629,8 @@ if ss.get("resultados"):
                 [fila_resumen(l, r) for l, r, _d in validos], xlsx)
         b1, b2 = st.columns([1, 2])
         nombre = "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", ss.get("f_numero") or "")
-        b1.download_button("Descargar informe Excel", xlsx, nombre,
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        estilo.boton_descarga("Revisión de SSAA", b1, "Descargar informe Excel", xlsx, nombre,
+                              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         if ss.get("revision_id"):
             b2.caption("Revisión nº %d guardada en el historial (sección «Historial de "
                        "revisiones»), con su informe." % ss.revision_id)

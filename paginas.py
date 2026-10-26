@@ -107,7 +107,8 @@ def _formulario_clave(obligatorio=False):
 def barra_usuario():
     """Bloque de la barra lateral con el usuario conectado."""
     u = ss.usuario
-    st.markdown("**%s**%s" % (u["nombre"], " · administrador" if u["admin"] else ""))
+    rol = " · administrador" if u["admin"] else " · supervisor" if u.get("supervisor") else ""
+    st.markdown("**%s**%s" % (u["nombre"], rol))
     c1, c2 = st.columns(2)
     if c1.button("Cerrar sesión", use_container_width=True):
         for k in list(ss.keys()):
@@ -175,10 +176,10 @@ def pagina_historial():
         elegido = c1.selectbox("Informe de la revisión", list(opciones), format_func=opciones.get)
         datos, cups, factura = almacen.informe_revision(elegido)
         if datos:
-            c2.download_button("Descargar informe Excel", datos,
-                               "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", factura or elegido),
-                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
+            estilo.boton_descarga("Revisión de SSAA", c2, "Descargar informe Excel", datos,
+                                  "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", factura or elegido),
+                                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                  use_container_width=True)
 
 
 def estilo_num(v, d=2):
@@ -239,7 +240,8 @@ def pagina_usuarios():
     usuarios = almacen.listar_usuarios()
     st.dataframe(pd.DataFrame([{
         "Usuario": u["usuario"], "Nombre": u["nombre"], "Email": u.get("email") or "",
-        "Administrador": "Sí" if u["admin"] else "", "Activo": "Sí" if u["activo"] else "No",
+        "Administrador": "Sí" if u["admin"] else "",
+        "Supervisor": "Sí" if u.get("supervisor") else "", "Activo": "Sí" if u["activo"] else "No",
         "Alta": pd.to_datetime(u["creado"]),
         "Último acceso": pd.to_datetime(u["ultimo_acceso"]) if u["ultimo_acceso"] else None}
         for u in usuarios]), hide_index=True, use_container_width=True,
@@ -268,11 +270,12 @@ def pagina_usuarios():
                                   help="Sale en los documentos que genera (p. ej. la solicitud "
                                        "de ofertas).")
             admin = st.checkbox("Administrador (puede gestionar usuarios)")
+            supervisor = st.checkbox("Supervisor (ve el panel del trabajo de todo el equipo)")
             if st.form_submit_button("Dar de alta", type="primary"):
                 clave = almacen.clave_temporal()
                 try:
                     almacen.crear_usuario(usuario, nombre, clave, admin=admin, cambiar_clave=True,
-                                          email=email)
+                                          email=email, supervisor=supervisor)
                 except ValueError as e:
                     st.error(str(e))
                 else:
@@ -298,7 +301,7 @@ def pagina_usuarios():
                         ss.usuario["nombre"] = nuevo.strip()
                         ss.usuario["email"] = nuevo_email.strip().lower() or None
                     st.rerun()
-        b1, b2, b3 = st.columns(3)
+        b1, b2, b3, b4 = st.columns(4)
         if b1.button("Restablecer contraseña", use_container_width=True):
             clave = almacen.clave_temporal()
             almacen.cambiar_clave(elegido, clave, obligar_cambio=True)
@@ -312,6 +315,12 @@ def pagina_usuarios():
                 st.rerun()
             if b3.button("Quitar admin" if u["admin"] else "Hacer admin", use_container_width=True):
                 almacen.actualizar_usuario(elegido, admin=not u["admin"])
+                st.rerun()
+            if b4.button("Quitar supervisor" if u.get("supervisor") else "Hacer supervisor",
+                         use_container_width=True):
+                almacen.actualizar_usuario(elegido, supervisor=not u.get("supervisor"))
+                if elegido == ss.usuario["usuario"]:
+                    ss.usuario["supervisor"] = int(not u.get("supervisor"))
                 st.rerun()
         except ValueError as e:
             st.error(str(e))

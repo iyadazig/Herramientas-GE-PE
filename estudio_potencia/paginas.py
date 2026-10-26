@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 
 import almacen
+import estilo
 import gemweb
 from estudio_potencia import servicio as sv
 from gemweb_extractor import paginas as gw
@@ -739,8 +740,9 @@ def _informe_y_guardar(pot, datos, res, seleccion, precios):
             pot["pdf"] = _generar_pdf(pot, datos, res, anexos, seleccion, precios)
             pot["pdf_firma"] = firma
         st.rerun()
-    c2.download_button("Descargar el PDF", data=pot["pdf"] or b"", file_name=nombre,
-                       mime="application/pdf", disabled=pot["pdf"] is None)
+    estilo.boton_descarga("Estudio de potencia", c2, "Descargar el PDF",
+                          data=pot["pdf"] or b"", file_name=nombre,
+                          mime="application/pdf", disabled=pot["pdf"] is None)
     if c3.button("Guardar estudio",
                  help="Guarda el estudio (datos, curvas, propuestas y PDF) en el ordenador de la "
                       "plataforma. Se consulta en «Estudios guardados»."):
@@ -857,10 +859,11 @@ def pagina_estudios_guardados():
         st.code((estudio["cups"] or "").replace(", ", "\n"), language=None)
     datos = estudio["datos"]
     b1, b2 = st.columns(2)
-    b1.download_button("Descargar el PDF", data=estudio["pdf"] or b"",
-                       file_name=sv.nombre_pdf(datos.get("datos", {}),
-                                               datos.get("tipo") == MULTIPUNTO),
-                       mime="application/pdf", type="primary", disabled=not estudio["pdf"])
+    estilo.boton_descarga("Estudio de potencia", b1, "Descargar el PDF",
+                          data=estudio["pdf"] or b"",
+                          file_name=sv.nombre_pdf(datos.get("datos", {}),
+                          datos.get("tipo") == MULTIPUNTO),
+                          mime="application/pdf", type="primary", disabled=not estudio["pdf"])
     if b2.button("Cargar en el formulario",
                  help="Abre «Nuevo estudio» con este estudio para cambiar potencias o "
                       "propuestas. Al guardar se crea uno nuevo."):

@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 
 import almacen
+import estilo
 from gemweb_extractor import paginas as gw
 from ofertas import correo
 from ofertas import solicitud as so
@@ -544,10 +545,11 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     nombre = "solicitud_ofertas_%s.xlsx" % (re.sub(r"[^\w-]", "_", ref) if ref else
                                              date.today().strftime("%d%m%Y"))
     b1, b2, b3 = st.columns(3)
-    b1.download_button("Descargar solicitud de ofertas", data=excel, file_name=nombre,
-                       disabled=not listo,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       type="primary")
+    estilo.boton_descarga("Solicitud de ofertas", b1, "Descargar solicitud de ofertas",
+                          data=excel, file_name=nombre,
+                          disabled=not listo,
+                          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                          type="primary")
     if b2.button("Texto para el correo a las comercializadoras", disabled=not listo):
         st.session_state.sol_ver_correo = True
     if b3.button("Guardar solicitud", disabled=not listo,
@@ -658,12 +660,13 @@ def pagina_solicitudes_guardadas():
         st.code(sol["cups"].replace(", ", "\n"), language=None)
 
     b1, b2 = st.columns(2)
-    b1.download_button("Descargar Excel", data=sol["excel"] or b"",
-                       file_name="solicitud_ofertas_%d%s.xlsx" % (
-                           sol["id"], "_" + re.sub(r"[^\w-]", "_", sol["ref"]) if sol["ref"]
-                           else ""),
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       type="primary", disabled=not sol["excel"])
+    estilo.boton_descarga("Solicitud de ofertas", b1, "Descargar Excel",
+                          data=sol["excel"] or b"",
+                          file_name="solicitud_ofertas_%d%s.xlsx" % (
+                          sol["id"], "_" + re.sub(r"[^\w-]", "_", sol["ref"]) if sol["ref"]
+                          else ""),
+                          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                          type="primary", disabled=not sol["excel"])
     if b2.button("Cargar en el formulario",
                  help="Abre «Crear nueva solicitud» con esta solicitud para corregirla o "
                       "reutilizarla. Al guardar se crea una nueva."):

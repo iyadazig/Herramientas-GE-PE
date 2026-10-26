@@ -15,11 +15,13 @@ import functools
 
 import streamlit as st
 
+import almacen
 import estilo
 import paginas
 from gemweb_extractor import paginas as gw
 from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
+from supervision import paginas as supervision
 
 st.set_page_config(page_title="Herramientas GE&PE",
                    page_icon=str(estilo.ICONO) if estilo.ICONO.exists() else None,
@@ -38,14 +40,16 @@ with st.sidebar:
                 st.markdown("**%s**: %s" % (_titulo, _texto))
 
 
-def _pagina(funcion, titulo, subtitulo, ruta):
+def _pagina(funcion, titulo, subtitulo, ruta, modulo):
     """Pagina de funcion con la cabecera corporativa comun. Si la API de Gemweb tiene un fallo
-    conocido en esa opcion, se marca en el menu y se avisa al abrirla."""
+    conocido en esa opcion, se marca en el menu y se avisa al abrirla. Al abrirla queda
+    anotado en la actividad (panel de supervision)."""
     aviso = gw.AVISOS_GEMWEB.get(titulo)
 
     @functools.wraps(funcion)
     def mostrar():
         estilo.cabecera(titulo, subtitulo)
+        estilo.registrar_pagina(titulo, modulo)
         if aviso:
             st.warning("Fallo de la API de Gemweb: " + aviso, icon=":material/warning:")
         funcion()
@@ -55,15 +59,19 @@ def _pagina(funcion, titulo, subtitulo, ruta):
 
 SUB_SSAA = "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)"
 SUB_GEMWEB = "Consultas a la API de Gemweb"
+SSAA, GEMWEB, OFERTAS, POTENCIA, SUPERVISION, ADMIN = (
+    "Revisión de SSAA", "API de Gemweb", "Solicitud de ofertas", "Estudio de potencia",
+    "Supervisión", "Administración")
 menu = {
-    "Revisión de SSAA": [
+    SSAA: [
         st.Page("app_revision_ssaa.py", title="Revisar factura", url_path="revisar",
                 default=True),
-        _pagina(paginas.pagina_historial, "Historial de revisiones", SUB_SSAA, "historial"),
-        _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas"),
+        _pagina(paginas.pagina_historial, "Historial de revisiones", SUB_SSAA, "historial",
+                SSAA),
+        _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas", SSAA),
     ],
-    "API de Gemweb": [
-        _pagina(funcion, titulo, SUB_GEMWEB, ruta) for funcion, titulo, ruta in (
+    GEMWEB: [
+        _pagina(funcion, titulo, SUB_GEMWEB, ruta, GEMWEB) for funcion, titulo, ruta in (
             (gw.pagina_inventario, "Inventario", "gemweb-inventario"),
             (gw.pagina_consumo_periodo, "Consumo por periodo", "gemweb-consumo-periodo"),
             (gw.pagina_telelecturas, "Telelecturas", "gemweb-telelecturas"),
@@ -75,29 +83,36 @@ menu = {
             (gw.pagina_simulacion_contrato, "Simulación de contrato",
              "gemweb-simulacion-contrato"))
     ],
-    "Solicitud de ofertas": [
+    OFERTAS: [
         _pagina(ofertas.pagina_solicitud_ofertas, "Crear nueva solicitud",
-                "Excel de solicitud de ofertas con los datos de Gemweb", "solicitud-ofertas"),
+                "Excel de solicitud de ofertas con los datos de Gemweb", "solicitud-ofertas",
+                OFERTAS),
         _pagina(ofertas.pagina_solicitudes_guardadas, "Solicitudes guardadas",
                 "Solicitudes de ofertas guardadas por el equipo y su seguimiento",
-                "solicitudes-guardadas"),
+                "solicitudes-guardadas", OFERTAS),
     ],
-    "Estudio de potencia": [
+    POTENCIA: [
         _pagina(potencia.pagina_nuevo_estudio, "Nuevo estudio",
                 "Optimización de la potencia contratada (6.1TD y 3.0TD) con la curva de carga",
-                "estudio-potencia"),
+                "estudio-potencia", POTENCIA),
         _pagina(potencia.pagina_estudios_guardados, "Estudios guardados",
-                "Estudios de potencia guardados por el equipo", "estudios-potencia-guardados"),
+                "Estudios de potencia guardados por el equipo", "estudios-potencia-guardados",
+                POTENCIA),
     ],
 }
-ofertas.PAGINA_FORMULARIO = menu["Solicitud de ofertas"][0]   # para «Cargar en el formulario»
-potencia.PAGINA_FORMULARIO = menu["Estudio de potencia"][0]
+ofertas.PAGINA_FORMULARIO = menu[OFERTAS][0]   # para «Cargar en el formulario»
+potencia.PAGINA_FORMULARIO = menu[POTENCIA][0]
+if almacen.puede_supervisar(usuario):
+    menu[SUPERVISION] = [
+        _pagina(supervision.pagina_panel, "Panel del equipo",
+                "Trabajo guardado y actividad de cada usuario", "supervision", SUPERVISION),
+    ]
 if usuario["admin"]:
-    menu["Administración"] = [
+    menu[ADMIN] = [
         _pagina(paginas.pagina_usuarios, "Usuarios", "Altas, contraseñas y permisos",
-                "usuarios"),
+                "usuarios", ADMIN),
         _pagina(paginas.pagina_credenciales, "Credenciales de Gemweb",
-                "Acceso a la API de Gemweb para toda la plataforma", "credenciales"),
+                "Acceso a la API de Gemweb para toda la plataforma", "credenciales", ADMIN),
     ]
 
 st.navigation(menu, expanded=True).run()

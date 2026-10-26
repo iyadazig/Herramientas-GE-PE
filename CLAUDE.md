@@ -61,9 +61,31 @@ pago. La factura y la curva no salen del PC.
     sus curvas ya leídas en pickle comprimido y PDF), solo en local.
   - Pruebas en `tests/test_potencia.py` (las del programa) y `tests/test_estudio_potencia.py`,
     con curvas sintéticas de `tests/generador_curvas.py`.
+- **Supervisión** (`supervision/`, solo supervisores y administradores,
+  `almacen.puede_supervisar`): «Panel del equipo», de solo consulta.
+  - Filtros: periodo, usuarios y módulos.
+  - Indicadores frente al periodo anterior de la misma duración.
+  - Resumen por usuario con gráficos por módulo y por mes.
+  - Tabla única del trabajo guardado: revisiones, altas y cambios de fichas, solicitudes y su
+    seguimiento, y estudios. Al pulsar una fila se abre y se descarga su informe, Excel o PDF.
+  - Pestaña de actividad.
+  - Exportación a Excel con tres hojas (Resumen, Trabajo y Actividad).
+  - La lógica está en `supervision/datos.py`, sin Streamlit. Pruebas en
+    `tests/test_supervision.py`.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
-Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`.
+Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`, que
+además anota en la actividad que se ha abierto la página (una vez por sesión).
+
+**Registro de actividad** (tabla `actividad`). Recoge lo que no queda en otra tabla:
+- inicios de sesión y accesos fallidos, en `almacen.comprobar`;
+- páginas abiertas;
+- consultas a Gemweb, con `registrar_consulta` en `gemweb_extractor/paginas.py`;
+- descargas.
+
+**Toda descarga nueva debe usar `estilo.boton_descarga(modulo, contenedor, ...)`** en lugar de
+`st.download_button`, para que quede anotada. El detalle es solo texto breve (nombre de
+fichero, nº de suministro, periodo). Empezó a registrarse en octubre de 2026.
 Arranque: `python lanzador.py --servidor` (puerto 8501) o `streamlit run inicio.py`.
 
 ## Uso en equipo (servidor)
@@ -83,7 +105,8 @@ copia diaria de la base de datos).
 - `paginas.py`: inicio de sesión (la primera vez crea el administrador), cambio de
   contraseña obligatorio con la provisional, Historial de revisiones, Fichas de contrato
   (con sus cambios) y Usuarios (solo administradores: altas con contraseña provisional,
-  restablecer, desactivar, admin).
+  restablecer, desactivar, admin, supervisor). El rol supervisor (columna `supervisor`,
+  añadida por `_migrar`) solo da acceso al panel del equipo.
 - Las credenciales de Gemweb solo las ve y cambia un administrador.
 - La base de datos y sus copias tienen datos de clientes: no van a git (`*.db`).
 

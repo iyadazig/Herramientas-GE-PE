@@ -8,6 +8,7 @@ import base64
 
 import streamlit as st
 
+import almacen
 import config
 
 GRANATE = "#970000"          # rojo del logo
@@ -30,7 +31,7 @@ COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
 
 MODULOS_MENU = {"Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
                 "Solicitud de ofertas": "ofertas", "Estudio de potencia": "potencia",
-                "Administración": "admin"}
+                "Supervisión": "supervision", "Administración": "admin"}
 LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
 
 
@@ -55,6 +56,7 @@ ICONOS_MODULO = {
     "ofertas": _icono("<path d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/>"
                       "<path d='M14 3v5h5M9 13h6M9 17h6'/>"),
     "potencia": _icono("<path d='M13 2L4 14h7l-1 8 9-12h-7z'/>"),
+    "supervision": _icono("<path d='M3 3v18h18'/><path d='M8 17v-5M12 17V8M16 17v-8M20 17v-3'/>"),
     "admin": _icono("<path d='M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'/>"
                     "<path d='M9 12l2 2 4-4'/>"),
 }
@@ -151,6 +153,7 @@ h3, .stMarkdown h3 {
 [data-gp-modulo="gemweb"]::before { background-image: url("%(ico_gemweb)s"); }
 [data-gp-modulo="ofertas"]::before { background-image: url("%(ico_ofertas)s"); }
 [data-gp-modulo="potencia"]::before { background-image: url("%(ico_potencia)s"); }
+[data-gp-modulo="supervision"]::before { background-image: url("%(ico_supervision)s"); }
 [data-gp-modulo="admin"]::before { background-image: url("%(ico_admin)s"); }
 [data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
 [data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }
@@ -324,6 +327,27 @@ def cabecera(titulo, subtitulo=""):
         if LOGO_PEQ.exists() else ""
     st.markdown('<div class="gp-cabecera">%s<div><h1>%s</h1><p>%s</p></div></div>'
                 % (logo, titulo, subtitulo), unsafe_allow_html=True)
+
+
+def _usuario():
+    return (st.session_state.get("usuario") or {}).get("usuario")
+
+
+def registrar_pagina(titulo, modulo):
+    """Anota en la actividad que el usuario ha abierto una pagina: una vez por sesion y pagina,
+    no en cada recarga."""
+    vistas = st.session_state.setdefault("_paginas_registradas", set())
+    if titulo not in vistas:
+        vistas.add(titulo)
+        almacen.registrar_actividad(_usuario(), modulo, "Abrir página", titulo)
+
+
+def boton_descarga(modulo, contenedor, etiqueta, data, file_name, mime=None, **kw):
+    """contenedor.download_button (st o una columna) que anota la descarga en la actividad,
+    para el panel de supervision. Los demas argumentos, como los de st.download_button."""
+    return contenedor.download_button(
+        etiqueta, data, file_name, mime, on_click=almacen.registrar_actividad,
+        args=(_usuario(), modulo, "Descarga", file_name), **kw)
 
 
 def seccion(numero, titulo, subtitulo=""):
