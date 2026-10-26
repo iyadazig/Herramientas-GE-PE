@@ -42,10 +42,9 @@ pago. La factura y la curva no salen del PC.
     no se pisa una celda cambiada después de la búsqueda. Busca con el botón «Buscar cambios
     en Gemweb» y a las 7:00 y a las 12:00 (tarea del servidor, deja la propuesta en
     `sgc_ajustes`). Las facturas cuentan en los meses que cubren en más de la mitad de sus
-    días (sin anuladas, simuladas, abonos ni complementarias): vacío o «Sin fra» → «Recibida»
-    (sin verificar) o «Pdte inf» (verificada); «Recibida» → «Pdte inf». Nunca retrocede ni
-    toca «Inf enviado», «Inf no enviado», «Temporal» ni «Cadencia». Solo suministros «Sgto. y
-    Control». Cambios propuestos y facturas encontradas se ven y se descargan en Excel. Otro
+    días (sin anuladas, simuladas, abonos ni complementarias). **Único cambio que se recoge:**
+    el cuadro dice que no hay factura (vacío o «Sin fra») y en Gemweb sí la hay → «Recibida»;
+    ningún otro estado se toca. Solo suministros «Sgto. y Control». Cambios propuestos y facturas encontradas se ven y se descargan en Excel. Otro
     botón saca los suministros del cuadro cuyo CUPS no está en Gemweb (es normal que haya).
     `--aplicar` aplica todo desde la línea de comandos.
   - `paginas.py` (cuadro, retraso, contactos de envío, contactos y claves de clientes, SMAC,

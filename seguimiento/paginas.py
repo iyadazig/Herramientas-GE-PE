@@ -236,10 +236,10 @@ def _gemweb():
     with st.expander(titulo, expanded=bool(pendientes) or bool(ss.get("sgc_gw_abierto"))):
         st.caption("Comprueba que las facturas de Gemweb con periodo de este año estén señaladas "
                    "en el cuadro y propone los cambios; no se aplica nada hasta que los aceptes. "
-                   "Factura subida: «Sin fra» o vacío pasa a «Recibida»; verificada: a «Pdte "
-                   "inf». Nunca retrocede un estado ni toca «Inf enviado», «Inf no enviado», "
-                   "«Temporal» ni «Cadencia». Solo suministros «Sgto. y Control». También se "
-                   "busca solo a las 7:00 y a las 12:00.")
+                   "Solo se recoge un caso: el cuadro dice que no hay factura (mes vacío o «Sin "
+                   "fra») y en Gemweb sí la hay, que pasa a «Recibida». Ningún otro estado se "
+                   "toca. Solo suministros «Sgto. y Control». También se busca solo a las 7:00 y "
+                   "a las 12:00.")
         c1, c2 = st.columns(2)
         if c1.button("Buscar cambios en Gemweb", type="primary", icon=":material/sync:",
                      key="sgc_gw", use_container_width=True):

@@ -16,10 +16,8 @@ las 12:00 (tarea programada del servidor), que deja la propuesta preparada:
    se listan pero no cuentan.
 2. Cada factura cuenta en los meses del año que cubre en mas de la mitad de sus dias (una
    bimestral, en dos meses).
-3. Regla, que nunca hace retroceder un estado:
-     vacio o «Sin fra»  -> «Recibida» (factura sin verificar) o «Pdte inf» (verificada)
-     «Recibida»         -> «Pdte inf» si esta verificada
-   «Inf enviado», «Inf no enviado», «Temporal», «Cadencia» y cualquier otro no se tocan.
+3. Unico cambio que se recoge: el cuadro dice que no hay factura (mes vacio o «Sin fra») y
+   en Gemweb si la hay -> «Recibida». Cualquier otro estado no se toca.
 Solo los suministros activos «Sgto. y Control» del cuadro cuyo CUPS esta en Gemweb.
 
 Aparte, cups_fuera_de_gemweb() da los suministros del cuadro cuyo CUPS no esta en Gemweb.
@@ -110,13 +108,9 @@ def facturas_gemweb(cliente, inicio, cups=None):
     return salida
 
 
-def nuevo_estado(actual, verificada):
-    """Estado que corresponde con una factura (None si no cambia)."""
-    if actual in (None, "", C.SIN_FRA):
-        return C.PDTE_INF if verificada else C.RECIBIDA
-    if actual == C.RECIBIDA and verificada:
-        return C.PDTE_INF
-    return None
+def nuevo_estado(actual):
+    """«Recibida» si el cuadro dice que no hay factura (vacio o «Sin fra»); None si no."""
+    return C.RECIBIDA if actual in (None, "", C.SIN_FRA) else None
 
 
 def _es_syc(s):
@@ -136,13 +130,12 @@ def revisar(facturas, por_cups, estados, inicio):
                 continue
             for s in por_cups.get(f["cups"], []):
                 clave = (s["id"], anio, mes)
-                if _es_syc(s) and (clave not in mejor or (
-                        f["verificada"] and not mejor[clave]["verificada"])):
+                if _es_syc(s) and clave not in mejor:
                     mejor[clave] = f
     cambios, nuevos = [], {}
     for (id_, anio, mes), f in sorted(mejor.items(), key=lambda x: x[0]):
         antes = (estados.get((id_, anio, mes)) or {}).get("estado")
-        despues = nuevo_estado(antes, f["verificada"])
+        despues = nuevo_estado(antes)
         if despues:
             s = next(x for x in por_cups[f["cups"]] if x["id"] == id_)
             cambios.append({"id_suministro": id_, "cups": f["cups"],
@@ -210,7 +203,13 @@ def guardar_propuesta(resultado):
 def propuesta():
     """La ultima busqueda guardada (con los cambios aun sin aplicar) o None."""
     texto = almacen.ajuste_sgc(PROPUESTA)
-    return json.loads(texto) if texto else None
+    if not texto:
+        return None
+    guardada = json.loads(texto)
+    # una busqueda guardada con reglas anteriores no puede aplicar otros cambios
+    guardada["cambios"] = [c for c in guardada["cambios"]
+                           if nuevo_estado(c.get("antes")) == c.get("despues")]
+    return guardada
 
 
 def aplicar(cambios, usuario):
