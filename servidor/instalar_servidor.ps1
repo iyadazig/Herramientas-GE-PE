@@ -10,8 +10,9 @@ Crea (o sustituye):
   1. Regla del cortafuegos: puerto de la app solo desde las subredes indicadas (oficina y VPN).
   2. Tarea "Herramientas GEYPE - servidor": arranca la plataforma al encender el servidor y la reinicia
      si se cae.
-  3. Tareas de datos: descarga diaria del PVPC, mensual de componentes de ESIOS y copia de
-     seguridad diaria de la base de datos.
+  3. Tareas de datos: descarga diaria del PVPC, mensual de componentes de ESIOS, copia de
+     seguridad diaria de la base de datos y estados del cuadro de seguimiento desde Gemweb
+     (a las 7:00 y a las 12:00).
 No toca datos ni credenciales.
 #>
 param(
@@ -87,6 +88,9 @@ Registrar "Herramientas GEYPE - descarga PVPC diaria" $Python "descarga_PVPC_dia
 $semanal = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Monday -At "09:00"
 Registrar "Herramientas GEYPE - descarga componentes ESIOS" $Python "descarga_componentes_precio_excel.py" `
     $CarpetaEsios $semanal $false
+$dosVeces = @((New-ScheduledTaskTrigger -Daily -At "07:00"), (New-ScheduledTaskTrigger -Daily -At "12:00"))
+Registrar "Herramientas GEYPE - estados de seguimiento desde Gemweb" $Python "-m seguimiento.estados_gemweb" `
+    $CarpetaApp $dosVeces $false
 Registrar "Herramientas GEYPE - copia de seguridad" $Python "almacen.py --copia `"$CarpetaCopias`" --conservar 30" `
     $CarpetaApp (New-ScheduledTaskTrigger -Daily -At "23:00") $false
 

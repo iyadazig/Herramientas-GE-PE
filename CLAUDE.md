@@ -2,6 +2,7 @@
 
 Plataforma web interna de GE&PE (Streamlit) para el equipo, con acceso por usuario y
 contraseña. Secciones:
+- **Seguimiento y Control** (primer módulo; su cuadro es la página de inicio): ver abajo.
 - **Revisión de SSAA**: revisa el concepto de servicios de ajuste de facturas eléctricas
   (lee la factura en PDF o a mano, aplica la cláusula del contrato con los datos de ESIOS y
   dice si lo facturado es correcto). Viene del proyecto `..\Comprobación_SSAA_facturas`.
@@ -14,6 +15,43 @@ pago. La factura y la curva no salen del PC.
 
 `inicio.py` es la entrada única: configuración de página, estilo, acceso
 (`paginas.acceso`), barra de usuario y menú `st.navigation` por grupos:
+- **Seguimiento y Control** (`seguimiento/`, primer grupo del menú; «Cuadro de seguimiento»
+  es la página por defecto). Sustituye al Excel combinado de cuadros de seguimiento, al Excel de
+  contactos de envío y a los programas de escritorio de envío de informes y de avisos de
+  incidencias. **Todos sus datos son confidenciales**: solo en la base de datos local, nunca en
+  el código ni en GitHub; las pruebas usan un Excel ficticio (`tests/test_seguimiento.py`).
+  - `columnas.py`: columnas de cada tabla (clave, títulos del Excel, tipo, lista) y estados
+    con sus colores. Los datos de cada suministro se guardan en JSON con esas claves.
+  - `datos.py`: importar los Excel (columnas por título, meses por la fecha de la cabecera; lo
+    que no encaja va a «Otros» con su título), DataFrame del cuadro por año, guardar solo lo
+    cambiado, bajas, marcar «Inf enviado» y exportar a Excel. Los textos se guardan tal cual
+    (solo sin espacios en los extremos): los envíos cruzan por texto exacto.
+  - `retraso.py`: la macro `GenerarDashboardRetraso` del Excel de retraso (bloques naturales
+    por cadencia, control el día 1 de M+2, solo «Sgto. y Control»). Comprobado con los datos
+    reales: mismos bloques y resultados que la macro.
+  - `informes.py` e `incidencias.py`: la lógica de los dos programas de envío, igual que ellos
+    (comprobado con datos reales: mismas filas del modo prueba). Contactos desde «Contactos de
+    envío»; técnicos y auxiliares con su email en la tabla Equipo (Administración).
+  - `correo.py`: envío desde la cuenta de Microsoft 365 de quien envía (Microsoft Graph,
+    permisos delegados, código de dispositivo, sin secreto; refresh token cifrado con DPAPI en
+    `sgc_outlook`). Registro de la aplicación: `servidor/GUIA_OUTLOOK.md`; sus IDs se guardan en
+    Administración → «Seguimiento y Control» → Outlook.
+  - `estados_gemweb.py`: a las 7:00 y a las 12:00 (tarea del servidor) y con un botón del
+    cuadro. Facturas de Gemweb de los 3 últimos meses (sin anuladas, simuladas, abonos ni
+    complementarias), en los meses que cubren en más de la mitad de sus días: vacío o «Sin fra»
+    → «Recibida» (sin verificar) o «Pdte inf» (verificada); «Recibida» → «Pdte inf». Nunca
+    retrocede ni toca «Inf enviado», «Inf no enviado», «Temporal» ni «Cadencia». Solo
+    suministros «Sgto. y Control». `--simular` dice qué cambiaría.
+  - `paginas.py` (cuadro, retraso, contactos de envío, contactos y claves de clientes, SMAC,
+    telemedida, bajas y administración) y `envios.py` (enviar informes, avisos de incidencias,
+    historial y conexión con Outlook). Envíos con modo prueba por defecto; tras enviar informes
+    se marca «Inf enviado» en los meses del periodo que estaban en «Recibida», «Pdte inf» o
+    «Inf no enviado».
+  - Tablas `sgc_*` de `almacen` (suministros, estados por año y mes, tablas auxiliares, listas,
+    equipo, ajustes, envíos, cuentas de Outlook y cambios de Gemweb).
+  - **Mejoras pendientes** (aplazadas por la usuaria; recordárselas si pregunta por mejoras):
+    historial de cambios del cuadro (quién, cuándo y valor anterior) y avisos de incidencias con
+    las facturas directamente de la API de Gemweb, sin el Excel y recordando las ya avisadas.
 - **Revisión de SSAA**: `app_revision_ssaa.py` (página de fichero, por defecto),
   `paginas.pagina_historial`, `paginas.pagina_fichas`.
 - **API de Gemweb**: `gemweb_extractor/paginas.py`, convertido de `API_Gemweb/app.py` (una función por
@@ -84,7 +122,9 @@ pago. La factura y la curva no salen del PC.
     página, porque lo que registra el iframe de `components.html` deja de funcionar cuando
     Streamlit lo sustituye.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
-  `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
+  `paginas.pagina_credenciales` (credenciales de Gemweb comunes) y
+  `seguimiento.paginas.pagina_admin` (importar los Excel de seguimiento, equipo, listas de
+  valores y los IDs de la aplicación de Outlook).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`, que
 además anota en la actividad que se ha abierto la página (una vez por sesión).
 

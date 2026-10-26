@@ -38,3 +38,6 @@ esios_token.txt
 credenciales*
 *.key
 .env
+
+# registros de las tareas (pueden llevar CUPS)
+*.log

@@ -189,6 +189,7 @@ def pagina_cuadro():
             st.success("Guardado: %d suministros, %d celdas de meses y %d bajas." % (n, e, b))
             st.rerun()
 
+    _gemweb()
     with st.expander("Leyenda de estados"):
         st.dataframe(pd.DataFrame(almacen.listar_sgc_listas().get("estados", [])).rename(
             columns={"valor": "Estado", "descripcion": "Descripción", "color": "Color"}).style.map(
@@ -196,6 +197,37 @@ def pagina_cuadro():
             hide_index=True)
     _boton_excel("Seguimiento_y_Control_%d.xlsx" % anio, lambda: D.excel_completo(anio),
                  "sgc_excel")
+
+
+def _gemweb():
+    """Boton para actualizar los estados con Gemweb y ultimos cambios automaticos."""
+    from seguimiento import estados_gemweb
+    with st.expander("Estados desde Gemweb (automático a las 7:00 y a las 12:00)"):
+        st.caption("Factura subida a Gemweb: «Sin fra» o vacío pasa a «Recibida»; verificada: "
+                   "pasa a «Pdte inf». Nunca retrocede un estado ni toca «Inf enviado», «Inf no "
+                   "enviado», «Temporal» ni «Cadencia». Solo suministros «Sgto. y Control».")
+        if st.button("Actualizar ahora desde Gemweb", icon=":material/sync:", key="sgc_gw"):
+            with st.spinner("Consultando las facturas de Gemweb…"):
+                try:
+                    cambios = estados_gemweb.actualizar()
+                except Exception as e:                                # noqa: BLE001
+                    st.error("No se ha podido actualizar: %s" % e)
+                else:
+                    almacen.registrar_actividad(_usuario(), MODULO, "Estados desde Gemweb",
+                                                "%d cambios (a mano)" % len(cambios))
+                    st.success("%d estados actualizados." % len(cambios))
+        ultimos = almacen.listar_cambios_gemweb(500)
+        if ultimos:
+            df = pd.DataFrame(ultimos)
+            df["Mes"] = [C.columna_mes(a, m) for a, m in zip(df["anio"], df["mes"])]
+            df["fecha"] = pd.to_datetime(df["fecha"])
+            st.dataframe(df[["fecha", "cups", "denominacion", "Mes", "antes", "despues",
+                             "factura"]].rename(columns={
+                                 "fecha": "Fecha", "cups": "CUPS",
+                                 "denominacion": "Denominación suministro", "antes": "Antes",
+                                 "despues": "Después", "factura": "Factura"}),
+                         hide_index=True, use_container_width=True, height=300, column_config={
+                             "Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
 
 
 # ------------------------------------------------------------------- retraso
