@@ -17,6 +17,10 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
                         suministros con sus curvas ya leidas (comprimidos) y el PDF
   actividad             lo que no se guarda en otra tabla: accesos, paginas abiertas, consultas
                         a Gemweb y descargas (quien, cuando, modulo, accion, detalle breve)
+  sgc_*                 Seguimiento y Control: suministros del cuadro (datos en JSON), estados
+                        de cada mes, tablas auxiliares (contactos, claves, SMAC, telemedida,
+                        contactos de envio), listas de valores, equipo, ajustes, envios,
+                        cuentas de Outlook conectadas y cambios automaticos de Gemweb
 
 SQLite en modo WAL admite varios compañeros a la vez desde la misma app (servidor).
 La primera vez se importan las fichas de contratos_ssaa.json si existe.
@@ -72,6 +76,35 @@ CREATE TABLE IF NOT EXISTS actividad (
     id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
     modulo TEXT, accion TEXT NOT NULL, detalle TEXT);
 CREATE INDEX IF NOT EXISTS ix_act_fecha ON actividad(fecha);
+CREATE TABLE IF NOT EXISTS sgc_suministros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, cups TEXT, baja INTEGER NOT NULL DEFAULT 0,
+    datos TEXT NOT NULL, modificado TEXT NOT NULL, usuario TEXT);
+CREATE INDEX IF NOT EXISTS ix_sgc_cups ON sgc_suministros(cups);
+CREATE TABLE IF NOT EXISTS sgc_estados (
+    id_suministro INTEGER NOT NULL, anio INTEGER NOT NULL, mes INTEGER NOT NULL,
+    estado TEXT, obs TEXT, origen TEXT, modificado TEXT NOT NULL, usuario TEXT,
+    PRIMARY KEY (id_suministro, anio, mes));
+CREATE TABLE IF NOT EXISTS sgc_filas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, tabla TEXT NOT NULL, datos TEXT NOT NULL,
+    modificado TEXT NOT NULL, usuario TEXT);
+CREATE INDEX IF NOT EXISTS ix_sgc_filas ON sgc_filas(tabla);
+CREATE TABLE IF NOT EXISTS sgc_listas (
+    lista TEXT NOT NULL, orden INTEGER NOT NULL, valor TEXT NOT NULL, descripcion TEXT,
+    color TEXT, PRIMARY KEY (lista, valor));
+CREATE TABLE IF NOT EXISTS sgc_equipo (
+    nombre TEXT PRIMARY KEY, tecnico INTEGER NOT NULL DEFAULT 0,
+    auxiliar INTEGER NOT NULL DEFAULT 0, email TEXT, usuario TEXT);
+CREATE TABLE IF NOT EXISTS sgc_ajustes (clave TEXT PRIMARY KEY, valor TEXT);
+CREATE TABLE IF NOT EXISTS sgc_envios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
+    cuenta TEXT, tipo TEXT NOT NULL, auxiliar TEXT, cliente TEXT, para TEXT, cc TEXT,
+    asunto TEXT, detalle TEXT, prueba INTEGER NOT NULL DEFAULT 0, resultado TEXT);
+CREATE TABLE IF NOT EXISTS sgc_outlook (
+    usuario TEXT PRIMARY KEY, cuenta TEXT, token TEXT NOT NULL, conectado TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sgc_cambios_gemweb (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, id_suministro INTEGER,
+    cups TEXT, denominacion TEXT, anio INTEGER, mes INTEGER, antes TEXT, despues TEXT,
+    factura TEXT);
 """
 
 
@@ -456,6 +489,250 @@ def estudio_potencia(id_estudio):
     r = dict(r)
     r["datos"] = json.loads(r["datos"])
     return r
+
+
+# ------------------------------------------------------------------- seguimiento y control
+def _json(datos):
+    return json.dumps(datos, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def listar_sgc_suministros(bajas=None):
+    """Filas del cuadro: dicts id, cups, baja, datos (ya leidos), modificado, usuario.
+    bajas: None todas, False solo activas, True solo bajas."""
+    sql = "SELECT * FROM sgc_suministros"
+    if bajas is not None:
+        sql += " WHERE baja=%d" % int(bool(bajas))
+    with _con() as con:
+        filas = [dict(r) for r in con.execute(sql + " ORDER BY id")]
+    for f in filas:
+        f["datos"] = json.loads(f["datos"])
+    return filas
+
+
+def guardar_sgc_suministros(cambios, usuario):
+    """cambios: dicts con id (None si es nueva), datos y opcionalmente baja. Solo se escriben
+    las filas que han cambiado. Devuelve los ids en el mismo orden."""
+    ahora, ids = _ahora(), []
+    with _con(escribir=True) as con:
+        for c in cambios:
+            datos = c["datos"]
+            cups = (datos.get("CUPS") or "").strip().upper() or None
+            if c.get("id") is None:
+                cur = con.execute("INSERT INTO sgc_suministros (cups, baja, datos, modificado, "
+                                  "usuario) VALUES (?,?,?,?,?)",
+                                  (cups, int(bool(c.get("baja"))), _json(datos), ahora, usuario))
+                ids.append(cur.lastrowid)
+                continue
+            if "baja" in c:
+                con.execute("UPDATE sgc_suministros SET cups=?, baja=?, datos=?, modificado=?, "
+                            "usuario=? WHERE id=?", (cups, int(bool(c["baja"])), _json(datos),
+                                                     ahora, usuario, c["id"]))
+            else:
+                con.execute("UPDATE sgc_suministros SET cups=?, datos=?, modificado=?, usuario=? "
+                            "WHERE id=?", (cups, _json(datos), ahora, usuario, c["id"]))
+            ids.append(c["id"])
+    return ids
+
+
+def listar_sgc_estados(anio=None):
+    """{(id_suministro, anio, mes): {estado, obs, origen, modificado, usuario}}."""
+    sql, args = "SELECT * FROM sgc_estados", ()
+    if anio is not None:
+        sql, args = sql + " WHERE anio=?", (int(anio),)
+    with _con() as con:
+        return {(r["id_suministro"], r["anio"], r["mes"]): dict(r)
+                for r in con.execute(sql, args)}
+
+
+def anios_sgc():
+    """Anos con algun estado guardado, de menor a mayor."""
+    with _con() as con:
+        return [r[0] for r in con.execute("SELECT DISTINCT anio FROM sgc_estados ORDER BY anio")]
+
+
+def guardar_sgc_estados(cambios, usuario, origen="manual"):
+    """cambios: dicts id_suministro, anio, mes, estado, obs (y opcionalmente origen). Un
+    estado y una observacion vacios borran la celda."""
+    ahora = _ahora()
+    with _con(escribir=True) as con:
+        for c in cambios:
+            clave = (c["id_suministro"], int(c["anio"]), int(c["mes"]))
+            if not (c.get("estado") or c.get("obs")):
+                con.execute("DELETE FROM sgc_estados WHERE id_suministro=? AND anio=? AND mes=?",
+                            clave)
+                continue
+            con.execute(
+                "INSERT INTO sgc_estados VALUES (?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id_suministro, anio, mes) DO UPDATE SET estado=excluded.estado, "
+                "obs=excluded.obs, origen=excluded.origen, modificado=excluded.modificado, "
+                "usuario=excluded.usuario",
+                clave + (c.get("estado") or None, c.get("obs") or None,
+                         c.get("origen") or origen, ahora, usuario))
+
+
+def listar_sgc_filas(tabla):
+    """Filas de una tabla auxiliar: dicts id, datos (ya leidos), modificado, usuario."""
+    with _con() as con:
+        filas = [dict(r) for r in con.execute(
+            "SELECT id, datos, modificado, usuario FROM sgc_filas WHERE tabla=? ORDER BY id",
+            (tabla,))]
+    for f in filas:
+        f["datos"] = json.loads(f["datos"])
+    return filas
+
+
+def guardar_sgc_filas(tabla, cambios, borrados, usuario):
+    """cambios: dicts id (None si es nueva) y datos; borrados: ids que se eliminan."""
+    ahora = _ahora()
+    with _con(escribir=True) as con:
+        for i in borrados:
+            con.execute("DELETE FROM sgc_filas WHERE id=? AND tabla=?", (i, tabla))
+        for c in cambios:
+            if c.get("id") is None:
+                con.execute("INSERT INTO sgc_filas (tabla, datos, modificado, usuario) "
+                            "VALUES (?,?,?,?)", (tabla, _json(c["datos"]), ahora, usuario))
+            else:
+                con.execute("UPDATE sgc_filas SET datos=?, modificado=?, usuario=? "
+                            "WHERE id=? AND tabla=?",
+                            (_json(c["datos"]), ahora, usuario, c["id"], tabla))
+
+
+def listar_sgc_listas():
+    """{lista: [dicts valor, descripcion, color]} en su orden."""
+    listas = {}
+    with _con() as con:
+        for r in con.execute("SELECT * FROM sgc_listas ORDER BY lista, orden"):
+            listas.setdefault(r["lista"], []).append(
+                {"valor": r["valor"], "descripcion": r["descripcion"], "color": r["color"]})
+    return listas
+
+
+def guardar_sgc_lista(lista, valores):
+    """Sustituye una lista por valores (dicts valor, descripcion, color), en ese orden."""
+    with _con(escribir=True) as con:
+        con.execute("DELETE FROM sgc_listas WHERE lista=?", (lista,))
+        vistos = set()
+        for n, v in enumerate(valores):
+            if v["valor"] in vistos:
+                continue
+            vistos.add(v["valor"])
+            con.execute("INSERT INTO sgc_listas VALUES (?,?,?,?,?)",
+                        (lista, n, v["valor"], v.get("descripcion"), v.get("color")))
+
+
+def listar_sgc_equipo():
+    with _con() as con:
+        return [dict(r) for r in con.execute("SELECT * FROM sgc_equipo ORDER BY nombre")]
+
+
+def guardar_sgc_equipo(filas):
+    """Sustituye el equipo: dicts nombre, tecnico, auxiliar, email, usuario."""
+    with _con(escribir=True) as con:
+        con.execute("DELETE FROM sgc_equipo")
+        for f in filas:
+            nombre = (f.get("nombre") or "").strip()
+            if nombre:
+                con.execute("INSERT OR REPLACE INTO sgc_equipo VALUES (?,?,?,?,?)",
+                            (nombre, int(bool(f.get("tecnico"))), int(bool(f.get("auxiliar"))),
+                             _email(f.get("email")), (f.get("usuario") or "").strip() or None))
+
+
+def ajuste_sgc(clave, defecto=None):
+    with _con() as con:
+        r = con.execute("SELECT valor FROM sgc_ajustes WHERE clave=?", (clave,)).fetchone()
+    return r["valor"] if r and r["valor"] is not None else defecto
+
+
+def guardar_ajuste_sgc(clave, valor):
+    with _con(escribir=True) as con:
+        con.execute("INSERT OR REPLACE INTO sgc_ajustes VALUES (?,?)", (clave, valor))
+
+
+def reemplazar_sgc(suministros, estados, filas, listas, equipo, usuario):
+    """Importacion: sustituye todo el contenido del cuadro en una sola transaccion.
+    suministros: dicts datos, baja y clave (la que usan los estados); estados: dicts clave,
+    anio, mes, estado, obs; filas: {tabla: [datos]}; listas: {lista: [dicts]}; equipo: dicts
+    (se conservan email y usuario de los nombres que ya existian)."""
+    ahora = _ahora()
+    with _con(escribir=True) as con:
+        previos = {r["nombre"]: dict(r) for r in con.execute("SELECT * FROM sgc_equipo")}
+        for t in ("sgc_estados", "sgc_suministros", "sgc_filas", "sgc_listas", "sgc_equipo"):
+            con.execute("DELETE FROM " + t)
+        ids = {}
+        for s in suministros:
+            cups = (s["datos"].get("CUPS") or "").strip().upper() or None
+            cur = con.execute("INSERT INTO sgc_suministros (cups, baja, datos, modificado, "
+                              "usuario) VALUES (?,?,?,?,?)",
+                              (cups, int(bool(s.get("baja"))), _json(s["datos"]), ahora, usuario))
+            ids[s["clave"]] = cur.lastrowid
+        for e in estados:
+            con.execute("INSERT OR REPLACE INTO sgc_estados VALUES (?,?,?,?,?,?,?,?)",
+                        (ids[e["clave"]], e["anio"], e["mes"], e.get("estado"), e.get("obs"),
+                         "importado", ahora, usuario))
+        for tabla, lista in filas.items():
+            for datos in lista:
+                con.execute("INSERT INTO sgc_filas (tabla, datos, modificado, usuario) "
+                            "VALUES (?,?,?,?)", (tabla, _json(datos), ahora, usuario))
+        for lista, valores in listas.items():
+            for n, v in enumerate(valores):
+                con.execute("INSERT OR IGNORE INTO sgc_listas VALUES (?,?,?,?,?)",
+                            (lista, n, v["valor"], v.get("descripcion"), v.get("color")))
+        for f in equipo:
+            p = previos.get(f["nombre"], {})
+            con.execute("INSERT OR REPLACE INTO sgc_equipo VALUES (?,?,?,?,?)",
+                        (f["nombre"], int(bool(f.get("tecnico"))), int(bool(f.get("auxiliar"))),
+                         f.get("email") or p.get("email"), f.get("usuario") or p.get("usuario")))
+    return ids
+
+
+def guardar_envio_sgc(usuario, cuenta, tipo, auxiliar, cliente, para, cc, asunto, detalle,
+                      prueba, resultado):
+    with _con(escribir=True) as con:
+        con.execute("INSERT INTO sgc_envios (fecha, usuario, cuenta, tipo, auxiliar, cliente, "
+                    "para, cc, asunto, detalle, prueba, resultado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (_ahora(), usuario, cuenta, tipo, auxiliar, cliente, para, cc, asunto,
+                     detalle, int(bool(prueba)), resultado))
+
+
+def listar_envios_sgc(desde=None, hasta=None, limite=20000):
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM sgc_envios WHERE substr(fecha, 1, 10) BETWEEN ? AND ? "
+            "ORDER BY id DESC LIMIT ?", (desde or "0000", hasta or "9999", limite))]
+
+
+def outlook_sgc(usuario):
+    """Cuenta de Outlook conectada del usuario: dict cuenta, token (cifrado), conectado."""
+    with _con() as con:
+        r = con.execute("SELECT * FROM sgc_outlook WHERE usuario=?", (usuario,)).fetchone()
+    return dict(r) if r else None
+
+
+def guardar_outlook_sgc(usuario, cuenta, token):
+    """token: el refresh token ya cifrado; None borra la conexion."""
+    with _con(escribir=True) as con:
+        if token is None:
+            con.execute("DELETE FROM sgc_outlook WHERE usuario=?", (usuario,))
+        else:
+            con.execute("INSERT OR REPLACE INTO sgc_outlook VALUES (?,?,?,?)",
+                        (usuario, cuenta, token, _ahora()))
+
+
+def guardar_cambios_gemweb(cambios):
+    """cambios: dicts id_suministro, cups, denominacion, anio, mes, antes, despues, factura."""
+    ahora = _ahora()
+    with _con(escribir=True) as con:
+        for c in cambios:
+            con.execute("INSERT INTO sgc_cambios_gemweb (fecha, id_suministro, cups, denominacion, "
+                        "anio, mes, antes, despues, factura) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (ahora, c["id_suministro"], c.get("cups"), c.get("denominacion"),
+                         c["anio"], c["mes"], c.get("antes"), c["despues"], c.get("factura")))
+
+
+def listar_cambios_gemweb(limite=2000):
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM sgc_cambios_gemweb ORDER BY id DESC LIMIT ?", (limite,))]
 
 
 # ------------------------------------------------------------------- actividad

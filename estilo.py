@@ -29,7 +29,7 @@ ICONO = config.RECURSOS / "assets" / "icono.ico"
 COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
-MODULOS_MENU = {"Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
+MODULOS_MENU = {"Seguimiento y Control": "seguimiento", "Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
                 "Solicitud de ofertas": "ofertas", "Estudio de potencia": "potencia",
                 "Supervisión": "supervision", "Administración": "admin"}
 LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
@@ -48,6 +48,8 @@ def _icono(trazos):
 # inicio.py con su clave (MODULOS_MENU) segun su texto, no su posicion: la estructura del
 # menu cambia entre versiones de Streamlit. Sin marca no hay icono (nunca un recuadro).
 ICONOS_MODULO = {
+    "seguimiento": _icono("<rect x='3' y='5' width='18' height='16' rx='2'/>"
+                          "<path d='M3 10h18M8 3v4M16 3v4M9 15l2 2 4-4'/>"),
     "ssaa": _icono("<path d='M5 21V3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5z'/>"
                    "<path d='M9 8h6M9 12h6M9 16h3'/>"),
     "gemweb": _icono("<ellipse cx='12' cy='6' rx='7' ry='3'/>"

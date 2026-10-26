@@ -21,6 +21,7 @@ import paginas
 from gemweb_extractor import paginas as gw
 from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
+from seguimiento import paginas as seguimiento
 from supervision import paginas as supervision
 
 st.set_page_config(page_title="Herramientas GE&PE",
@@ -31,7 +32,7 @@ usuario = paginas.acceso()          # detiene la pagina hasta que se inicia sesi
 estilo.logo_menu()                  # no sale en la pagina de inicio de sesion
 
 
-def _pagina(funcion, titulo, subtitulo, ruta, modulo):
+def _pagina(funcion, titulo, subtitulo, ruta, modulo, default=False):
     """Pagina de funcion con la cabecera corporativa comun. Si la API de Gemweb tiene un fallo
     conocido en esa opcion, se marca en el menu y se avisa al abrirla. Al abrirla queda
     anotado en la actividad (panel de supervision)."""
@@ -44,19 +45,38 @@ def _pagina(funcion, titulo, subtitulo, ruta, modulo):
         if aviso:
             st.warning("Fallo de la API de Gemweb: " + aviso, icon=":material/warning:")
         funcion()
-    return st.Page(mostrar, title=titulo, url_path=ruta,
+    return st.Page(mostrar, title=titulo, url_path=ruta, default=default,
                    icon=":material/warning:" if aviso else None)
 
 
 SUB_SSAA = "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)"
 SUB_GEMWEB = "Consultas a la API de Gemweb"
-SSAA, GEMWEB, OFERTAS, POTENCIA, SUPERVISION, ADMIN = (
-    "Revisión de SSAA", "API de Gemweb", "Solicitud de ofertas", "Estudio de potencia",
-    "Supervisión", "Administración")
+SEGUIMIENTO, SSAA, GEMWEB, OFERTAS, POTENCIA, SUPERVISION, ADMIN = (
+    "Seguimiento y Control", "Revisión de SSAA", "API de Gemweb", "Solicitud de ofertas",
+    "Estudio de potencia", "Supervisión", "Administración")
+SUB_SGC = "Seguimiento de facturas e informes de los clientes"
 menu = {
+    SEGUIMIENTO: [
+        _pagina(seguimiento.pagina_cuadro, "Cuadro de seguimiento", SUB_SGC, "seguimiento",
+                SEGUIMIENTO, default=True),
+    ] + [
+        _pagina(funcion, titulo, subtitulo, ruta, SEGUIMIENTO)
+        for funcion, titulo, subtitulo, ruta in (
+            (seguimiento.pagina_retraso, "Retraso de informes",
+             "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"),
+            (seguimiento.pagina_contactos_envio, "Contactos de envío",
+             "Destinatarios de los informes y de los avisos de incidencias",
+             "seguimiento-contactos-envio"),
+            (seguimiento.pagina_contactos, "Contactos de clientes", SUB_SGC,
+             "seguimiento-contactos"),
+            (seguimiento.pagina_claves, "Claves de clientes", SUB_SGC, "seguimiento-claves"),
+            (seguimiento.pagina_smac, "SMAC", SUB_SGC, "seguimiento-smac"),
+            (seguimiento.pagina_telemedida, "Telemedida", SUB_SGC, "seguimiento-telemedida"),
+            (seguimiento.pagina_bajas, "Bajas", "Suministros dados de baja en el seguimiento",
+             "seguimiento-bajas"))
+    ],
     SSAA: [
-        st.Page("app_revision_ssaa.py", title="Revisar factura", url_path="revisar",
-                default=True),
+        st.Page("app_revision_ssaa.py", title="Revisar factura", url_path="revisar"),
         _pagina(paginas.pagina_historial, "Historial de revisiones", SUB_SSAA, "historial",
                 SSAA),
         _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas", SSAA),
@@ -104,6 +124,8 @@ if usuario["admin"]:
                 "usuarios", ADMIN),
         _pagina(paginas.pagina_credenciales, "Credenciales de Gemweb",
                 "Acceso a la API de Gemweb para toda la plataforma", "credenciales", ADMIN),
+        _pagina(seguimiento.pagina_admin, "Seguimiento y Control",
+                "Importar el cuadro, equipo y listas de valores", "admin-seguimiento", ADMIN),
     ]
 # «Mi trabajo»: el panel con lo del propio usuario. Va sin titulo de modulo y su enlace se
 # oculta (estilo.CSS); se abre con el boton de la barra lateral
