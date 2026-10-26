@@ -155,6 +155,16 @@ h3, .stMarkdown h3 {
 [data-gp-modulo="potencia"]::before { background-image: url("%(ico_potencia)s"); }
 [data-gp-modulo="supervision"]::before { background-image: url("%(ico_supervision)s"); }
 [data-gp-modulo="admin"]::before { background-image: url("%(ico_admin)s"); }
+/* flecha para recoger o desplegar los submodulos (traducir() pone data-gp-plegado y oculta
+   los enlaces del modulo con data-gp-oculto) */
+[data-gp-modulo] { cursor: pointer; user-select: none; }
+[data-gp-modulo]::after {
+    content: ""; flex: none; width: 7px; height: 7px; margin: -4px 4px 0 auto;
+    border-right: 2px solid %(granate_oscuro)s; border-bottom: 2px solid %(granate_oscuro)s;
+    transform: rotate(45deg); transition: transform 0.15s;
+}
+[data-gp-modulo][data-gp-plegado]::after { transform: rotate(-45deg); margin-top: 0; }
+[data-gp-oculto] { display: none !important; }
 [data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
 [data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }
 [data-testid="stSidebarNavLink"]:hover { background: %(rosa)s; }
@@ -235,12 +245,47 @@ def traducir():
     components.html("""<script>
     const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s;
     const doc = window.parent.document;
+    function plegados() {
+        try { return JSON.parse(window.parent.localStorage.getItem("gpMenuPlegado")) || []; }
+        catch (e) { return window.parent.__gpPlegados || []; }
+    }
+    // clic en el titulo de un modulo: lo recoge o despliega y se recuerda en este navegador.
+    // Lo que registra este iframe deja de funcionar cuando Streamlit lo sustituye en la
+    // siguiente ejecucion, asi que el manejador se mete como <script> en la propia pagina,
+    // una sola vez. Escucha en captura, antes de que nadie pueda cortar el clic.
+    if (!window.parent.__gpPlegar) {
+        window.parent.__gpPlegar = true;
+        const s = doc.createElement("script");
+        s.textContent = `document.addEventListener("click", e => {
+            const h = e.target.closest("[data-gp-modulo]");
+            if (!h) return;
+            let p;
+            try { p = JSON.parse(localStorage.getItem("gpMenuPlegado")) || []; }
+            catch (x) { p = window.__gpPlegados || []; }
+            const m = h.dataset.gpModulo;
+            p = p.includes(m) ? p.filter(x => x !== m) : p.concat([m]);
+            try { localStorage.setItem("gpMenuPlegado", JSON.stringify(p)); }
+            catch (x) { /* sin almacenamiento: no se recuerda, pero se pliega igual */ }
+            window.__gpPlegados = p;
+            if (window.__gpMenu) window.__gpMenu();
+        }, true);`;
+        doc.head.appendChild(s);
+    }
     function menu() {
         // el titulo puede traer mas texto segun la version de Streamlit: se busca el nombre
         doc.querySelectorAll('[data-testid="stNavSectionHeader"]').forEach(h => {
             const texto = h.textContent.trim();
             const nombre = Object.keys(MODULOS).find(n => texto.startsWith(n));
             if (nombre && h.dataset.gpModulo !== MODULOS[nombre]) h.dataset.gpModulo = MODULOS[nombre];
+            if (!h.dataset.gpModulo) return;
+            const plegado = plegados().includes(h.dataset.gpModulo);
+            if (plegado !== h.hasAttribute("data-gp-plegado"))
+                plegado ? h.setAttribute("data-gp-plegado", "") : h.removeAttribute("data-gp-plegado");
+            for (let s = h.nextElementSibling; s && s.dataset.testid !== "stNavSectionHeader";
+                 s = s.nextElementSibling) {
+                if (plegado !== s.hasAttribute("data-gp-oculto"))
+                    plegado ? s.setAttribute("data-gp-oculto", "") : s.removeAttribute("data-gp-oculto");
+            }
         });
         const aqui = window.parent.location.pathname.replace(/\\/$/, "");
         doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(a => {
