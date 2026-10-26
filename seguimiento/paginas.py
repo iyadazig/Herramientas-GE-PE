@@ -4,7 +4,7 @@ Paginas del modulo «Seguimiento y Control»
 ==========================================
 Cuadro de seguimiento, retraso de informes, tablas auxiliares (contactos de envio, contactos
 y claves de clientes, SMAC, telemedida), bajas y la parte de administracion (importar los
-Excel, equipo y listas). Los envios de informes y avisos estan en envios.py.
+Excel, equipo, listas y Outlook). Los envios de informes y avisos estan en envios.py.
 """
 
 import datetime as dt
@@ -476,13 +476,16 @@ def pagina_admin():
     if not ss.usuario["admin"]:
         st.warning("Solo los administradores pueden importar y configurar Seguimiento y Control.")
         return
-    pestanas = st.tabs(["Importar Excel", "Equipo", "Listas de valores"])
+    pestanas = st.tabs(["Importar Excel", "Equipo", "Listas de valores", "Outlook"])
     with pestanas[0]:
         _admin_importar()
     with pestanas[1]:
         _admin_equipo()
     with pestanas[2]:
         _admin_listas()
+    with pestanas[3]:
+        from seguimiento import envios
+        envios.admin_outlook()
 
 
 def _admin_importar():

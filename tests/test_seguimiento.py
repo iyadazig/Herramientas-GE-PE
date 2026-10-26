@@ -21,7 +21,7 @@ from seguimiento import columnas as C
 from seguimiento import datos as D
 from seguimiento import retraso as R
 
-CUPS1, CUPS2, CUPS3 = ("ES0000000000000000%sXX" % n for n in "123")
+CUPS1, CUPS2, CUPS3 = ("ES000000000000000%sXX" % n for n in "123")   # 20 caracteres
 
 
 def excel_ficticio():

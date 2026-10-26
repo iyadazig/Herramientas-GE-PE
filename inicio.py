@@ -21,6 +21,7 @@ import paginas
 from gemweb_extractor import paginas as gw
 from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
+from seguimiento import envios
 from seguimiento import paginas as seguimiento
 from supervision import paginas as supervision
 
@@ -64,6 +65,14 @@ menu = {
         for funcion, titulo, subtitulo, ruta in (
             (seguimiento.pagina_retraso, "Retraso de informes",
              "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"),
+            (envios.pagina_informes, "Enviar informes",
+             "Informes de seguimiento por correo desde tu cuenta de Outlook",
+             "seguimiento-informes"),
+            (envios.pagina_incidencias, "Avisos de incidencias",
+             "Avisos de incidencias en facturas por correo desde tu cuenta de Outlook",
+             "seguimiento-incidencias"),
+            (envios.pagina_historial, "Historial de envíos",
+             "Informes y avisos enviados por el equipo", "seguimiento-envios"),
             (seguimiento.pagina_contactos_envio, "Contactos de envío",
              "Destinatarios de los informes y de los avisos de incidencias",
              "seguimiento-contactos-envio"),
@@ -125,7 +134,7 @@ if usuario["admin"]:
         _pagina(paginas.pagina_credenciales, "Credenciales de Gemweb",
                 "Acceso a la API de Gemweb para toda la plataforma", "credenciales", ADMIN),
         _pagina(seguimiento.pagina_admin, "Seguimiento y Control",
-                "Importar el cuadro, equipo y listas de valores", "admin-seguimiento", ADMIN),
+                "Importar el cuadro, equipo, listas de valores y Outlook", "admin-seguimiento", ADMIN),
     ]
 # «Mi trabajo»: el panel con lo del propio usuario. Va sin titulo de modulo y su enlace se
 # oculta (estilo.CSS); se abre con el boton de la barra lateral

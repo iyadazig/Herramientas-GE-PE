@@ -38,7 +38,9 @@ def _texto(v):
         return v.strftime("%d/%m/%Y")
     if isinstance(v, float) and v.is_integer():
         v = int(v)
-    t = " ".join(str(v).replace("\xa0", " ").split())
+    # solo los espacios de los extremos: los interiores se conservan porque los envios cruzan
+    # contactos y facturas por texto exacto, como los programas originales
+    t = str(v).strip()
     return t or None
 
 
@@ -291,6 +293,65 @@ def importar(leido, contactos, usuario):
     _completar_listas(leido)
     return almacen.reemplazar_sgc(leido["suministros"], leido["estados"], filas,
                                   leido["listas"], equipo, usuario)
+
+
+# ------------------------------------------------------------------- periodos
+def meses_cubiertos(inicio, fin):
+    """Meses (anio, mes) de un periodo de factura o informe: los que cubre en mas de la mitad
+    de sus dias. Si ninguno llega (periodo corto que cae entre dos meses), el de mas dias."""
+    if not inicio or not fin or fin < inicio:
+        return []
+    dias = {}
+    d = inicio
+    while d <= fin:
+        dias[(d.year, d.month)] = dias.get((d.year, d.month), 0) + 1
+        d += dt.timedelta(days=1)
+    def del_mes(a, m):
+        siguiente = dt.date(a + (m == 12), m % 12 + 1, 1)
+        return (siguiente - dt.date(a, m, 1)).days
+    meses = [k for k, n in dias.items() if n * 2 > del_mes(*k)]
+    return sorted(meses) or [max(dias, key=lambda k: (dias[k], k))]
+
+
+def suministros_por_cups():
+    """{CUPS de 20 caracteres: [suministro activo]} del cuadro."""
+    salida = {}
+    for s in almacen.listar_sgc_suministros(bajas=False):
+        cups = (s["cups"] or "").strip().upper()[:20]
+        if cups:
+            salida.setdefault(cups, []).append(s)
+    return salida
+
+
+PASAN_A_ENVIADO = (C.RECIBIDA, C.PDTE_INF, C.INF_NO_ENVIADO)
+
+
+def marcar_enviados(meses, usuario):
+    """Pone «Inf enviado» en (cups, anio, mes) de los suministros activos del cuadro cuyo estado
+    es «Recibida», «Pdte inf» o «Inf no enviado». Devuelve (marcados, sin marcar): listas de
+    dicts cups, denominacion, mes y estado (el que tenia)."""
+    por_cups = suministros_por_cups()
+    anios = {a for _, a, _ in meses}
+    estados = {}
+    for a in anios:
+        estados.update(almacen.listar_sgc_estados(a))
+    cambios, marcados, sin_marcar = [], [], []
+    for cups, anio, mes in dict.fromkeys(meses):
+        for s in por_cups.get(cups, []):
+            previo = estados.get((s["id"], anio, mes)) or {}
+            fila = {"cups": cups, "denominacion": s["datos"].get("Denominación suministro"),
+                    "mes": C.columna_mes(anio, mes), "estado": previo.get("estado")}
+            if previo.get("estado") in PASAN_A_ENVIADO:
+                cambios.append({"id_suministro": s["id"], "anio": anio, "mes": mes,
+                                "estado": C.INF_ENVIADO, "obs": previo.get("obs")})
+                marcados.append(fila)
+            elif previo.get("estado") != C.INF_ENVIADO:
+                sin_marcar.append(fila)
+        if not por_cups.get(cups):
+            sin_marcar.append({"cups": cups, "denominacion": None,
+                               "mes": C.columna_mes(anio, mes), "estado": "no está en el cuadro"})
+    almacen.guardar_sgc_estados(cambios, usuario, origen="envío")
+    return marcados, sin_marcar
 
 
 # ------------------------------------------------------------------- listas y equipo
