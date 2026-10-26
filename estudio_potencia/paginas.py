@@ -676,8 +676,10 @@ def _anexos(pot, res) -> tuple:
     sums, multipunto = pot["suministros"], _tipo(pot) == MULTIPUNTO
     s = sums[0]
     if multipunto:
-        elegido = st.selectbox("CUPS de los anexos", [sv.TODOS] + [x.cups for x in sums],
-                               key="pot_anexo_cups")
+        etiquetas = {x.cups: (f"{x.denominacion.strip()} ({x.cups})" if x.denominacion.strip()
+                              else x.cups) for x in sums}
+        elegido = st.selectbox("Suministro de los anexos", [sv.TODOS] + [x.cups for x in sums],
+                               key="pot_anexo_cups", format_func=lambda c: etiquetas.get(c, c))
         s = next((x for x in sums if x.cups == elegido), None)
     est, escs = (s.estudio, s.escenarios) if s else (res, res.escenarios)
     t_e, t_m, t_d, t_c, t_r = st.tabs(["Energía (kWh)", "Potencias máximas (kW)",
