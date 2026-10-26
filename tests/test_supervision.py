@@ -172,11 +172,11 @@ class Datos(Base):
 class Panel(Base):
     """El panel con AppTest: solo lo ve quien puede supervisar, y la descarga queda anotada."""
 
-    def _app(self, usuario):
+    def _app(self, usuario, pagina="pagina_panel"):
         from streamlit.testing.v1 import AppTest
         at = AppTest.from_string(
             "import sys\nsys.path.insert(0, %r)\nfrom supervision import paginas\n"
-            "paginas.pagina_panel()\n" % str(RAIZ), default_timeout=60)
+            "paginas.%s()\n" % (str(RAIZ), pagina), default_timeout=60)
         at.session_state["usuario"] = usuario
         return at.run()
 
@@ -192,6 +192,18 @@ class Panel(Base):
         at.multiselect(key="sup_usuarios").set_value(["ana"]).run()
         self.assertFalse(at.exception)
         self.assertEqual(at.metric[1].value, "1")                # ana: una ficha modificada
+
+    def test_mi_trabajo_solo_lo_suyo(self):
+        self.poblar()
+        at = self._app({"usuario": "ana", "admin": 0, "supervisor": 0}, "pagina_mi_trabajo")
+        self.assertFalse(at.exception)
+        self.assertFalse(at.warning)                             # cualquiera puede verla
+        self.assertEqual([m.value for m in at.metric[:4]], ["0", "1", "1", "0"])
+        self.assertEqual(at.metric[4].label, "Días con actividad")
+        self.assertEqual([m.label for m in at.multiselect], ["Módulos"])   # sin filtro de usuarios
+        trabajo = at.dataframe[1].value                          # 0: resumen, 1: trabajo
+        self.assertNotIn("Usuario", trabajo.columns)
+        self.assertEqual(len(trabajo), 2)                        # ficha modificada y solicitud
 
 
 if __name__ == "__main__":

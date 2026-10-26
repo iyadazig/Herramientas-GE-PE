@@ -30,15 +30,6 @@ estilo.aplicar()
 usuario = paginas.acceso()          # detiene la pagina hasta que se inicia sesion
 estilo.logo_menu()                  # no sale en la pagina de inicio de sesion
 
-with st.sidebar:
-    paginas.barra_usuario()
-    if gw.AVISOS_GEMWEB:
-        with st.expander(":material/warning: Fallos de la API de Gemweb"):
-            st.caption("Estas opciones no funcionan del todo por falta de implementación o "
-                       "mejora de la API de Gemweb (no de esta aplicación).")
-            for _titulo, _texto in gw.AVISOS_GEMWEB.items():
-                st.markdown("**%s**: %s" % (_titulo, _texto))
-
 
 def _pagina(funcion, titulo, subtitulo, ruta, modulo):
     """Pagina de funcion con la cabecera corporativa comun. Si la API de Gemweb tiene un fallo
@@ -114,6 +105,24 @@ if usuario["admin"]:
         _pagina(paginas.pagina_credenciales, "Credenciales de Gemweb",
                 "Acceso a la API de Gemweb para toda la plataforma", "credenciales", ADMIN),
     ]
+# «Mi trabajo»: el panel con lo del propio usuario. Va sin titulo de modulo y su enlace se
+# oculta (estilo.CSS); se abre con el boton de la barra lateral
+MI_TRABAJO = _pagina(supervision.pagina_mi_trabajo, "Mi trabajo",
+                     "Tu trabajo guardado y tu actividad en la plataforma", "mi-trabajo",
+                     supervision.MI_TRABAJO)
+menu[""] = [MI_TRABAJO]
+
+with st.sidebar:
+    if st.button("Mi trabajo", icon=":material/person:", use_container_width=True,
+                 help="Todo lo que has hecho en la plataforma: trabajo guardado y actividad"):
+        st.switch_page(MI_TRABAJO)
+    paginas.barra_usuario()
+    if gw.AVISOS_GEMWEB:
+        with st.expander(":material/warning: Fallos de la API de Gemweb"):
+            st.caption("Estas opciones no funcionan del todo por falta de implementación o "
+                       "mejora de la API de Gemweb (no de esta aplicación).")
+            for _titulo, _texto in gw.AVISOS_GEMWEB.items():
+                st.markdown("**%s**: %s" % (_titulo, _texto))
 
 st.navigation(menu, expanded=True).run()
 estilo.pie()

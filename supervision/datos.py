@@ -155,14 +155,15 @@ def resumen_por_usuario(registros, eventos, nombres, ultimos_accesos=None):
     return filas
 
 
-def por_mes(registros, nombres):
-    """DataFrame mes (AAAA-MM) x usuario con el numero de trabajos."""
+def por_mes(registros, nombres, por="usuario"):
+    """DataFrame mes (AAAA-MM) x usuario (o x modulo, por="modulo") con el numero de trabajos."""
     if not registros:
         return pd.DataFrame()
+    columna = "Módulo" if por == "modulo" else "Usuario"
     df = pd.DataFrame({"Mes": [f["fecha"][:7] for f in registros],
-                       "Usuario": [nombre(f["usuario"], nombres)
-                                   for f in registros]})
-    return df.pivot_table(index="Mes", columns="Usuario", aggfunc="size", fill_value=0)
+                       columna: [f["modulo"] if por == "modulo"
+                                 else nombre(f["usuario"], nombres) for f in registros]})
+    return df.pivot_table(index="Mes", columns=columna, aggfunc="size", fill_value=0)
 
 
 def por_usuario_y_modulo(registros, nombres):

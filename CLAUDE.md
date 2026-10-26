@@ -72,6 +72,17 @@ pago. La factura y la curva no salen del PC.
   - Exportación a Excel con tres hojas (Resumen, Trabajo y Actividad).
   - La lógica está en `supervision/datos.py`, sin Streamlit. Pruebas en
     `tests/test_supervision.py`.
+- **Mi trabajo** (`supervision.pagina_mi_trabajo`, para todos): el mismo panel limitado al
+  usuario conectado, sin filtro de usuarios ni datos de otros.
+  - Se abre con el botón «Mi trabajo» de la barra lateral, encima del nombre.
+  - Su página va en la sección sin título (`menu[""]`) y su enlace se oculta por CSS.
+- **Menú plegable:** cada módulo tiene una flecha.
+  - Al entrar, todos están recogidos salvo el de la página abierta.
+  - Lo que cada uno recoge o despliega se guarda en el `localStorage` del navegador
+    (`gpMenuEstado`).
+  - Script en `estilo.traducir`. El manejador del clic se inserta como `<script>` en la
+    página, porque lo que registra el iframe de `components.html` deja de funcionar cuando
+    Streamlit lo sustituye.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`, que

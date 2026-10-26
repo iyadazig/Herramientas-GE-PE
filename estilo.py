@@ -165,6 +165,8 @@ h3, .stMarkdown h3 {
 }
 [data-gp-modulo][data-gp-plegado]::after { transform: rotate(-45deg); margin-top: 0; }
 [data-gp-oculto] { display: none !important; }
+/* «Mi trabajo» se abre con el boton de la barra lateral, no desde el menu */
+[data-testid="stSidebarNavItems"] li:has(a[href$="/mi-trabajo"]) { display: none; }
 [data-testid="stSidebarNavLink"] { padding-left: 2.1rem; margin-left: 0.5rem; }
 [data-testid="stSidebarNavLink"] span { color: %(gris)s; font-size: 0.9rem; }
 [data-testid="stSidebarNavLink"]:hover { background: %(rosa)s; }
@@ -245,9 +247,11 @@ def traducir():
     components.html("""<script>
     const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s;
     const doc = window.parent.document;
-    function plegados() {
-        try { return JSON.parse(window.parent.localStorage.getItem("gpMenuPlegado")) || []; }
-        catch (e) { return window.parent.__gpPlegados || []; }
+    // estado de cada modulo del menu en este navegador: {modulo: true si esta recogido}. Lo que
+    // no se ha tocado sale recogido, salvo el modulo de la pagina abierta
+    function estado() {
+        try { return JSON.parse(window.parent.localStorage.getItem("gpMenuEstado")) || {}; }
+        catch (e) { return window.parent.__gpMenuEstado || {}; }
     }
     // clic en el titulo de un modulo: lo recoge o despliega y se recuerda en este navegador.
     // Lo que registra este iframe deja de funcionar cuando Streamlit lo sustituye en la
@@ -260,39 +264,45 @@ def traducir():
             const h = e.target.closest("[data-gp-modulo]");
             if (!h) return;
             let p;
-            try { p = JSON.parse(localStorage.getItem("gpMenuPlegado")) || []; }
-            catch (x) { p = window.__gpPlegados || []; }
-            const m = h.dataset.gpModulo;
-            p = p.includes(m) ? p.filter(x => x !== m) : p.concat([m]);
-            try { localStorage.setItem("gpMenuPlegado", JSON.stringify(p)); }
+            try { p = JSON.parse(localStorage.getItem("gpMenuEstado")) || {}; }
+            catch (x) { p = window.__gpMenuEstado || {}; }
+            p[h.dataset.gpModulo] = !h.hasAttribute("data-gp-plegado");
+            try { localStorage.setItem("gpMenuEstado", JSON.stringify(p)); }
             catch (x) { /* sin almacenamiento: no se recuerda, pero se pliega igual */ }
-            window.__gpPlegados = p;
+            window.__gpMenuEstado = p;
             if (window.__gpMenu) window.__gpMenu();
         }, true);`;
         doc.head.appendChild(s);
     }
     function menu() {
-        // el titulo puede traer mas texto segun la version de Streamlit: se busca el nombre
-        doc.querySelectorAll('[data-testid="stNavSectionHeader"]').forEach(h => {
-            const texto = h.textContent.trim();
-            const nombre = Object.keys(MODULOS).find(n => texto.startsWith(n));
-            if (nombre && h.dataset.gpModulo !== MODULOS[nombre]) h.dataset.gpModulo = MODULOS[nombre];
-            if (!h.dataset.gpModulo) return;
-            const plegado = plegados().includes(h.dataset.gpModulo);
-            if (plegado !== h.hasAttribute("data-gp-plegado"))
-                plegado ? h.setAttribute("data-gp-plegado", "") : h.removeAttribute("data-gp-plegado");
-            for (let s = h.nextElementSibling; s && s.dataset.testid !== "stNavSectionHeader";
-                 s = s.nextElementSibling) {
-                if (plegado !== s.hasAttribute("data-gp-oculto"))
-                    plegado ? s.setAttribute("data-gp-oculto", "") : s.removeAttribute("data-gp-oculto");
-            }
-        });
         const aqui = window.parent.location.pathname.replace(/\\/$/, "");
         doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(a => {
             const activa = new URL(a.href, window.parent.location.href).pathname
                 .replace(/\\/$/, "") === aqui;
             if (activa !== a.hasAttribute("data-gp-activa"))
                 activa ? a.setAttribute("data-gp-activa", "") : a.removeAttribute("data-gp-activa");
+        });
+        const guardado = estado();
+        // el titulo puede traer mas texto segun la version de Streamlit: se busca el nombre
+        doc.querySelectorAll('[data-testid="stNavSectionHeader"]').forEach(h => {
+            const texto = h.textContent.trim();
+            const nombre = Object.keys(MODULOS).find(n => texto.startsWith(n));
+            if (nombre && h.dataset.gpModulo !== MODULOS[nombre]) h.dataset.gpModulo = MODULOS[nombre];
+            if (!h.dataset.gpModulo) return;
+            const enlaces = [];
+            for (let s = h.nextElementSibling; s && s.dataset.testid !== "stNavSectionHeader";
+                 s = s.nextElementSibling) enlaces.push(s);
+            // «Mi trabajo» (enlace oculto tras el ultimo modulo) no abre ningun modulo
+            const abierta = enlaces.some(s => s.querySelector("[data-gp-activa]")
+                                         && !s.querySelector('a[href$="/mi-trabajo"]'));
+            const m = h.dataset.gpModulo;
+            const plegado = m in guardado ? guardado[m] : !abierta;
+            if (plegado !== h.hasAttribute("data-gp-plegado"))
+                plegado ? h.setAttribute("data-gp-plegado", "") : h.removeAttribute("data-gp-plegado");
+            enlaces.forEach(s => {
+                if (plegado !== s.hasAttribute("data-gp-oculto"))
+                    plegado ? s.setAttribute("data-gp-oculto", "") : s.removeAttribute("data-gp-oculto");
+            });
         });
     }
     // la pagina ya esta en espanol: que el navegador no la traduzca (altera contrasenas y datos)
