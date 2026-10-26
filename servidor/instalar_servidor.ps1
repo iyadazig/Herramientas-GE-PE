@@ -11,8 +11,9 @@ Crea (o sustituye):
   2. Tarea "Herramientas GEYPE - servidor": arranca la plataforma al encender el servidor y la reinicia
      si se cae.
   3. Tareas de datos: descarga diaria del PVPC, mensual de componentes de ESIOS, copia de
-     seguridad diaria de la base de datos y estados del cuadro de seguimiento desde Gemweb
-     (a las 7:00 y a las 12:00).
+     seguridad diaria de la base de datos y búsqueda en Gemweb de las facturas que faltan por
+     señalar en el cuadro de seguimiento (a las 7:00 y a las 12:00; deja los cambios
+     propuestos, que se aceptan en el cuadro).
 No toca datos ni credenciales.
 #>
 param(

@@ -36,14 +36,18 @@ pago. La factura y la curva no salen del PC.
     permisos delegados, código de dispositivo, sin secreto; refresh token cifrado con DPAPI en
     `sgc_outlook`). Registro de la aplicación: `servidor/GUIA_OUTLOOK.md`; sus IDs se guardan en
     Administración → «Seguimiento y Control» → Outlook.
-  - `estados_gemweb.py`: a las 7:00 y a las 12:00 (tarea del servidor) y con un botón del
-    cuadro. Facturas de Gemweb con periodo de este año (en enero y febrero, también los 3
-    meses anteriores; sin anuladas, simuladas, abonos ni
-    complementarias), en los meses que cubren en más de la mitad de sus días: vacío o «Sin fra»
-    → «Recibida» (sin verificar) o «Pdte inf» (verificada); «Recibida» → «Pdte inf». Nunca
-    retrocede ni toca «Inf enviado», «Inf no enviado», «Temporal» ni «Cadencia». Solo
-    suministros «Sgto. y Control». `--simular` dice qué cambiaría. Con el botón se ve y
-    se descarga en Excel el listado de lo encontrado (una fila por factura y mes) y los cambios.
+  - `estados_gemweb.py`: comprueba que las facturas de Gemweb con periodo de este año (las
+    del año anterior, para más adelante) estén señaladas en el cuadro y **propone** los
+    cambios; no se aplica nada hasta aceptarlos en el cuadro (todos o los seleccionados), y
+    no se pisa una celda cambiada después de la búsqueda. Busca con el botón «Buscar cambios
+    en Gemweb» y a las 7:00 y a las 12:00 (tarea del servidor, deja la propuesta en
+    `sgc_ajustes`). Las facturas cuentan en los meses que cubren en más de la mitad de sus
+    días (sin anuladas, simuladas, abonos ni complementarias): vacío o «Sin fra» → «Recibida»
+    (sin verificar) o «Pdte inf» (verificada); «Recibida» → «Pdte inf». Nunca retrocede ni
+    toca «Inf enviado», «Inf no enviado», «Temporal» ni «Cadencia». Solo suministros «Sgto. y
+    Control». Cambios propuestos y facturas encontradas se ven y se descargan en Excel. Otro
+    botón saca los suministros del cuadro cuyo CUPS no está en Gemweb (es normal que haya).
+    `--aplicar` aplica todo desde la línea de comandos.
   - `paginas.py` (cuadro, retraso, contactos de envío, contactos y claves de clientes, SMAC,
     telemedida, bajas y administración) y `envios.py` (enviar informes, avisos de incidencias,
     historial y conexión con Outlook). Envíos con modo prueba por defecto; tras enviar informes

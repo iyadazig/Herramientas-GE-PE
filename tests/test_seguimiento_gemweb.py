@@ -61,61 +61,68 @@ class EstadosGemweb(BaseDatos):
         for final in (C.PDTE_INF, C.INF_ENVIADO, C.INF_NO_ENVIADO, C.TEMPORAL, C.CADENCIA):
             self.assertIsNone(G.nuevo_estado(final, True))
 
-    def test_actualizar(self):
-        api = GemwebFalso([
+    def _api(self):
+        return GemwebFalso([
             _factura("1", "01/07/2026", "31/07/2026", "0", "F-jul"),
             _factura("1", "01/03/2026", "31/03/2026", "1", "F-mar"),    # Recibida -> Pdte inf
             _factura("1", "01/01/2026", "31/01/2026", "1", "F-ene"),    # ya Inf enviado
+            _factura("1", "01/12/2025", "31/12/2025", "1", "F-2025"),   # año anterior: fuera
             _factura("2", "01/07/2026", "31/08/2026", "1", "F-bim"),    # bimestral verificada
             _factura("2", "01/07/2026", "31/07/2026", "0", "F-jul2"),   # cuenta la verificada
             _factura("2", "01/09/2026", "30/09/2026", "0", "F-anul", anulada="1"),
             _factura("2", "01/09/2026", "30/09/2026", "0", "F-comp", complementaria="1"),
             _factura("3", "01/08/2026", "31/08/2026", "0", "F-ases"),   # asesoramiento
             _factura("9", "01/08/2026", "31/08/2026", "0", "F-fuera")])  # no esta en Gemweb
-        r = G.actualizar(hoy=dt.date(2026, 10, 26), cliente=api)
-        self.assertEqual(r["inicio"], dt.date(2026, 1, 1))
+
+    def test_buscar_propone_sin_cambiar_el_cuadro(self):
+        api = self._api()
+        r = G.buscar(hoy=dt.date(2026, 10, 26), cliente=api)
+        self.assertEqual(r["inicio"], "2026-01-01")
         self.assertEqual(api.llamadas[1][1]["search_values"], "2026-01-01")
         self.assertEqual(sorted((c["cups"], c["mes"], c["antes"], c["despues"])
                                 for c in r["cambios"]),
                          [(CUPS1, 3, C.RECIBIDA, C.PDTE_INF), (CUPS1, 7, None, C.RECIBIDA),
                           (CUPS2, 7, C.SIN_FRA, C.PDTE_INF), (CUPS2, 8, C.SIN_FRA, C.PDTE_INF)])
-        self.assertEqual(self.estado(CUPS1, 7), C.RECIBIDA)
-        self.assertEqual(self.estado(CUPS1, 1), C.INF_ENVIADO)              # sin tocar
-        self.assertEqual(self.estado(CUPS2, 9), C.SIN_FRA)                 # anulada y comp.
-        self.assertIsNone(self.estado(CUPS3, 8))
-        self.assertEqual(len(almacen.listar_cambios_gemweb()), 4)
+        self.assertIsNone(self.estado(CUPS1, 7))                           # nada aplicado
         resultado = {(f["Factura"], f.get("Mes")): f["Resultado"] for f in r["listado"]}
         self.assertEqual(resultado[("F-ene", "ene-26")], G.SIN_CAMBIOS)
         self.assertEqual(resultado[("F-mar", "mar-26")], G.CAMBIA)
         self.assertEqual(resultado[("F-jul2", "jul-26")], G.OTRA_FACTURA)
         self.assertEqual(resultado[("F-anul", None)], "Descartada (anulada)")
         self.assertEqual(resultado[("F-ases", "ago-26")], G.NO_SYC)
-        self.assertNotIn(("F-fuera", None), resultado)       # su suministro no esta en Gemweb
-        self.assertEqual(len(r["facturas"]), 8)
-        self.assertEqual(G.actualizar(hoy=dt.date(2026, 10, 26), cliente=api)["cambios"], [])
+        self.assertNotIn("F-2025", {f for f, _ in resultado})
+        self.assertNotIn("F-fuera", {f for f, _ in resultado})
 
-    def test_cups_que_no_esta_en_el_cuadro(self):
-        api = GemwebFalso([_factura("4", "01/07/2026", "31/07/2026", "0", "F-otro")])
-        api.get_inventory_original = api.get_inventory
-
-        def inventario(category, **kw):
-            if category == "subministraments":
-                return _xml([{"id": "4", "cups": "ES0000000000000009XX"}])
-            return api.get_inventory_original(category, **kw)
-        api.get_inventory = inventario
-        r = G.actualizar(hoy=dt.date(2026, 10, 26), cliente=api)
-        self.assertEqual([f["Resultado"] for f in r["listado"]], [G.NO_EN_CUADRO])
-        self.assertEqual(r["cambios"], [])
-
-    def test_simular_no_guarda(self):
-        api = GemwebFalso([_factura("1", "01/07/2026", "31/07/2026")])
-        self.assertEqual(len(G.actualizar(simular=True, hoy=dt.date(2026, 10, 26),
-                                          cliente=api)["cambios"]), 1)
+    def test_aplicar_todos_o_seleccionados(self):
+        r = G.buscar(hoy=dt.date(2026, 10, 26), cliente=self._api())
+        G.guardar_propuesta(r)
+        marzo = [c for c in r["cambios"] if c["mes"] == 3]
+        hechos, saltados = G.aplicar(marzo, "prueba")
+        self.assertEqual((len(hechos), saltados), (1, []))
+        self.assertEqual(self.estado(CUPS1, 3), C.PDTE_INF)
         self.assertIsNone(self.estado(CUPS1, 7))
-        self.assertEqual(almacen.listar_cambios_gemweb(), [])
+        self.assertEqual(len(G.propuesta()["cambios"]), 3)                # quedan pendientes
+        # alguien cambia una celda despues de la busqueda: ese cambio no se aplica
+        almacen.guardar_sgc_estados([{"id_suministro": self.ids[CUPS1], "anio": 2026, "mes": 7,
+                                      "estado": C.TEMPORAL}], "prueba")
+        hechos, saltados = G.aplicar(G.propuesta()["cambios"], "prueba")
+        self.assertEqual((len(hechos), len(saltados)), (2, 1))
+        self.assertEqual(self.estado(CUPS1, 7), C.TEMPORAL)
+        self.assertEqual(self.estado(CUPS2, 8), C.PDTE_INF)
+        self.assertEqual(G.propuesta()["cambios"], [])
+        self.assertEqual(len(almacen.listar_cambios_gemweb()), 3)
+        self.assertEqual(G.buscar(hoy=dt.date(2026, 10, 26), cliente=self._api())["cambios"], [])
 
-    def test_inicio_en_enero_cubre_el_año_anterior(self):
-        self.assertEqual(G.desde(dt.date(2027, 1, 15)), dt.date(2026, 10, 1))
+    def test_cups_del_cuadro_fuera_de_gemweb(self):
+        fuera = G.cups_fuera_de_gemweb(cliente=GemwebFalso([]))
+        self.assertEqual(fuera, [])
+        api = GemwebFalso([])
+        api.get_inventory = lambda category, **kw: _xml([{"id": "1", "cups": CUPS1}])
+        self.assertEqual(sorted(f["CUPS"] for f in G.cups_fuera_de_gemweb(cliente=api)),
+                         [CUPS2, CUPS3])
+
+    def test_solo_este_año(self):
+        self.assertEqual(G.desde(dt.date(2027, 1, 15)), dt.date(2027, 1, 1))
 
 
 if __name__ == "__main__":

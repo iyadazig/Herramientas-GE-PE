@@ -200,87 +200,150 @@ def pagina_cuadro():
 
 
 COLUMNAS_CAMBIOS = {"cups": "CUPS", "denominacion": "Denominación suministro", "Mes": "Mes",
-                    "antes": "Antes", "despues": "Después", "factura": "Factura"}
+                    "antes": "Estado en el cuadro", "despues": "Estado propuesto",
+                    "factura": "Factura"}
 FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
                   for c in ("Emisión", "Periodo inicio", "Periodo fin")}
 
 
-def _df_cambios(cambios):
-    df = pd.DataFrame(cambios, columns=["cups", "denominacion", "anio", "mes", "antes",
-                                        "despues", "factura"] + (
-                          ["fecha"] if cambios and "fecha" in cambios[0] else []))
-    df["Mes"] = [C.columna_mes(a, m) for a, m in zip(df["anio"], df["mes"])]
+def _df_cambios(cambios, aplicados=False):
+    """Cambios (propuestos o ya aplicados) para verlos y descargarlos."""
+    df = pd.DataFrame(cambios, columns=["fecha", "cups", "denominacion", "anio", "mes",
+                                        "antes", "despues", "factura"])
+    df["Mes"] = [C.columna_mes(int(a), int(m)) for a, m in zip(df["anio"], df["mes"])]
     columnas = dict(COLUMNAS_CAMBIOS)
-    if "fecha" in df:
+    if aplicados:
         df["fecha"] = pd.to_datetime(df["fecha"])
-        columnas = {"fecha": "Fecha", **columnas}
+        columnas = {"fecha": "Aplicado", **columnas, "antes": "Antes", "despues": "Después"}
     return df[list(columnas)].rename(columns=columnas)
 
 
+def _df_listado(listado, columnas):
+    df = pd.DataFrame(listado, columns=columnas)
+    for c in FECHAS_LISTADO:
+        df[c] = pd.to_datetime(df[c], errors="coerce").dt.date
+    return df
+
+
 def _gemweb():
-    """Boton para actualizar los estados con Gemweb: listado de lo encontrado y de los cambios,
-    para ver y descargar, y los ultimos cambios automaticos."""
+    """Facturas de Gemweb: busca los cambios, los muestra para aceptarlos (todos o los
+    seleccionados) y descargarlos; aparte, los CUPS del cuadro que no estan en Gemweb."""
     from seguimiento import estados_gemweb as G
-    resultado = ss.get("sgc_gw_resultado")
-    with st.expander("Estados desde Gemweb (automático a las 7:00 y a las 12:00)",
-                     expanded=bool(resultado)):
-        st.caption("Se buscan las facturas de Gemweb con periodo de este año. Factura subida: "
-                   "«Sin fra» o vacío pasa a «Recibida»; verificada: pasa a «Pdte inf». Nunca "
-                   "retrocede un estado ni toca «Inf enviado», «Inf no enviado», «Temporal» ni "
-                   "«Cadencia». Solo suministros «Sgto. y Control».")
-        if st.button("Actualizar ahora desde Gemweb", icon=":material/sync:", key="sgc_gw"):
+    p = G.propuesta()
+    pendientes = len(p["cambios"]) if p else 0
+    titulo = "Facturas de Gemweb" + (" · %d cambios pendientes de aceptar" % pendientes
+                                     if pendientes else "")
+    with st.expander(titulo, expanded=bool(pendientes) or bool(ss.get("sgc_gw_abierto"))):
+        st.caption("Comprueba que las facturas de Gemweb con periodo de este año estén señaladas "
+                   "en el cuadro y propone los cambios; no se aplica nada hasta que los aceptes. "
+                   "Factura subida: «Sin fra» o vacío pasa a «Recibida»; verificada: a «Pdte "
+                   "inf». Nunca retrocede un estado ni toca «Inf enviado», «Inf no enviado», "
+                   "«Temporal» ni «Cadencia». Solo suministros «Sgto. y Control». También se "
+                   "busca solo a las 7:00 y a las 12:00.")
+        c1, c2 = st.columns(2)
+        if c1.button("Buscar cambios en Gemweb", type="primary", icon=":material/sync:",
+                     key="sgc_gw", use_container_width=True):
             with st.spinner("Consultando las facturas de Gemweb…"):
                 try:
-                    r = G.actualizar()
+                    p = G.buscar()
                 except Exception as e:                                # noqa: BLE001
-                    st.error("No se ha podido actualizar: %s" % e)
+                    st.error("No se ha podido consultar Gemweb: %s" % e)
                     return
-            almacen.registrar_actividad(_usuario(), MODULO, "Estados desde Gemweb",
-                                        "%d facturas, %d cambios (a mano)"
-                                        % (len(r["facturas"]), len(r["cambios"])))
-            cambios = _df_cambios(r["cambios"])
-            listado = pd.DataFrame(r["listado"], columns=G.COLUMNAS_LISTADO)
-            ss.sgc_gw_resultado = {
-                "fecha": dt.datetime.now(), "inicio": r["inicio"], "cambios": cambios,
-                "listado": listado, "facturas": len(r["facturas"]),
-                "descartadas": sum(1 for f in r["facturas"] if f["descartada"]),
-                "excel": D.excel_tablas([("Cambios en el cuadro", cambios),
-                                         ("Facturas encontradas", listado)])}
-            st.rerun()                     # para que el cuadro de arriba muestre los cambios
-        if resultado:
-            st.success("Actualizado el %s con las facturas de Gemweb con periodo desde el %s."
-                       % (resultado["fecha"].strftime("%d/%m/%Y a las %H:%M"),
-                          resultado["inicio"].strftime("%d/%m/%Y")))
-            listado = resultado["listado"]
-            m = st.columns(4)
-            m[0].metric("Facturas encontradas", resultado["facturas"])
-            m[1].metric("Descartadas", resultado["descartadas"],
-                        help="Anuladas, simuladas, abonos, abonadas y complementarias")
-            m[2].metric("CUPS que no están en el cuadro",
-                        listado.loc[listado["Resultado"] == G.NO_EN_CUADRO, "CUPS"].nunique())
-            m[3].metric("Cambios añadidos al cuadro", len(resultado["cambios"]))
-            t1, t2 = st.tabs(["Cambios añadidos al cuadro", "Facturas encontradas"])
-            with t1:
-                if resultado["cambios"].empty:
-                    st.info("No ha hecho falta cambiar ningún estado.")
-                else:
-                    st.dataframe(resultado["cambios"], hide_index=True,
-                                 use_container_width=True, height=300)
-            with t2:
-                ver = st.multiselect("Resultado", sorted(listado["Resultado"].unique()),
-                                     key="sgc_gw_ver")
-                st.dataframe(listado[listado["Resultado"].isin(ver)] if ver else listado,
-                             hide_index=True, use_container_width=True, height=350,
-                             column_config=FECHAS_LISTADO)
-            estilo.boton_descarga(
-                MODULO, st, "Descargar listado (Excel)", resultado["excel"],
-                "Gemweb_estados_%s.xlsx" % resultado["fecha"].strftime("%Y%m%d_%H%M"), XLSX)
-        ultimos = almacen.listar_cambios_gemweb(500)
-        if ultimos:
-            st.markdown("**Últimos cambios hechos desde Gemweb** (automáticos y a mano)")
-            st.dataframe(_df_cambios(ultimos), hide_index=True, use_container_width=True,
-                         height=250, column_config={
-                             "Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+            G.guardar_propuesta(p)
+            almacen.registrar_actividad(_usuario(), MODULO, "Buscar estados en Gemweb",
+                                        "%d facturas, %d cambios" % (p["facturas"],
+                                                                     len(p["cambios"])))
+            ss.sgc_gw_abierto = True
+            st.rerun()
+        if c2.button("CUPS del cuadro que no están en Gemweb", icon=":material/search_off:",
+                     key="sgc_gw_fuera", use_container_width=True):
+            with st.spinner("Consultando los suministros de Gemweb…"):
+                try:
+                    ss.sgc_gw_fuera_datos = G.cups_fuera_de_gemweb()
+                except Exception as e:                                # noqa: BLE001
+                    st.error("No se ha podido consultar Gemweb: %s" % e)
+            ss.sgc_gw_abierto = True
+        if ss.get("sgc_gw_fuera_datos") is not None:
+            _cups_fuera(ss.sgc_gw_fuera_datos)
+        if p:
+            _propuesta(G, p)
+        aplicados = almacen.listar_cambios_gemweb(500)
+        if aplicados:
+            st.markdown("**Últimos cambios aplicados desde Gemweb**")
+            st.dataframe(_df_cambios(aplicados, aplicados=True), hide_index=True,
+                         use_container_width=True, height=220, column_config={
+                             "Aplicado": st.column_config.DatetimeColumn(
+                                 format="DD/MM/YYYY HH:mm")})
+
+
+def _cups_fuera(filas):
+    df = pd.DataFrame(filas)
+    st.markdown("**%d suministros del cuadro cuyo CUPS no está en Gemweb**" % len(df))
+    if df.empty:
+        return
+    st.dataframe(df, hide_index=True, use_container_width=True, height=250)
+    c1, c2 = st.columns([1, 1])
+    estilo.boton_descarga(MODULO, c1, "Descargar (Excel)",
+                          D.excel_tablas([("CUPS fuera de Gemweb", df)]),
+                          "CUPS_no_en_Gemweb_%s.xlsx" % dt.date.today().strftime("%Y%m%d"),
+                          XLSX)
+    if c2.button("Ocultar", key="sgc_gw_fuera_ocultar"):
+        ss.sgc_gw_fuera_datos = None
+        st.rerun()
+
+
+def _propuesta(G, p):
+    fecha = dt.datetime.fromisoformat(p["fecha"])
+    st.markdown("**Última búsqueda: %s**, facturas con periodo desde el %s."
+                % (fecha.strftime("%d/%m/%Y a las %H:%M"),
+                   dt.date.fromisoformat(p["inicio"]).strftime("%d/%m/%Y")))
+    m = st.columns(3)
+    m[0].metric("Facturas encontradas", p["facturas"])
+    m[1].metric("Descartadas", p["descartadas"],
+                help="Anuladas, simuladas, abonos, abonadas y complementarias")
+    m[2].metric("Cambios pendientes de aceptar", len(p["cambios"]))
+    listado = _df_listado(p["listado"], G.COLUMNAS_LISTADO)
+    cambios = _df_cambios(p["cambios"])
+    estilo.boton_descarga(
+        MODULO, st, "Descargar cambios y facturas encontradas (Excel)",
+        D.excel_tablas([("Cambios propuestos", cambios), ("Facturas encontradas", listado)]),
+        "Gemweb_cambios_%s.xlsx" % fecha.strftime("%Y%m%d_%H%M"), XLSX,
+        key="sgc_gw_excel_%s" % p["fecha"])
+    t1, t2 = st.tabs(["Cambios propuestos", "Facturas encontradas"])
+    with t1:
+        if cambios.empty:
+            st.info("Todas las facturas de Gemweb ya están señaladas en el cuadro.")
+        else:
+            st.caption("Marca los que quieras aplicar, o aplícalos todos.")
+            editor = cambios.copy()
+            editor.insert(0, "Aplicar", False)
+            elegidos = st.data_editor(
+                editor, hide_index=True, use_container_width=True, height=320,
+                disabled=list(cambios.columns), key="sgc_gw_sel_%s" % p["fecha"],
+                column_config={"Aplicar": st.column_config.CheckboxColumn("Aplicar")})
+            marcados = [c for c, sel in zip(p["cambios"], elegidos["Aplicar"]) if sel]
+            b1, b2 = st.columns(2)
+            todos = b1.button("Aplicar todos (%d)" % len(p["cambios"]), type="primary",
+                              icon=":material/done_all:", key="sgc_gw_todos",
+                              use_container_width=True)
+            seleccion = b2.button("Aplicar los seleccionados (%d)" % len(marcados),
+                                  icon=":material/done:", key="sgc_gw_sel",
+                                  disabled=not marcados, use_container_width=True)
+            if todos or seleccion:
+                hechos, saltados = G.aplicar(p["cambios"] if todos else marcados, _usuario())
+                ss.sgc_gw_aviso = ("Aplicados %d cambios al cuadro." % len(hechos)
+                                   + (" %d no, porque alguien había cambiado esa celda después "
+                                      "de la búsqueda." % len(saltados) if saltados else ""))
+                ss.sgc_gw_abierto = True
+                st.rerun()
+        if ss.get("sgc_gw_aviso"):
+            st.success(ss.pop("sgc_gw_aviso"))
+    with t2:
+        ver = st.multiselect("Resultado", sorted(listado["Resultado"].dropna().unique()),
+                             key="sgc_gw_ver")
+        st.dataframe(listado[listado["Resultado"].isin(ver)] if ver else listado,
+                     hide_index=True, use_container_width=True, height=350,
+                     column_config=FECHAS_LISTADO)
 
 
 # ------------------------------------------------------------------- retraso
