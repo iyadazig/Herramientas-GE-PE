@@ -37,11 +37,13 @@ pago. La factura y la curva no salen del PC.
     `sgc_outlook`). Registro de la aplicación: `servidor/GUIA_OUTLOOK.md`; sus IDs se guardan en
     Administración → «Seguimiento y Control» → Outlook.
   - `estados_gemweb.py`: a las 7:00 y a las 12:00 (tarea del servidor) y con un botón del
-    cuadro. Facturas de Gemweb de los 3 últimos meses (sin anuladas, simuladas, abonos ni
+    cuadro. Facturas de Gemweb con periodo de este año (en enero y febrero, también los 3
+    meses anteriores; sin anuladas, simuladas, abonos ni
     complementarias), en los meses que cubren en más de la mitad de sus días: vacío o «Sin fra»
     → «Recibida» (sin verificar) o «Pdte inf» (verificada); «Recibida» → «Pdte inf». Nunca
     retrocede ni toca «Inf enviado», «Inf no enviado», «Temporal» ni «Cadencia». Solo
-    suministros «Sgto. y Control». `--simular` dice qué cambiaría.
+    suministros «Sgto. y Control». `--simular` dice qué cambiaría. Con el botón se ve y
+    se descarga en Excel el listado de lo encontrado (una fila por factura y mes) y los cambios.
   - `paginas.py` (cuadro, retraso, contactos de envío, contactos y claves de clientes, SMAC,
     telemedida, bajas y administración) y `envios.py` (enviar informes, avisos de incidencias,
     historial y conexión con Outlook). Envíos con modo prueba por defecto; tras enviar informes

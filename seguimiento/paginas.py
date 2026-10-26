@@ -199,34 +199,87 @@ def pagina_cuadro():
                  "sgc_excel")
 
 
+COLUMNAS_CAMBIOS = {"cups": "CUPS", "denominacion": "Denominación suministro", "Mes": "Mes",
+                    "antes": "Antes", "despues": "Después", "factura": "Factura"}
+FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
+                  for c in ("Emisión", "Periodo inicio", "Periodo fin")}
+
+
+def _df_cambios(cambios):
+    df = pd.DataFrame(cambios, columns=["cups", "denominacion", "anio", "mes", "antes",
+                                        "despues", "factura"] + (
+                          ["fecha"] if cambios and "fecha" in cambios[0] else []))
+    df["Mes"] = [C.columna_mes(a, m) for a, m in zip(df["anio"], df["mes"])]
+    columnas = dict(COLUMNAS_CAMBIOS)
+    if "fecha" in df:
+        df["fecha"] = pd.to_datetime(df["fecha"])
+        columnas = {"fecha": "Fecha", **columnas}
+    return df[list(columnas)].rename(columns=columnas)
+
+
 def _gemweb():
-    """Boton para actualizar los estados con Gemweb y ultimos cambios automaticos."""
-    from seguimiento import estados_gemweb
-    with st.expander("Estados desde Gemweb (automático a las 7:00 y a las 12:00)"):
-        st.caption("Factura subida a Gemweb: «Sin fra» o vacío pasa a «Recibida»; verificada: "
-                   "pasa a «Pdte inf». Nunca retrocede un estado ni toca «Inf enviado», «Inf no "
-                   "enviado», «Temporal» ni «Cadencia». Solo suministros «Sgto. y Control».")
+    """Boton para actualizar los estados con Gemweb: listado de lo encontrado y de los cambios,
+    para ver y descargar, y los ultimos cambios automaticos."""
+    from seguimiento import estados_gemweb as G
+    resultado = ss.get("sgc_gw_resultado")
+    with st.expander("Estados desde Gemweb (automático a las 7:00 y a las 12:00)",
+                     expanded=bool(resultado)):
+        st.caption("Se buscan las facturas de Gemweb con periodo de este año. Factura subida: "
+                   "«Sin fra» o vacío pasa a «Recibida»; verificada: pasa a «Pdte inf». Nunca "
+                   "retrocede un estado ni toca «Inf enviado», «Inf no enviado», «Temporal» ni "
+                   "«Cadencia». Solo suministros «Sgto. y Control».")
         if st.button("Actualizar ahora desde Gemweb", icon=":material/sync:", key="sgc_gw"):
             with st.spinner("Consultando las facturas de Gemweb…"):
                 try:
-                    cambios = estados_gemweb.actualizar()
+                    r = G.actualizar()
                 except Exception as e:                                # noqa: BLE001
                     st.error("No se ha podido actualizar: %s" % e)
+                    return
+            almacen.registrar_actividad(_usuario(), MODULO, "Estados desde Gemweb",
+                                        "%d facturas, %d cambios (a mano)"
+                                        % (len(r["facturas"]), len(r["cambios"])))
+            cambios = _df_cambios(r["cambios"])
+            listado = pd.DataFrame(r["listado"], columns=G.COLUMNAS_LISTADO)
+            ss.sgc_gw_resultado = {
+                "fecha": dt.datetime.now(), "inicio": r["inicio"], "cambios": cambios,
+                "listado": listado, "facturas": len(r["facturas"]),
+                "descartadas": sum(1 for f in r["facturas"] if f["descartada"]),
+                "excel": D.excel_tablas([("Cambios en el cuadro", cambios),
+                                         ("Facturas encontradas", listado)])}
+            st.rerun()                     # para que el cuadro de arriba muestre los cambios
+        if resultado:
+            st.success("Actualizado el %s con las facturas de Gemweb con periodo desde el %s."
+                       % (resultado["fecha"].strftime("%d/%m/%Y a las %H:%M"),
+                          resultado["inicio"].strftime("%d/%m/%Y")))
+            listado = resultado["listado"]
+            m = st.columns(4)
+            m[0].metric("Facturas encontradas", resultado["facturas"])
+            m[1].metric("Descartadas", resultado["descartadas"],
+                        help="Anuladas, simuladas, abonos, abonadas y complementarias")
+            m[2].metric("CUPS que no están en el cuadro",
+                        listado.loc[listado["Resultado"] == G.NO_EN_CUADRO, "CUPS"].nunique())
+            m[3].metric("Cambios añadidos al cuadro", len(resultado["cambios"]))
+            t1, t2 = st.tabs(["Cambios añadidos al cuadro", "Facturas encontradas"])
+            with t1:
+                if resultado["cambios"].empty:
+                    st.info("No ha hecho falta cambiar ningún estado.")
                 else:
-                    almacen.registrar_actividad(_usuario(), MODULO, "Estados desde Gemweb",
-                                                "%d cambios (a mano)" % len(cambios))
-                    st.success("%d estados actualizados." % len(cambios))
+                    st.dataframe(resultado["cambios"], hide_index=True,
+                                 use_container_width=True, height=300)
+            with t2:
+                ver = st.multiselect("Resultado", sorted(listado["Resultado"].unique()),
+                                     key="sgc_gw_ver")
+                st.dataframe(listado[listado["Resultado"].isin(ver)] if ver else listado,
+                             hide_index=True, use_container_width=True, height=350,
+                             column_config=FECHAS_LISTADO)
+            estilo.boton_descarga(
+                MODULO, st, "Descargar listado (Excel)", resultado["excel"],
+                "Gemweb_estados_%s.xlsx" % resultado["fecha"].strftime("%Y%m%d_%H%M"), XLSX)
         ultimos = almacen.listar_cambios_gemweb(500)
         if ultimos:
-            df = pd.DataFrame(ultimos)
-            df["Mes"] = [C.columna_mes(a, m) for a, m in zip(df["anio"], df["mes"])]
-            df["fecha"] = pd.to_datetime(df["fecha"])
-            st.dataframe(df[["fecha", "cups", "denominacion", "Mes", "antes", "despues",
-                             "factura"]].rename(columns={
-                                 "fecha": "Fecha", "cups": "CUPS",
-                                 "denominacion": "Denominación suministro", "antes": "Antes",
-                                 "despues": "Después", "factura": "Factura"}),
-                         hide_index=True, use_container_width=True, height=300, column_config={
+            st.markdown("**Últimos cambios hechos desde Gemweb** (automáticos y a mano)")
+            st.dataframe(_df_cambios(ultimos), hide_index=True, use_container_width=True,
+                         height=250, column_config={
                              "Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
 
 

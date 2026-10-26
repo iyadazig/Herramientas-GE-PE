@@ -29,8 +29,9 @@ ICONO = config.RECURSOS / "assets" / "icono.ico"
 COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
-MODULOS_MENU = {"Seguimiento y Control": "seguimiento", "Revisión de SSAA": "ssaa", "API de Gemweb": "gemweb",
-                "Solicitud de ofertas": "ofertas", "Estudio de potencia": "potencia",
+MODULOS_MENU = {"Seguimiento y Control": "seguimiento", "Revisión de SSAA": "ssaa",
+                "API de Gemweb": "gemweb", "Solicitud de ofertas": "ofertas",
+                "Estudio de potencia": "potencia",
                 "Supervisión": "supervision", "Administración": "admin"}
 LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
 
@@ -151,6 +152,7 @@ h3, .stMarkdown h3 {
     content: ""; flex: none; width: 18px; height: 18px;
     background: no-repeat center / contain;
 }
+[data-gp-modulo="seguimiento"]::before { background-image: url("%(ico_seguimiento)s"); }
 [data-gp-modulo="ssaa"]::before { background-image: url("%(ico_ssaa)s"); }
 [data-gp-modulo="gemweb"]::before { background-image: url("%(ico_gemweb)s"); }
 [data-gp-modulo="ofertas"]::before { background-image: url("%(ico_ofertas)s"); }
