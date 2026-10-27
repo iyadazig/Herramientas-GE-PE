@@ -315,6 +315,11 @@ def _propuesta(G, p):
             st.info("Todas las facturas de Gemweb ya están señaladas en el cuadro.")
         else:
             st.caption("Marca los que quieras aplicar, o aplícalos todos.")
+            estilo.boton_descarga(
+                MODULO, st, "Descargar los %d cambios propuestos (Excel)" % len(cambios),
+                D.excel_tablas([("Cambios propuestos", cambios)]),
+                "Gemweb_cambios_propuestos_%s.xlsx" % fecha.strftime("%Y%m%d_%H%M"), XLSX,
+                key="sgc_gw_excel_cambios_%s" % p["fecha"])
             editor = cambios.copy()
             editor.insert(0, "Aplicar", False)
             elegidos = st.data_editor(
