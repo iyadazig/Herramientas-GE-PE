@@ -211,7 +211,9 @@ h3, .stMarkdown h3 {
 # Paginas que cuelgan de la que tienen justo encima en el menu (inicio.py): listas con las
 # rutas de las subpaginas de cada grupo. Van sangradas bajo ella, con una linea vertical.
 GRUPOS_MENU = [["seguimiento-contactos", "seguimiento-claves", "seguimiento-smac",
-                "seguimiento-telemedida", "seguimiento-bajas"]]
+                "seguimiento-telemedida", "seguimiento-bajas"],             # Cuadro de seguimiento
+               ["seguimiento-incidencias", "seguimiento-envios",
+                "seguimiento-contactos-envio"]]                             # Enviar informes
 
 
 def _css_grupos():

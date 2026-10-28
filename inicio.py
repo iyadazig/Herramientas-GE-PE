@@ -63,7 +63,7 @@ menu = {
     ] + [
         _pagina(funcion, titulo, subtitulo, ruta, SEGUIMIENTO)
         for funcion, titulo, subtitulo, ruta in (
-            # cuelgan de «Cuadro de seguimiento» (sangradas en el menu, estilo.py)
+            # cuelgan de «Cuadro de seguimiento» (sangradas en el menu, estilo.GRUPOS_MENU)
             (seguimiento.pagina_contactos, "Contactos de clientes", SUB_SGC,
              "seguimiento-contactos"),
             (seguimiento.pagina_claves, "Claves de clientes", SUB_SGC, "seguimiento-claves"),
@@ -73,6 +73,7 @@ menu = {
              "seguimiento-bajas"),
             (seguimiento.pagina_retraso, "Retraso de informes",
              "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"),
+            # cuelgan de «Enviar informes» las tres siguientes (estilo.GRUPOS_MENU)
             (envios.pagina_informes, "Enviar informes",
              "Informes de seguimiento por correo desde tu cuenta de Outlook",
              "seguimiento-informes"),
