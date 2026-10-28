@@ -63,6 +63,14 @@ menu = {
     ] + [
         _pagina(funcion, titulo, subtitulo, ruta, SEGUIMIENTO)
         for funcion, titulo, subtitulo, ruta in (
+            # cuelgan de «Cuadro de seguimiento» (sangradas en el menu, estilo.py)
+            (seguimiento.pagina_contactos, "Contactos de clientes", SUB_SGC,
+             "seguimiento-contactos"),
+            (seguimiento.pagina_claves, "Claves de clientes", SUB_SGC, "seguimiento-claves"),
+            (seguimiento.pagina_smac, "SMAC", SUB_SGC, "seguimiento-smac"),
+            (seguimiento.pagina_telemedida, "Telemedida", SUB_SGC, "seguimiento-telemedida"),
+            (seguimiento.pagina_bajas, "Bajas", "Suministros dados de baja en el seguimiento",
+             "seguimiento-bajas"),
             (seguimiento.pagina_retraso, "Retraso de informes",
              "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"),
             (envios.pagina_informes, "Enviar informes",
@@ -75,14 +83,7 @@ menu = {
              "Informes y avisos enviados por el equipo", "seguimiento-envios"),
             (seguimiento.pagina_contactos_envio, "Contactos de envío",
              "Destinatarios de los informes y de los avisos de incidencias",
-             "seguimiento-contactos-envio"),
-            (seguimiento.pagina_contactos, "Contactos de clientes", SUB_SGC,
-             "seguimiento-contactos"),
-            (seguimiento.pagina_claves, "Claves de clientes", SUB_SGC, "seguimiento-claves"),
-            (seguimiento.pagina_smac, "SMAC", SUB_SGC, "seguimiento-smac"),
-            (seguimiento.pagina_telemedida, "Telemedida", SUB_SGC, "seguimiento-telemedida"),
-            (seguimiento.pagina_bajas, "Bajas", "Suministros dados de baja en el seguimiento",
-             "seguimiento-bajas"))
+             "seguimiento-contactos-envio"))
     ],
     SSAA: [
         st.Page("app_revision_ssaa.py", title="Revisar factura", url_path="revisar"),

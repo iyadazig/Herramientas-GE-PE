@@ -178,6 +178,15 @@ h3, .stMarkdown h3 {
 [data-testid="stSidebarNavLink"][data-gp-activa] span {
     color: %(granate_oscuro)s; font-weight: 600;
 }
+/* paginas que cuelgan de «Cuadro de seguimiento»: sangradas bajo ella, con una linea */
+[data-testid="stSidebarNavLink"][href$="/seguimiento-contactos"],
+[data-testid="stSidebarNavLink"][href$="/seguimiento-claves"],
+[data-testid="stSidebarNavLink"][href$="/seguimiento-smac"],
+[data-testid="stSidebarNavLink"][href$="/seguimiento-telemedida"],
+[data-testid="stSidebarNavLink"][href$="/seguimiento-bajas"] {
+    padding-left: 1rem; margin-left: 2.6rem; border-left: 2px solid %(linea_menu)s;
+    border-radius: 0 6px 6px 0;
+}
 
 /* expanders */
 [data-testid="stExpander"] details { border: 1px solid %(borde)s; border-radius: 6px; }
