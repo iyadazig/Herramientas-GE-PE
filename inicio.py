@@ -71,8 +71,6 @@ menu = {
             (seguimiento.pagina_telemedida, "Telemedida", SUB_SGC, "seguimiento-telemedida"),
             (seguimiento.pagina_bajas, "Bajas", "Suministros dados de baja en el seguimiento",
              "seguimiento-bajas"),
-            (seguimiento.pagina_retraso, "Retraso de informes",
-             "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"),
             # cuelgan de «Enviar Informes Sgto.» las tres siguientes (estilo.GRUPOS_MENU)
             (envios.pagina_informes, "Enviar Informes Sgto.",
              "Informes de seguimiento por correo desde tu cuenta de Outlook",
@@ -84,7 +82,9 @@ menu = {
              "Informes y avisos enviados por el equipo", "seguimiento-envios"),
             (seguimiento.pagina_contactos_envio, "Contactos de envío",
              "Destinatarios de los informes y de los avisos de incidencias",
-             "seguimiento-contactos-envio"))
+             "seguimiento-contactos-envio"),
+            (seguimiento.pagina_retraso, "Retraso de informes",
+             "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"))
     ],
     SSAA: [
         st.Page("app_revision_ssaa.py", title="Revisar factura", url_path="revisar"),
