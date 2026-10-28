@@ -392,14 +392,19 @@ def _propuesta(G, p):
 
 
 # ------------------------------------------------------------------- retraso
-def _grafico_barras(tabla, por, color):
+def _grafico_barras(tabla, por, color, filas):
+    """Barras en el mismo orden que la tabla de debajo. filas: las de la tabla mas larga, para
+    que los dos graficos (tecnico y auxiliar) tengan el mismo alto y las tablas queden a la
+    misma altura; las etiquetas, con ancho fijo y todas visibles."""
     return alt.Chart(tabla).mark_bar(color=color).encode(
         x=alt.X("% Retraso:Q", axis=alt.Axis(format="%", title="% de retraso"),
                 scale=alt.Scale(domain=[0, 1])),
-        y=alt.Y("%s:N" % por, sort="-x", title=None),
+        y=alt.Y("%s:N" % por, sort=list(tabla[por]), title=None,
+                axis=alt.Axis(labelOverlap=False, labelLimit=120, minExtent=120,
+                              maxExtent=120)),
         tooltip=[por, "Retrasos", "Enviados",
                  alt.Tooltip("% Retraso:Q", format=".1%")]).properties(
-        height=max(120, 32 * len(tabla)))
+        height=34 * max(filas, 3))
 
 
 def excel_retraso(df, tec, aux, indicadores, hoy):
@@ -505,6 +510,7 @@ def pagina_retraso():
                    "tabla por técnico." % sin_tecnico)
 
     tabla_tec, tabla_aux = R.resumen(df, "Técnico"), R.resumen(df, "Auxiliar")
+    filas = max(len(tabla_tec), len(tabla_aux))
     c1, c2 = st.columns(2)
     for col, tabla, por, color in ((c1, tabla_tec, "Técnico", "#0078D7"),
                                    (c2, tabla_aux, "Auxiliar", "#FF5A5A")):
@@ -513,9 +519,10 @@ def pagina_retraso():
             if tabla.empty:
                 st.caption("Sin datos.")
                 continue
-            st.altair_chart(_grafico_barras(tabla, por, color), use_container_width=True)
-            st.dataframe(tabla, hide_index=True, use_container_width=True, column_config={
-                "% Retraso": st.column_config.NumberColumn(format="percent")})
+            st.altair_chart(_grafico_barras(tabla, por, color, filas), use_container_width=True)
+            st.dataframe(tabla, hide_index=True, use_container_width=True,
+                         height=35 * (filas + 1) + 3, column_config={
+                             "% Retraso": st.column_config.NumberColumn(format="percent")})
 
     st.markdown("**Auditoría** (un bloque por fila; pulsa una fila para ver el suministro)")
     estilo_res = lambda v: ("background-color:#FFC7CE;color:#9C0006;font-weight:bold"
