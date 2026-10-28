@@ -125,6 +125,9 @@ pago. La factura y la curva no salen del PC.
   usuario conectado, sin filtro de usuarios ni datos de otros.
   - Se abre con el botón «Mi trabajo» de la barra lateral, encima del nombre.
   - Su página va en la sección sin título (`menu[""]`) y su enlace se oculta por CSS.
+- **Equipo de Seguimiento:** la primera importación crea la tabla con los nombres de todas las
+  pestañas; al reimportar se respeta tal como se ha dejado en Administración y solo se añaden
+  nombres nuevos que lleven suministros activos en el cuadro (`datos._equipo_al_reimportar`).
 - **Borrar:** cada usuario puede borrar solo lo que ha creado él (revisiones de SSAA,
   solicitudes de ofertas, estudios de potencia y envíos de Seguimiento), con
   `estilo.borrar_mios` y `almacen.borrar_*` (comprueban el usuario en la consulta).

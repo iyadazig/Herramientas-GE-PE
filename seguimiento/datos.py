@@ -259,6 +259,24 @@ def _equipo(leido, contactos):
             for n in nombres]
 
 
+def _equipo_al_reimportar(previo, leido):
+    """Al volver a importar, la tabla Equipo se queda como esta (nombres, roles, emails y
+    usuarios, que se cuidan desde Administracion) y solo se añaden los nombres nuevos que
+    llevan suministros activos en el cuadro, con su rol. Los que solo aparecen en tablas
+    auxiliares o en bajas (nombres antiguos, erratas) no se añaden."""
+    conocidos = {e["nombre"] for e in previo}
+    nuevos = {}
+    no_nombres = {"tecnico", "auxiliar", "-"}
+    for s in leido["suministros"]:
+        if s["baja"]:
+            continue
+        for columna, rol in (("Técnico", "tecnico"), ("Auxiliar", "auxiliar")):
+            n = (s["datos"].get(columna) or "").strip()
+            if n and n not in conocidos and C.normalizar(n) not in no_nombres:
+                nuevos.setdefault(n, {"nombre": n, "tecnico": False, "auxiliar": False})[rol] = True
+    return list(previo) + [nuevos[n] for n in sorted(nuevos)]
+
+
 def _completar_listas(leido):
     """Añade a cada lista los valores que ya se usan en el cuadro y no estaban en ella, para
     que los desplegables los muestren."""
@@ -290,6 +308,9 @@ def importar(leido, contactos, usuario):
     filas = dict(leido["filas"])
     filas["contactos_envio"] = contactos
     equipo = _equipo(leido, contactos)
+    previo = almacen.listar_sgc_equipo()
+    if previo:
+        equipo = _equipo_al_reimportar(previo, leido)
     _completar_listas(leido)
     resultado = almacen.reemplazar_sgc(leido["suministros"], leido["estados"], filas,
                                        leido["listas"], equipo, usuario)

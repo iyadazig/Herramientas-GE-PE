@@ -209,6 +209,24 @@ class Importacion(BaseDatos):
         self.assertEqual(aux["email"], "equipo@ejemplo.invalid")
         self.assertEqual(len(almacen.listar_sgc_filas("contactos_envio")), 1)
 
+    def test_reimportar_respeta_la_tabla_equipo(self):
+        leido = self.importar()
+        activos = [s for s in leido["suministros"] if not s["baja"]]
+        # se quitan del equipo un tecnico del cuadro y se deja otro sin rol
+        quitado = activos[0]["datos"]["Técnico"]
+        equipo = [dict(e, tecnico=0, auxiliar=0) if e["nombre"] == "Aux Uno" else e
+                  for e in almacen.listar_sgc_equipo() if e["nombre"] != quitado]
+        equipo.append({"nombre": "Persona Nueva", "tecnico": 0, "auxiliar": 0})
+        almacen.guardar_sgc_equipo(equipo)
+        leido = D.leer_cuadro(excel_ficticio())
+        leido["filas"]["claves"].append({"Auxiliar": "Errata/Errata"})      # solo en una tabla
+        D.importar(leido, None, "prueba")
+        despues = {e["nombre"]: e for e in almacen.listar_sgc_equipo()}
+        self.assertNotIn("Errata/Errata", despues)
+        self.assertEqual((despues["Aux Uno"]["tecnico"], despues["Aux Uno"]["auxiliar"]), (0, 0))
+        self.assertIn("Persona Nueva", despues)
+        self.assertTrue(despues[quitado]["tecnico"])          # lleva suministros activos: vuelve
+
 
 class Edicion(BaseDatos):
     def test_editar_anadir_y_borrar_en_el_cuadro(self):
