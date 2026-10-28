@@ -202,7 +202,8 @@ def pagina_cuadro():
                  "sgc_excel")
 
 
-COLUMNAS_CAMBIOS = {"tecnico": "Técnico", "auxiliar": "Auxiliar", "cups": "CUPS", "denominacion": "Denominación suministro", "Mes": "Mes",
+COLUMNAS_CAMBIOS = {"tecnico": "Técnico", "auxiliar": "Auxiliar", "cups": "CUPS",
+                    "denominacion": "Denominación suministro", "Mes": "Mes",
                     "antes": "Estado en el cuadro", "despues": "Estado propuesto",
                     "obs_antes": "Obs en el cuadro", "obs_despues": "Obs propuesta",
                     "factura": "Factura"}
@@ -210,11 +211,25 @@ FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
                   for c in ("Emisión", "Periodo inicio", "Periodo fin")}
 
 
-def _df_cambios(cambios, aplicados=False):
+def _equipo_suministros():
+    """Tecnico y auxiliar de cada suministro del cuadro, por id y por CUPS (de 20), tal como
+    estan ahora: asi salen tambien en busquedas guardadas antes y en los cambios aplicados."""
+    por_id, por_cups = {}, {}
+    for s in sorted(almacen.listar_sgc_suministros(), key=lambda x: not x["baja"]):
+        par = (s["datos"].get("Técnico"), s["datos"].get("Auxiliar"))
+        por_id[s["id"]] = par
+        por_cups[(s["cups"] or "").strip().upper()[:20]] = par
+    return por_id, por_cups
+
+
+def _df_cambios(cambios, aplicados=False, equipo=None):
     """Cambios (propuestos o ya aplicados) para verlos y descargarlos."""
-    df = pd.DataFrame(cambios, columns=["fecha", "tecnico", "auxiliar", "cups", "denominacion", "anio", "mes",
-                                        "antes", "despues", "obs_antes", "obs_despues", "obs",
-                                        "factura"])
+    df = pd.DataFrame(cambios, columns=["fecha", "id_suministro", "cups", "denominacion", "anio",
+                                        "mes", "antes", "despues", "obs_antes", "obs_despues",
+                                        "obs", "factura"])
+    por_id = (equipo or _equipo_suministros())[0]
+    df["tecnico"] = [por_id.get(i, (None, None))[0] for i in df["id_suministro"]]
+    df["auxiliar"] = [por_id.get(i, (None, None))[1] for i in df["id_suministro"]]
     df["Mes"] = [C.columna_mes(int(a), int(m)) for a, m in zip(df["anio"], df["mes"])]
     columnas = dict(COLUMNAS_CAMBIOS)
     if aplicados:
@@ -222,13 +237,15 @@ def _df_cambios(cambios, aplicados=False):
         df["obs_despues"] = df["obs"]
         columnas = {"fecha": "Aplicado", **columnas, "antes": "Antes", "despues": "Después",
                     "obs_despues": "Obs puesta"}
-        for k in ("obs_antes", "tecnico", "auxiliar"):        # no se guardan en el registro
-            del columnas[k]
+        del columnas["obs_antes"]
     return df[list(columnas)].rename(columns=columnas)
 
 
-def _df_listado(listado, columnas):
+def _df_listado(listado, columnas, equipo=None):
     df = pd.DataFrame(listado, columns=columnas)
+    por_cups = (equipo or _equipo_suministros())[1]
+    df["Técnico"] = [por_cups.get(c, (None, None))[0] for c in df["CUPS"]]
+    df["Auxiliar"] = [por_cups.get(c, (None, None))[1] for c in df["CUPS"]]
     for c in FECHAS_LISTADO:
         df[c] = pd.to_datetime(df[c], errors="coerce").dt.date
     return df
@@ -313,8 +330,9 @@ def _propuesta(G, p):
     m[1].metric("Descartadas", p["descartadas"],
                 help="Anuladas, simuladas, abonos, abonadas y complementarias")
     m[2].metric("Cambios pendientes de aceptar", len(p["cambios"]))
-    listado = _df_listado(p["listado"], G.COLUMNAS_LISTADO)
-    cambios = _df_cambios(p["cambios"])
+    equipo = _equipo_suministros()
+    listado = _df_listado(p["listado"], G.COLUMNAS_LISTADO, equipo)
+    cambios = _df_cambios(p["cambios"], equipo=equipo)
     estilo.boton_descarga(
         MODULO, st, "Descargar cambios y facturas encontradas (Excel)",
         D.excel_tablas([("Cambios propuestos", cambios), ("Facturas encontradas", listado)]),
