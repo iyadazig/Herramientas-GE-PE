@@ -129,6 +129,16 @@ def barra_usuario():
 
 
 # ------------------------------------------------------------------- historial
+def _nombres_cups():
+    """{CUPS de 20: {"denominacion", "titular"}} del cuadro de Seguimiento y Control."""
+    from seguimiento import datos as sgc
+    return sgc.nombres_por_cups()
+
+
+def _del_cuadro(nombres, cups, campo):
+    return (nombres.get((cups or "").strip().upper()[:20]) or {}).get(campo) or ""
+
+
 def pagina_historial():
     filas = almacen.listar_revisiones(limite=5000)
     if not filas:
@@ -137,14 +147,18 @@ def pagina_historial():
         return
     df = pd.DataFrame(filas)
     df["fecha"] = pd.to_datetime(df["fecha"])
+    nombres = _nombres_cups()
+    df.insert(df.columns.get_loc("cups") + 1, "denominacion",
+              [_del_cuadro(nombres, c, "denominacion") for c in df["cups"]])
     f1, f2, f3, f4 = st.columns([2, 1, 1, 1])
-    texto = f1.text_input("Buscar por CUPS, factura o comercializadora").strip().upper()
+    texto = f1.text_input("Buscar por CUPS, denominación de suministro, factura o "
+                          "comercializadora").strip().upper()
     usuario = f2.selectbox("Usuario", ["Todos"] + sorted(df["usuario"].dropna().unique()))
     comer = f3.selectbox("Comercializadora", ["Todas"] + sorted(
         df["comercializadora"].dropna().replace("", pd.NA).dropna().unique()))
     veredicto = f4.selectbox("Veredicto", ["Todos"] + sorted(df["veredicto"].dropna().unique()))
     if texto:
-        df = df[df[["cups", "factura", "comercializadora"]].fillna("").apply(
+        df = df[df[["cups", "denominacion", "factura", "comercializadora"]].fillna("").apply(
             lambda c: c.str.upper().str.contains(texto, regex=False)).any(axis=1)]
     if usuario != "Todos":
         df = df[df["usuario"] == usuario]
@@ -159,6 +173,7 @@ def pagina_historial():
     m[2].metric("Diferencia (facturado − recalculado)", "%s €" % estilo_num(df["diferencia"].sum()))
     vista = df.rename(columns={
         "id": "Nº", "fecha": "Fecha", "usuario": "Usuario", "cups": "CUPS",
+        "denominacion": "Denominación suministro",
         "comercializadora": "Comercializadora", "factura": "Factura", "emision": "Emisión",
         "periodo": "Periodo", "clausula": "Cláusula", "lineas": "Líneas",
         "facturado": "Facturado €", "recalculado": "Recalculado €", "diferencia": "Diferencia €",
@@ -170,7 +185,8 @@ def pagina_historial():
                                 "Diferencia €": st.column_config.NumberColumn(format="%.2f")})
     if len(df):
         opciones = {int(r["id"]): "Nº %d · %s · %s · %s" % (
-            r["id"], r["fecha"].strftime("%d/%m/%Y %H:%M"), r["cups"] or "—", r["factura"] or "—")
+            r["id"], r["fecha"].strftime("%d/%m/%Y %H:%M"),
+            r["denominacion"] or r["cups"] or "—", r["factura"] or "—")
             for _, r in df.iterrows()}
         c1, c2 = st.columns([3, 1])
         elegido = c1.selectbox("Informe de la revisión", list(opciones), format_func=opciones.get)
@@ -180,6 +196,11 @@ def pagina_historial():
                                   "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", factura or elegido),
                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                   use_container_width=True)
+    estilo.borrar_mios(
+        "Revisión de SSAA", df.to_dict("records"), lambda r: "Nº %d · %s · %s · %s" % (
+            r["id"], r["fecha"].strftime("%d/%m/%Y %H:%M"),
+            r["denominacion"] or r["cups"] or "—", r["factura"] or "—"),
+        almacen.borrar_revision, "rev_borrar", que="revisiones")
 
 
 def estilo_num(v, d=2):
@@ -194,19 +215,35 @@ def pagina_fichas():
         st.info("Todavía no hay fichas. Se guardan desde «Revisar factura» → «Guardar ficha de "
                 "contrato».")
         return
+    nombres = _nombres_cups()
     filas = []
     for cups, d in sorted(fichas.items()):
         c = motor.Contrato.desde_dict(d)
-        filas.append({"CUPS": cups, "Comercializadora": c.comercializadora,
+        filas.append({"Titular": _del_cuadro(nombres, cups, "titular"),
+                      "Denominación suministro": _del_cuadro(nombres, cups, "denominacion")
+                      or c.descripcion or "",
+                      "CUPS": cups, "Comercializadora": c.comercializadora,
                       "Cláusula tipo": c.plantilla or "personalizada",
                       "Cobertura": motor.MECANISMOS.get(c.mecanismo, c.mecanismo),
                       "Referencias €/MWh": _referencias(c), "Tarifa": c.tarifa,
                       "Última modificación": pd.to_datetime(info[cups][0]),
                       "Por": info[cups][1] or "—"})
+    texto = st.text_input("Buscar por titular, CUPS, comercializadora, cláusula tipo o "
+                          "denominación de suministro").strip().lower()
+    if texto:
+        filas = [f for f in filas if texto in " ".join(str(f[k] or "") for k in (
+            "Titular", "CUPS", "Comercializadora", "Cláusula tipo",
+            "Denominación suministro")).lower()]
+    if not filas:
+        st.info("Ninguna ficha coincide con la búsqueda.")
+        return
     st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
                  column_config={"Última modificación": st.column_config.DatetimeColumn(
                      format="DD/MM/YYYY HH:mm")})
-    cups = st.selectbox("Ver los cambios de una ficha", sorted(fichas))
+    etiquetas = {f["CUPS"]: "%s (%s)" % (f["Denominación suministro"] or "Sin denominación",
+                                         f["CUPS"]) for f in filas}
+    cups = st.selectbox("Ver los cambios de una ficha", sorted(etiquetas, key=lambda c: (
+        etiquetas[c].lower())), format_func=etiquetas.get)
     cambios = []
     for h in almacen.historial_contrato(cups):
         c = motor.Contrato.desde_dict(json.loads(h["datos"]))

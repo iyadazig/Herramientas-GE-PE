@@ -338,3 +338,7 @@ def pagina_historial():
         "asunto": "Asunto", "detalle": "Adjuntos / facturas", "resultado": "Resultado"}),
         hide_index=True, use_container_width=True, column_config={
             "Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+    estilo.borrar_mios(MODULO, df.to_dict("records"), lambda e: "%s · %s · %s%s" % (
+        e["fecha"].strftime("%d/%m/%Y %H:%M"), e["tipo"], e["cliente"] or "—",
+        " (prueba)" if e["prueba"] else ""), almacen.borrar_envio_sgc, "sgc_his_borrar",
+        que="envíos")

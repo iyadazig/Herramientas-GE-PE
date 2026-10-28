@@ -327,6 +327,18 @@ def suministros_por_cups():
     return salida
 
 
+def nombres_por_cups():
+    """{CUPS de 20 caracteres: {"denominacion", "titular"}} del cuadro, para mostrar el nombre de
+    un suministro en otros modulos. Los activos mandan sobre las bajas."""
+    salida = {}
+    for s in sorted(almacen.listar_sgc_suministros(), key=lambda x: bool(x["baja"])):
+        cups = (s["cups"] or "").strip().upper()[:20]
+        if cups and cups not in salida:
+            salida[cups] = {"denominacion": s["datos"].get("Denominación suministro"),
+                            "titular": s["datos"].get("Titular de contrato")}
+    return salida
+
+
 PASAN_A_ENVIADO = (C.RECIBIDA, C.PDTE_INF, C.INF_NO_ENVIADO)
 
 

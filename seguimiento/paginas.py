@@ -204,6 +204,7 @@ def pagina_cuadro():
 
 COLUMNAS_CAMBIOS = {"cups": "CUPS", "denominacion": "Denominación suministro", "Mes": "Mes",
                     "antes": "Estado en el cuadro", "despues": "Estado propuesto",
+                    "obs_antes": "Obs en el cuadro", "obs_despues": "Obs propuesta",
                     "factura": "Factura"}
 FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
                   for c in ("Emisión", "Periodo inicio", "Periodo fin")}
@@ -212,12 +213,16 @@ FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
 def _df_cambios(cambios, aplicados=False):
     """Cambios (propuestos o ya aplicados) para verlos y descargarlos."""
     df = pd.DataFrame(cambios, columns=["fecha", "cups", "denominacion", "anio", "mes",
-                                        "antes", "despues", "factura"])
+                                        "antes", "despues", "obs_antes", "obs_despues", "obs",
+                                        "factura"])
     df["Mes"] = [C.columna_mes(int(a), int(m)) for a, m in zip(df["anio"], df["mes"])]
     columnas = dict(COLUMNAS_CAMBIOS)
     if aplicados:
         df["fecha"] = pd.to_datetime(df["fecha"])
-        columnas = {"fecha": "Aplicado", **columnas, "antes": "Antes", "despues": "Después"}
+        df["obs_despues"] = df["obs"]
+        columnas = {"fecha": "Aplicado", **columnas, "antes": "Antes", "despues": "Después",
+                    "obs_despues": "Obs puesta"}
+        del columnas["obs_antes"]
     return df[list(columnas)].rename(columns=columnas)
 
 
@@ -239,10 +244,12 @@ def _gemweb():
     with st.expander(titulo, expanded=bool(pendientes) or bool(ss.get("sgc_gw_abierto"))):
         st.caption("Comprueba que las facturas de Gemweb con periodo de este año estén señaladas "
                    "en el cuadro y propone los cambios; no se aplica nada hasta que los aceptes. "
-                   "Solo se recoge un caso: el cuadro dice que no hay factura (mes vacío o «Sin "
-                   "fra») y en Gemweb sí la hay, que pasa a «Recibida». Ningún otro estado se "
-                   "toca. Solo suministros «Sgto. y Control». También se busca solo a las 7:00 y "
-                   "a las 12:00.")
+                   "Se recogen dos cosas: si el cuadro dice que no hay factura (mes vacío o «Sin "
+                   "fra») y en Gemweb sí la hay, el mes pasa a «Recibida» (ningún otro estado se "
+                   "toca); y si la Obs del mes está vacía, se ponen las siglas de las "
+                   "incidencias de sus facturas: P (exceso de potencia), R (reactiva) y LE "
+                   "(lectura estimada). Solo suministros «Sgto. y Control». También se busca "
+                   "solo a las 7:00 y a las 12:00.")
         c1, c2 = st.columns(2)
         if c1.button("Buscar cambios en Gemweb", type="primary", icon=":material/sync:",
                      key="sgc_gw", use_container_width=True):

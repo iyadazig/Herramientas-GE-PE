@@ -99,6 +99,8 @@ def _detalle(fila, nombres, modulo, propio):
             estilo.boton_descarga(modulo, st, "Descargar el PDF", est["pdf"] or b"",
                                   "estudio_potencia_%d.pdf" % est["id"], "application/pdf",
                                   disabled=not est["pdf"])
+    elif fila["origen"] == "gemweb":
+        st.caption("Consulta: %s" % (fila["descripcion"] or "—"))
     elif fila["origen"] == "ficha":
         st.caption("Versiones de la ficha de contrato de %s:" % fila["cups"])
         st.dataframe(pd.DataFrame([{

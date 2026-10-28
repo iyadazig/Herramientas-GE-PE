@@ -637,6 +637,9 @@ def pagina_solicitudes_guardadas():
     st.dataframe(tabla, hide_index=True, use_container_width=True,
                  column_config={"Consumo anual kWh": st.column_config.NumberColumn(
                      format="localized")})
+    estilo.borrar_mios("Solicitud de ofertas", filtradas, lambda s: "Nº %d · %s · %s" % (
+        s["id"], _fecha_hora(s["fecha"]), s["cliente"] or s["ref"] or "—"),
+        almacen.borrar_solicitud, "of_borrar", que="solicitudes")
     if not filtradas:
         return
 

@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS sgc_outlook (
 CREATE TABLE IF NOT EXISTS sgc_cambios_gemweb (
     id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, id_suministro INTEGER,
     cups TEXT, denominacion TEXT, anio INTEGER, mes INTEGER, antes TEXT, despues TEXT,
-    factura TEXT);
+    factura TEXT, obs TEXT);
 """
 
 
@@ -142,6 +142,8 @@ def _migrar(con):
         con.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
     if "supervisor" not in columnas:
         con.execute("ALTER TABLE usuarios ADD COLUMN supervisor INTEGER NOT NULL DEFAULT 0")
+    if "obs" not in {r["name"] for r in con.execute("PRAGMA table_info(sgc_cambios_gemweb)")}:
+        con.execute("ALTER TABLE sgc_cambios_gemweb ADD COLUMN obs TEXT")
 
 
 @contextmanager
@@ -248,7 +250,11 @@ def comprobar(usuario, clave):
             datos = {k: u[k] for k in ("usuario", "nombre", "admin", "supervisor",
                                        "cambiar_clave", "email")}
     if error:                    # fuera del with: el contador de fallos ya esta guardado
-        registrar_actividad(usuario, "Acceso", "Acceso fallido", error)
+        if u is None:            # usuario que no existe: no se anota a su nombre
+            registrar_actividad(None, "Acceso", "Acceso fallido",
+                                "Usuario «%s» (no existe): %s" % (usuario[:40], error))
+        else:
+            registrar_actividad(usuario, "Acceso", "Acceso fallido", error)
         raise ValueError(error)
     registrar_actividad(usuario, "Acceso", "Inicio de sesión")
     return datos
@@ -408,6 +414,17 @@ def informe_revision(id_revision):
         return (r["informe"], r["cups"], r["factura"]) if r else (None, None, None)
 
 
+def _borrar_propio(tabla, id_, usuario):
+    """Borra el registro `id_` de `tabla` solo si lo creo `usuario`. True si lo borra."""
+    with _con(escribir=True) as con:
+        return con.execute("DELETE FROM %s WHERE id=? AND usuario=?" % tabla,
+                           (id_, usuario)).rowcount > 0
+
+
+def borrar_revision(id_revision, usuario):
+    return _borrar_propio("revisiones", id_revision, usuario)
+
+
 # ------------------------------------------------------------------- solicitudes de ofertas
 def guardar_solicitud(usuario, resumen, datos, texto, excel, estado="Preparada"):
     """resumen: ref, cliente, cups (lista), consumo, recepcion_desde, recepcion_hasta.
@@ -456,6 +473,10 @@ def actualizar_seguimiento(id_solicitud, estado, comercializadoras, usuario):
                      id_solicitud))
 
 
+def borrar_solicitud(id_solicitud, usuario):
+    return _borrar_propio("solicitudes_ofertas", id_solicitud, usuario)
+
+
 # ------------------------------------------------------------------- estudios de potencia
 def guardar_estudio_potencia(usuario, resumen, datos, curvas, pdf):
     """resumen: tipo, titular, cups (lista), tarifa, ahorro, inversion. datos: lo necesario para
@@ -489,6 +510,10 @@ def estudio_potencia(id_estudio):
     r = dict(r)
     r["datos"] = json.loads(r["datos"])
     return r
+
+
+def borrar_estudio_potencia(id_estudio, usuario):
+    return _borrar_propio("estudios_potencia", id_estudio, usuario)
 
 
 # ------------------------------------------------------------------- seguimiento y control
@@ -701,6 +726,10 @@ def listar_envios_sgc(desde=None, hasta=None, limite=20000):
             "ORDER BY id DESC LIMIT ?", (desde or "0000", hasta or "9999", limite))]
 
 
+def borrar_envio_sgc(id_envio, usuario):
+    return _borrar_propio("sgc_envios", id_envio, usuario)
+
+
 def outlook_sgc(usuario):
     """Cuenta de Outlook conectada del usuario: dict cuenta, token (cifrado), conectado."""
     with _con() as con:
@@ -719,14 +748,16 @@ def guardar_outlook_sgc(usuario, cuenta, token):
 
 
 def guardar_cambios_gemweb(cambios):
-    """cambios: dicts id_suministro, cups, denominacion, anio, mes, antes, despues, factura."""
+    """cambios: dicts id_suministro, cups, denominacion, anio, mes, antes, despues (estado;
+    None si no cambia), factura y obs_despues (siglas puestas en la Obs, o None)."""
     ahora = _ahora()
     with _con(escribir=True) as con:
         for c in cambios:
             con.execute("INSERT INTO sgc_cambios_gemweb (fecha, id_suministro, cups, denominacion, "
-                        "anio, mes, antes, despues, factura) VALUES (?,?,?,?,?,?,?,?,?)",
+                        "anio, mes, antes, despues, factura, obs) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (ahora, c["id_suministro"], c.get("cups"), c.get("denominacion"),
-                         c["anio"], c["mes"], c.get("antes"), c["despues"], c.get("factura")))
+                         c["anio"], c["mes"], c.get("antes"), c.get("despues"),
+                         c.get("factura"), c.get("obs_despues")))
 
 
 def listar_cambios_gemweb(limite=2000):

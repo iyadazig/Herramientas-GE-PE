@@ -44,7 +44,11 @@ pago. La factura y la curva no salen del PC.
     `sgc_ajustes`). Las facturas cuentan en los meses que cubren en más de la mitad de sus
     días (sin anuladas, simuladas, abonos ni complementarias). **Único cambio que se recoge:**
     el cuadro dice que no hay factura (vacío o «Sin fra») y en Gemweb sí la hay → «Recibida»;
-    ningún otro estado se toca. Solo suministros «Sgto. y Control». Cambios propuestos y facturas encontradas se ven y se descargan en Excel. Otro
+    ningún otro estado se toca. Además, si la Obs del mes está vacía (o «-»), se proponen las
+    siglas de las incidencias de sus facturas: P (`import_pot_exces` > 0), R (`import_react` > 0)
+    y LE (`tipus_lectura` = E), p. ej. «P/R»; una Obs escrita a mano no se toca. Al importar
+    el Excel se anula la propuesta (cambian los ids). Solo suministros «Sgto. y Control».
+    Cambios propuestos y facturas encontradas se ven y se descargan en Excel. Otro
     botón saca los suministros del cuadro cuyo CUPS no está en Gemweb (es normal que haya).
     `--aplicar` aplica todo desde la línea de comandos.
   - `paginas.py` (cuadro, retraso, contactos de envío, contactos y claves de clientes, SMAC,
@@ -110,8 +114,10 @@ pago. La factura y la curva no salen del PC.
   - Indicadores frente al periodo anterior de la misma duración.
   - Resumen por usuario con gráficos por módulo y por mes.
   - Tabla única del trabajo guardado: revisiones, altas y cambios de fichas, solicitudes y su
-    seguimiento, y estudios. Al pulsar una fila se abre y se descarga su informe, Excel o PDF.
-  - Pestaña de actividad.
+    seguimiento, estudios y consultas de «Descarga datos API Gemweb» (de la actividad). Al
+    pulsar una fila se abre y se descarga su informe, Excel o PDF.
+  - Pestaña de actividad. Los intentos de acceso con un usuario que no existe se anotan sin
+    usuario (el nombre tecleado va en el detalle), así no aparecen como alguien del equipo.
   - Exportación a Excel con tres hojas (Resumen, Trabajo y Actividad).
   - La lógica está en `supervision/datos.py`, sin Streamlit. Pruebas en
     `tests/test_supervision.py`.
@@ -119,6 +125,11 @@ pago. La factura y la curva no salen del PC.
   usuario conectado, sin filtro de usuarios ni datos de otros.
   - Se abre con el botón «Mi trabajo» de la barra lateral, encima del nombre.
   - Su página va en la sección sin título (`menu[""]`) y su enlace se oculta por CSS.
+- **Borrar:** cada usuario puede borrar solo lo que ha creado él (revisiones de SSAA,
+  solicitudes de ofertas, estudios de potencia y envíos de Seguimiento), con
+  `estilo.borrar_mios` y `almacen.borrar_*` (comprueban el usuario en la consulta).
+- **Fichas e historial de SSAA:** la denominación y el titular de cada CUPS salen del cuadro de
+  Seguimiento y Control (`seguimiento.datos.nombres_por_cups`).
 - **Menú plegable:** cada módulo tiene una flecha.
   - Al entrar, todos están recogidos salvo el de la página abierta.
   - Lo que cada uno recoge o despliega se guarda en el `localStorage` del navegador

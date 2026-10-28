@@ -126,6 +126,27 @@ class Almacen(unittest.TestCase):
         self.assertEqual((r["id"], r["diferencia"], r["veredicto"]), (rid, 2.0, "FACTURADO DE MÁS"))
         self.assertEqual(almacen.informe_revision(rid)[0], b"xlsx")
 
+    def test_cada_uno_borra_solo_lo_suyo(self):
+        rid = almacen.guardar_revision("ana", {"cups": "ES1"}, [], b"")
+        sid = almacen.guardar_solicitud("ana", {"cups": ["ES1"]}, {}, "", b"")
+        eid = almacen.guardar_estudio_potencia("ana", {"tipo": "individual", "cups": ["ES1"]},
+                                               {}, b"", b"")
+        almacen.guardar_envio_sgc("ana", "ana@x", "informe", "Aux", "Cliente", "a@x", "",
+                                  "Asunto", "", True, "ok")
+        nid = almacen.listar_envios_sgc()[0]["id"]
+        borrar = [(almacen.borrar_revision, rid), (almacen.borrar_solicitud, sid),
+                  (almacen.borrar_estudio_potencia, eid), (almacen.borrar_envio_sgc, nid)]
+        for funcion, id_ in borrar:
+            self.assertFalse(funcion(id_, "luis"))                # de otro: no se borra
+        self.assertEqual((len(almacen.listar_revisiones()), len(almacen.listar_solicitudes()),
+                          len(almacen.listar_estudios_potencia()),
+                          len(almacen.listar_envios_sgc())), (1, 1, 1, 1))
+        for funcion, id_ in borrar:
+            self.assertTrue(funcion(id_, "ana"))
+        self.assertEqual((len(almacen.listar_revisiones()), len(almacen.listar_solicitudes()),
+                          len(almacen.listar_estudios_potencia()),
+                          len(almacen.listar_envios_sgc())), (0, 0, 0, 0))
+
     def test_solicitudes_de_ofertas(self):
         sid = almacen.guardar_solicitud(
             "ana", {"ref": "R-1", "cliente": "GRUPO DE PRUEBA",

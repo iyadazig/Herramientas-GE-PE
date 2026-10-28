@@ -115,6 +115,42 @@ class EstadosGemweb(BaseDatos):
         self.assertEqual(len(almacen.listar_cambios_gemweb()), 2)
         self.assertEqual(G.buscar(hoy=dt.date(2026, 10, 26), cliente=self._api())["cambios"], [])
 
+    def test_siglas_de_incidencias_en_la_obs(self):
+        self.assertEqual(G.siglas_factura({"import_pot_exces": "12,5", "import_react": "0",
+                                           "tipus_lectura": "e"}), ["P", "LE"])
+        self.assertEqual(G.unir_siglas([["R"], ["LE", "P"], []]), "P/R/LE")
+        self.assertEqual(G.nueva_obs("-", "R"), "R")
+        self.assertIsNone(G.nueva_obs("Trimestral", "R"))             # Obs a mano: no se toca
+        self.assertIsNone(G.nueva_obs(None, ""))
+        api = GemwebFalso([
+            _factura("1", "01/07/2026", "31/07/2026", "0", "F-jul", import_pot_exces="12,5",
+                     tipus_lectura="E"),
+            _factura("1", "15/07/2026", "31/07/2026", "0", "F-jul-b", import_react="3"),
+            _factura("1", "01/03/2026", "31/03/2026", "1", "F-mar", import_react="2"),
+            _factura("1", "01/01/2026", "31/01/2026", "1", "F-ene", tipus_lectura="E"),
+            _factura("1", "01/02/2026", "28/02/2026", "1", "F-feb")])
+        r = G.buscar(hoy=dt.date(2026, 10, 26), cliente=api)
+        self.assertEqual(sorted((c["mes"], c["antes"], c["despues"], c["obs_despues"])
+                                for c in r["cambios"]),
+                         [(1, C.INF_ENVIADO, None, "LE"), (3, C.RECIBIDA, None, "R"),
+                          (7, None, C.RECIBIDA, "P/R/LE")])
+        listado = {f["Factura"]: f for f in r["listado"]}
+        self.assertEqual(listado["F-jul"]["Incidencias"], "P/LE")
+        self.assertEqual(listado["F-jul"]["Obs propuesta"], "P/R/LE")
+        G.guardar_propuesta(r)
+        # alguien escribe la Obs de marzo antes de aceptar: ese cambio no se aplica
+        almacen.guardar_sgc_estados([{"id_suministro": self.ids[CUPS1], "anio": 2026, "mes": 3,
+                                      "estado": C.RECIBIDA, "obs": "Revisar"}], "prueba")
+        hechos, saltados = G.aplicar(G.propuesta()["cambios"], "prueba")
+        self.assertEqual((len(hechos), len(saltados)), (2, 1))
+        celdas = almacen.listar_sgc_estados(2026)
+        celda = lambda mes: celdas[(self.ids[CUPS1], 2026, mes)]
+        self.assertEqual((celda(7)["estado"], celda(7)["obs"]), (C.RECIBIDA, "P/R/LE"))
+        self.assertEqual((celda(1)["estado"], celda(1)["obs"]), (C.INF_ENVIADO, "LE"))
+        self.assertEqual((celda(3)["estado"], celda(3)["obs"]), (C.RECIBIDA, "Revisar"))
+        self.assertEqual(sorted(c["obs"] for c in almacen.listar_cambios_gemweb()),
+                         ["LE", "P/R/LE"])
+
     def test_importar_anula_la_propuesta(self):
         G.guardar_propuesta(G.buscar(hoy=dt.date(2026, 10, 26), cliente=self._api()))
         self.assertTrue(G.propuesta()["cambios"])

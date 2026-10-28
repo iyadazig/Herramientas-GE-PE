@@ -16,8 +16,11 @@ las 12:00 (tarea programada del servidor), que deja la propuesta preparada:
    se listan pero no cuentan.
 2. Cada factura cuenta en los meses del año que cubre en mas de la mitad de sus dias (una
    bimestral, en dos meses).
-3. Unico cambio que se recoge: el cuadro dice que no hay factura (mes vacio o «Sin fra») y
-   en Gemweb si la hay -> «Recibida». Cualquier otro estado no se toca.
+3. Unico cambio de estado que se recoge: el cuadro dice que no hay factura (mes vacio o «Sin
+   fra») y en Gemweb si la hay -> «Recibida». Cualquier otro estado no se toca.
+4. Siglas en la Obs del mes, si esta vacia (o «-»): P (exceso de potencia), R (reactiva) y
+   LE (lectura estimada), de todas las facturas del mes (p. ej. «P/R»). Una Obs escrita a
+   mano no se toca.
 Solo los suministros activos «Sgto. y Control» del cuadro cuyo CUPS esta en Gemweb.
 
 Aparte, cups_fuera_de_gemweb() da los suministros del cuadro cuyo CUPS no esta en Gemweb.
@@ -43,14 +46,17 @@ EXCLUIR = {"anulada": "anulada", "simulada": "simulada", "abonament": "abono",
 USUARIO = "Gemweb automático"
 PROPUESTA = "gemweb_propuesta"                 # clave de sgc_ajustes con la ultima busqueda
 LOG = logging.getLogger("estados_gemweb")
+SIGLAS = ("P", "R", "LE")            # orden en la Obs: exceso de potencia, reactiva, estimada
+OBS_VACIA = ("", "-")
 
 # resultado de cada factura y mes en el listado
 CAMBIA, SIN_CAMBIOS, OTRA_FACTURA = ("Cambio propuesto", "Ya señalada en el cuadro",
                                      "Ya señalada (cuenta otra factura del mes)")
 NO_SYC, DESCARTADA = "No es «Sgto. y Control»", "Descartada"
 COLUMNAS_LISTADO = ["CUPS", "Denominación suministro", "Factura", "Comercializadora", "Emisión",
-                    "Periodo inicio", "Periodo fin", "Verificada", "Mes", "Estado en el cuadro",
-                    "Estado propuesto", "Resultado"]
+                    "Periodo inicio", "Periodo fin", "Verificada", "Incidencias", "Mes",
+                    "Estado en el cuadro", "Estado propuesto", "Obs en el cuadro",
+                    "Obs propuesta", "Resultado"]
 
 
 def _fecha(texto):
@@ -86,9 +92,35 @@ def cups_gemweb(cliente):
     return cups
 
 
+def _importe(v):
+    try:
+        return float(str(v or "0").replace(",", "."))
+    except ValueError:
+        return 0.0
+
+
+def siglas_factura(d):
+    """Incidencias de una factura de Gemweb (campos de la API): lista con P, R y/o LE."""
+    salida = []
+    if _importe(d.get("import_pot_exces")) > 0:
+        salida.append("P")
+    if _importe(d.get("import_react")) > 0:
+        salida.append("R")
+    if (d.get("tipus_lectura") or "").strip().upper() == "E":
+        salida.append("LE")
+    return salida
+
+
+def unir_siglas(listas):
+    """«P/R/LE» con las siglas de varias facturas, sin repetir y en orden fijo ("" si no hay)."""
+    vistas = {x for lista in listas for x in lista}
+    return "/".join(x for x in SIGLAS if x in vistas)
+
+
 def facturas_gemweb(cliente, inicio, cups=None):
     """Facturas de Gemweb cuyo periodo termina desde `inicio`: dicts cups (20 caracteres),
-    factura, comercializadora, emision, inicio, fin, verificada y descartada (motivo o None)."""
+    factura, comercializadora, emision, inicio, fin, verificada, siglas (P, R, LE) y
+    descartada (motivo o None)."""
     cups = cups_gemweb(cliente) if cups is None else cups
     salida = []
     for f in cliente.get_inventory(category="factures", search_by="factures.periode_fin",
@@ -104,6 +136,7 @@ def facturas_gemweb(cliente, inicio, cups=None):
                        "comercializadora": d.get("comercialitzadora"),
                        "emision": _fecha(d.get("data_emissio")), "inicio": ini, "fin": fin,
                        "verificada": str(d.get("verificada") or "0").strip() == "1",
+                       "siglas": siglas_factura(d),
                        "descartada": ", ".join(motivos) or None})
     return salida
 
@@ -113,15 +146,22 @@ def nuevo_estado(actual):
     return C.RECIBIDA if actual in (None, "", C.SIN_FRA) else None
 
 
+def nueva_obs(actual, siglas):
+    """Las siglas si la Obs del mes esta vacia (o «-») y hay alguna; None si no."""
+    return siglas if siglas and (actual or "").strip() in OBS_VACIA else None
+
+
 def _es_syc(s):
     return (s["datos"].get("Tipo contratación") or "").strip() == C.SGTO_Y_CONTROL
 
 
 def revisar(facturas, por_cups, estados, inicio):
     """(cambios, listado). cambios: dicts id_suministro, cups, denominacion, anio, mes, antes,
-    despues, factura y verificada. listado: una fila por factura, suministro y mes de las
-    facturas de los CUPS que estan en el cuadro, con lo que ha encontrado."""
+    despues (estado; None si no cambia), obs_antes, obs_despues (siglas; None si no cambia),
+    factura y verificada. listado: una fila por factura, suministro y mes de las facturas de
+    los CUPS que estan en el cuadro, con lo que ha encontrado."""
     mejor = {}                                    # (id, anio, mes) -> factura que cuenta
+    siglas = {}                                   # (id, anio, mes) -> siglas de sus facturas
     for f in facturas:
         if f["descartada"]:
             continue
@@ -130,19 +170,23 @@ def revisar(facturas, por_cups, estados, inicio):
                 continue
             for s in por_cups.get(f["cups"], []):
                 clave = (s["id"], anio, mes)
-                if _es_syc(s) and clave not in mejor:
-                    mejor[clave] = f
+                if _es_syc(s):
+                    mejor.setdefault(clave, f)
+                    siglas.setdefault(clave, []).append(f.get("siglas") or [])
     cambios, nuevos = [], {}
     for (id_, anio, mes), f in sorted(mejor.items(), key=lambda x: x[0]):
-        antes = (estados.get((id_, anio, mes)) or {}).get("estado")
+        celda = estados.get((id_, anio, mes)) or {}
+        antes, obs_antes = celda.get("estado"), celda.get("obs")
         despues = nuevo_estado(antes)
-        if despues:
+        obs_despues = nueva_obs(obs_antes, unir_siglas(siglas[(id_, anio, mes)]))
+        if despues or obs_despues:
             s = next(x for x in por_cups[f["cups"]] if x["id"] == id_)
             cambios.append({"id_suministro": id_, "cups": f["cups"],
                             "denominacion": s["datos"].get("Denominación suministro"),
                             "anio": anio, "mes": mes, "antes": antes, "despues": despues,
+                            "obs_antes": obs_antes, "obs_despues": obs_despues,
                             "factura": f["factura"], "verificada": f["verificada"]})
-            nuevos[(id_, anio, mes)] = despues
+            nuevos[(id_, anio, mes)] = (despues, obs_despues)
 
     listado = []
     for f in sorted(facturas, key=lambda x: (x["cups"], x["inicio"], str(x["factura"]))):
@@ -152,7 +196,8 @@ def revisar(facturas, por_cups, estados, inicio):
         base = {"CUPS": f["cups"], "Factura": f["factura"],
                 "Comercializadora": f["comercializadora"], "Emisión": f["emision"],
                 "Periodo inicio": f["inicio"], "Periodo fin": f["fin"],
-                "Verificada": "Sí" if f["verificada"] else "No"}
+                "Verificada": "Sí" if f["verificada"] else "No",
+                "Incidencias": "/".join(f.get("siglas") or [])}
         if f["descartada"]:
             listado.append({**base, "Denominación suministro": suministros[0]["datos"].get(
                 "Denominación suministro"), "Resultado": "%s (%s)" % (DESCARTADA,
@@ -165,13 +210,15 @@ def revisar(facturas, por_cups, estados, inicio):
                 clave = (s["id"], anio, mes)
                 fila = {**base, "Denominación suministro": s["datos"].get(
                     "Denominación suministro"), "Mes": C.columna_mes(anio, mes),
-                    "Estado en el cuadro": (estados.get(clave) or {}).get("estado")}
+                    "Estado en el cuadro": (estados.get(clave) or {}).get("estado"),
+                    "Obs en el cuadro": (estados.get(clave) or {}).get("obs")}
                 if not _es_syc(s):
                     fila["Resultado"] = NO_SYC
                 elif mejor.get(clave) is not f:
                     fila["Resultado"] = OTRA_FACTURA
                 elif clave in nuevos:
-                    fila["Resultado"], fila["Estado propuesto"] = CAMBIA, nuevos[clave]
+                    fila["Resultado"] = CAMBIA
+                    fila["Estado propuesto"], fila["Obs propuesta"] = nuevos[clave]
                 else:
                     fila["Resultado"] = SIN_CAMBIOS
                 listado.append(fila)
@@ -208,7 +255,8 @@ def propuesta():
     guardada = json.loads(texto)
     # una busqueda guardada con reglas anteriores no puede aplicar otros cambios
     guardada["cambios"] = [c for c in guardada["cambios"]
-                           if nuevo_estado(c.get("antes")) == c.get("despues")]
+                           if c.get("despues") is None
+                           or nuevo_estado(c.get("antes")) == c.get("despues")]
     return guardada
 
 
@@ -222,13 +270,15 @@ def aplicar(cambios, usuario):
     hechos, saltados = [], []
     for c in cambios:
         previo = estados.get((c["id_suministro"], c["anio"], c["mes"])) or {}
-        (hechos if previo.get("estado") == c["antes"] else saltados).append(
-            dict(c, obs=previo.get("obs")))
+        igual = previo.get("estado") == c["antes"] and (
+            not c.get("obs_despues") or nueva_obs(previo.get("obs"), c["obs_despues"]))
+        (hechos if igual else saltados).append(dict(c, previo=previo))
     if hechos:
         almacen.guardar_sgc_estados(
             [{"id_suministro": c["id_suministro"], "anio": c["anio"], "mes": c["mes"],
-              "estado": c["despues"], "obs": c["obs"], "origen": "Gemweb"} for c in hechos],
-            usuario, origen="Gemweb")
+              "estado": c.get("despues") or c["previo"].get("estado"),
+              "obs": c.get("obs_despues") or c["previo"].get("obs"), "origen": "Gemweb"}
+             for c in hechos], usuario, origen="Gemweb")
         almacen.guardar_cambios_gemweb(hechos)
         almacen.registrar_actividad(usuario, "Seguimiento y Control",
                                     "Aplicar estados de Gemweb", "%d cambios" % len(hechos))
@@ -283,9 +333,9 @@ def main(argv=None):
         LOG.exception("Error al buscar los estados en Gemweb")
         return 1
     for c in resultado["cambios"]:
-        LOG.info("%s %s %s: %s -> %s (factura %s)", c["cups"], c["denominacion"],
-                 C.columna_mes(c["anio"], c["mes"]), c["antes"] or "vacío", c["despues"],
-                 c["factura"])
+        LOG.info("%s %s %s: %s -> %s, Obs %s (factura %s)", c["cups"], c["denominacion"],
+                 C.columna_mes(c["anio"], c["mes"]), c["antes"] or "vacío",
+                 c["despues"] or "igual", c.get("obs_despues") or "igual", c["factura"])
     return 0
 
 

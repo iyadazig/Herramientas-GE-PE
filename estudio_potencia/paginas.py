@@ -840,6 +840,9 @@ def pagina_estudios_guardados():
         hide_index=True, use_container_width=True,
         column_config={c: st.column_config.NumberColumn(format="localized")
                        for c in ("Ahorro anual (€)", "Inversión (€)")})
+    estilo.borrar_mios("Estudio de potencia", filtrados, lambda e: "Nº %d · %s · %s" % (
+        e["id"], _fecha_hora(e["fecha"]), e["titular"] or e["cups"] or "—"),
+        almacen.borrar_estudio_potencia, "ep_borrar", que="estudios")
     if not filtrados:
         return
     st.subheader("Detalle")

@@ -154,9 +154,23 @@ class Datos(Base):
         eva = filas["Eva Prueba"]
         self.assertEqual((eva[sd.SSAA], eva[sd.FICHAS], eva[sd.OFERTAS], eva[sd.POTENCIA]),
                          (1, 1, 1, 1))
-        self.assertEqual((eva["Total trabajos"], eva["Consultas Gemweb"], eva["Descargas"],
-                          eva["Días con actividad"]), (4, 1, 1, 1))
+        self.assertEqual((eva[sd.GEMWEB], eva["Total trabajos"], eva["Descargas"],
+                          eva["Días con actividad"]), (1, 5, 1, 1))
         self.assertNotIn("Luis Prueba", filas)                  # sin trabajo ni actividad
+
+    def test_acceso_con_usuario_que_no_existe(self):
+        with self.assertRaises(ValueError):
+            almacen.comprobar("nadie", "clave-cualquiera-1")
+        self.assertNotIn("nadie", sd.nombres_usuarios())
+        eventos = sd.actividad(HOY, HOY)
+        fallido = [e for e in eventos if e["accion"] == "Acceso fallido"]
+        self.assertEqual([e["usuario"] for e in fallido], [None])
+        self.assertIn("nadie", fallido[0]["detalle"])
+        self.assertEqual(sd.resumen_por_usuario([], eventos, sd.nombres_usuarios()), [])
+        # registros antiguos anotados a nombre del usuario inexistente: tampoco cuentan
+        almacen.registrar_actividad("fantasma", "Acceso", "Acceso fallido", "x")
+        self.assertEqual(sd.resumen_por_usuario([], sd.actividad(HOY, HOY),
+                                                sd.nombres_usuarios()), [])
 
     def test_excel_con_tres_hojas(self):
         self.poblar()
@@ -199,7 +213,8 @@ class Panel(Base):
         self.assertFalse(at.exception)
         self.assertFalse(at.warning)                             # cualquiera puede verla
         self.assertEqual([m.value for m in at.metric[:4]], ["0", "1", "1", "0"])
-        self.assertEqual(at.metric[4].label, "Días con actividad")
+        self.assertEqual(at.metric[4].label, "Descargas API Gemweb")
+        self.assertEqual(at.metric[5].label, "Días con actividad")
         self.assertEqual([m.label for m in at.multiselect], ["Módulos"])   # sin filtro de usuarios
         trabajo = at.dataframe[1].value                          # 0: resumen, 1: trabajo
         self.assertNotIn("Usuario", trabajo.columns)

@@ -409,6 +409,35 @@ def boton_descarga(modulo, contenedor, etiqueta, data, file_name, mime=None, **k
         args=(_usuario(), modulo, "Descarga", file_name), **kw)
 
 
+def borrar_mios(modulo, filas, describir, borrar, clave, que="registros"):
+    """Desplegable para que el usuario conectado borre lo que ha creado el mismo (nunca lo de
+    otros). filas: dicts con id y usuario (los que se ven con los filtros); describir(fila):
+    texto de cada uno; borrar(id, usuario): True si lo borra (almacen.borrar_...)."""
+    usuario = _usuario()
+    mios = {f["id"]: f for f in filas if f.get("usuario") == usuario}
+    hecho = st.session_state.pop(clave + "_hecho", None)
+    if hecho:
+        st.success(hecho)
+    with st.expander("Borrar %s creados por mí (%d)" % (que, len(mios)), icon=":material/delete:"):
+        if not mios:
+            st.caption("Con estos filtros no hay %s creados por ti. Solo puedes borrar los "
+                       "tuyos." % que)
+            return
+        elegidos = st.multiselect("Elige los que quieres borrar", list(mios),
+                                  format_func=lambda i: describir(mios[i]), key=clave + "_sel")
+        confirmo = st.checkbox("Confirmo que quiero borrarlos: no se puede deshacer",
+                               key=clave + "_ok")
+        if st.button("Borrar %d" % len(elegidos), icon=":material/delete:", key=clave + "_btn",
+                     disabled=not (elegidos and confirmo)):
+            n = sum(bool(borrar(i, usuario)) for i in elegidos)
+            almacen.registrar_actividad(usuario, modulo, "Borrar",
+                                        "%d %s: %s" % (n, que, ", ".join(map(str, elegidos))))
+            st.session_state[clave + "_hecho"] = "Borrados %d %s." % (n, que)
+            for k in (clave + "_sel", clave + "_ok"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+
 def seccion(numero, titulo, subtitulo=""):
     st.markdown('<div class="gp-seccion"><span class="num">%s</span><span class="tit">%s</span>'
                 '<span class="sub">%s</span></div>' % (numero, titulo, subtitulo),

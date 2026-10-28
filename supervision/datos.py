@@ -3,7 +3,8 @@
 DATOS DEL PANEL DE SUPERVISION (sin Streamlit, para poder probarlo)
 ===================================================================
 Junta en una sola lista el trabajo guardado en la base de datos (revisiones de SSAA, altas y
-cambios de fichas de contrato, solicitudes de ofertas y su seguimiento, estudios de potencia),
+cambios de fichas de contrato, solicitudes de ofertas y su seguimiento, estudios de potencia,
+consultas de la descarga de datos de la API de Gemweb),
 lo resume por usuario y mes, y lo exporta a Excel junto con la actividad (accesos, paginas,
 consultas a Gemweb y descargas, tabla `actividad` de almacen.py).
 
@@ -20,12 +21,14 @@ from openpyxl.utils import get_column_letter
 
 import almacen
 
-SSAA, FICHAS, OFERTAS, POTENCIA = ("Revisión de SSAA", "Fichas de contrato",
-                                   "Solicitud de ofertas", "Estudio de potencia")
-MODULOS = [SSAA, FICHAS, OFERTAS, POTENCIA]
+SSAA, FICHAS, OFERTAS, POTENCIA, GEMWEB = ("Revisión de SSAA", "Fichas de contrato",
+                                           "Solicitud de ofertas", "Estudio de potencia",
+                                           "Descarga datos API Gemweb")
+MODULOS = [SSAA, FICHAS, OFERTAS, POTENCIA, GEMWEB]
 SIN_USUARIO = "(sin usuario)"          # fichas importadas del JSON inicial
 INDICADORES = {SSAA: "Revisiones de SSAA", FICHAS: "Fichas de contrato",
-               OFERTAS: "Solicitudes de ofertas", POTENCIA: "Estudios de potencia"}
+               OFERTAS: "Solicitudes de ofertas", POTENCIA: "Estudios de potencia",
+               GEMWEB: "Descargas API Gemweb"}
 CONSULTA, DESCARGA, ACCESO = "Consulta Gemweb", "Descarga", "Inicio de sesión"
 PERIODOS = ["Este mes", "Mes anterior", "Últimos 3 meses", "Este año", "Personalizado"]
 LIMITE = 1_000_000                  # sin limite practico: se filtra por fecha despues
@@ -104,6 +107,12 @@ def trabajo(desde, hasta, usuarios=None, modulos=None):
                 tipo="Estudio %s" % (r["tipo"] or "").lower(), descripcion=r["titular"] or "",
                 cups=r["cups"], resultado="Ahorro %s €/año · inversión %s €" % (
                     _num(r["ahorro"]), _num(r["inversion"])), origen="estudio", id=r["id"]))
+    for e in almacen.listar_actividad(_iso(desde), _iso(hasta), limite=LIMITE):
+        if e["accion"] == CONSULTA:
+            filas.append(dict(
+                fecha=e["fecha"], usuario=e["usuario"], modulo=GEMWEB, tipo="Consulta a la API",
+                descripcion=e["detalle"] or "", cups=None, resultado=None, origen="gemweb",
+                id=e["id"]))
     if usuarios:
         filas = [f for f in filas if f["usuario"] in usuarios]
     if modulos:
@@ -112,7 +121,15 @@ def trabajo(desde, hasta, usuarios=None, modulos=None):
 
 
 def actividad(desde, hasta, usuarios=None):
-    filas = almacen.listar_actividad(_iso(desde), _iso(hasta), limite=LIMITE)
+    """Actividad del periodo. Los intentos de acceso con un usuario que no existe quedan sin
+    usuario (con el nombre tecleado en el detalle): no son nadie del equipo."""
+    existen = {u["usuario"] for u in almacen.listar_usuarios()}
+    filas = []
+    for f in almacen.listar_actividad(_iso(desde), _iso(hasta), limite=LIMITE):
+        if f["usuario"] and f["usuario"] not in existen:
+            f = dict(f, usuario=None, detalle="Usuario «%s»: %s" % (f["usuario"],
+                                                                    f["detalle"] or ""))
+        filas.append(f)
     return [f for f in filas if f["usuario"] in usuarios] if usuarios else filas
 
 
@@ -146,7 +163,6 @@ def resumen_por_usuario(registros, eventos, nombres, ultimos_accesos=None):
         for m in MODULOS:
             fila[m] = sum(f["modulo"] == m for f in mios)
         fila["Total trabajos"] = len(mios)
-        fila["Consultas Gemweb"] = sum(e["accion"] == CONSULTA for e in suyos)
         fila["Descargas"] = sum(e["accion"] == DESCARGA for e in suyos)
         fila["Inicios de sesión"] = sum(e["accion"] == ACCESO for e in suyos)
         fila["Días con actividad"] = len({x["fecha"][:10] for x in mios + suyos})
