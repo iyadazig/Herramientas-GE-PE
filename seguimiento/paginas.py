@@ -207,6 +207,9 @@ COLUMNAS_CAMBIOS = {"tecnico": "Técnico", "auxiliar": "Auxiliar", "cups": "CUPS
                     "antes": "Estado en el cuadro", "despues": "Estado propuesto",
                     "obs_antes": "Obs en el cuadro", "obs_despues": "Obs propuesta",
                     "factura": "Factura"}
+TIPO_CAMBIO = {(True, False): "Factura sin indicar → Recibida",
+               (True, True): "Factura sin indicar → Recibida + siglas en la Obs",
+               (False, True): "Siglas en la Obs"}
 FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
                   for c in ("Emisión", "Periodo inicio", "Periodo fin")}
 
@@ -238,6 +241,11 @@ def _df_cambios(cambios, aplicados=False, equipo=None):
         columnas = {"fecha": "Aplicado", **columnas, "antes": "Antes", "despues": "Después",
                     "obs_despues": "Obs puesta"}
         del columnas["obs_antes"]
+    else:
+        df["Cambio"] = [TIPO_CAMBIO[(bool(e), bool(o))] if (e or o) else ""
+                        for e, o in zip(df["despues"], df["obs_despues"])]
+        columnas = {k: v for k, v in [("tecnico", "Técnico"), ("auxiliar", "Auxiliar"),
+                                      ("Cambio", "Cambio")] + list(columnas.items())}
     return df[list(columnas)].rename(columns=columnas)
 
 
@@ -330,6 +338,9 @@ def _propuesta(G, p):
     m[1].metric("Descartadas", p["descartadas"],
                 help="Anuladas, simuladas, abonos, abonadas y complementarias")
     m[2].metric("Cambios pendientes de aceptar", len(p["cambios"]))
+    # primero las facturas sin indicar en el cuadro; luego las que solo llevan siglas (la
+    # tabla de «Aplicar» sigue este mismo orden)
+    p["cambios"] = sorted(p["cambios"], key=lambda c: not c.get("despues"))
     equipo = _equipo_suministros()
     listado = _df_listado(p["listado"], G.COLUMNAS_LISTADO, equipo)
     cambios = _df_cambios(p["cambios"], equipo=equipo)
