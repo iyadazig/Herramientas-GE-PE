@@ -53,7 +53,7 @@ OBS_VACIA = ("", "-")
 CAMBIA, SIN_CAMBIOS, OTRA_FACTURA = ("Cambio propuesto", "Ya señalada en el cuadro",
                                      "Ya señalada (cuenta otra factura del mes)")
 NO_SYC, DESCARTADA = "No es «Sgto. y Control»", "Descartada"
-COLUMNAS_LISTADO = ["CUPS", "Denominación suministro", "Factura", "Comercializadora", "Emisión",
+COLUMNAS_LISTADO = ["Técnico", "Auxiliar", "CUPS", "Denominación suministro", "Factura", "Comercializadora", "Emisión",
                     "Periodo inicio", "Periodo fin", "Verificada", "Incidencias", "Mes",
                     "Estado en el cuadro", "Estado propuesto", "Obs en el cuadro",
                     "Obs propuesta", "Resultado"]
@@ -181,7 +181,8 @@ def revisar(facturas, por_cups, estados, inicio):
         obs_despues = nueva_obs(obs_antes, unir_siglas(siglas[(id_, anio, mes)]))
         if despues or obs_despues:
             s = next(x for x in por_cups[f["cups"]] if x["id"] == id_)
-            cambios.append({"id_suministro": id_, "cups": f["cups"],
+            cambios.append({"id_suministro": id_, "tecnico": s["datos"].get("Técnico"),
+                            "auxiliar": s["datos"].get("Auxiliar"), "cups": f["cups"],
                             "denominacion": s["datos"].get("Denominación suministro"),
                             "anio": anio, "mes": mes, "antes": antes, "despues": despues,
                             "obs_antes": obs_antes, "obs_despues": obs_despues,
@@ -199,7 +200,9 @@ def revisar(facturas, por_cups, estados, inicio):
                 "Verificada": "Sí" if f["verificada"] else "No",
                 "Incidencias": "/".join(f.get("siglas") or [])}
         if f["descartada"]:
-            listado.append({**base, "Denominación suministro": suministros[0]["datos"].get(
+            listado.append({**base, "Técnico": suministros[0]["datos"].get("Técnico"),
+                            "Auxiliar": suministros[0]["datos"].get("Auxiliar"),
+                            "Denominación suministro": suministros[0]["datos"].get(
                 "Denominación suministro"), "Resultado": "%s (%s)" % (DESCARTADA,
                                                                        f["descartada"])})
             continue
@@ -208,7 +211,9 @@ def revisar(facturas, por_cups, estados, inicio):
         for s in suministros:
             for anio, mes in meses:
                 clave = (s["id"], anio, mes)
-                fila = {**base, "Denominación suministro": s["datos"].get(
+                fila = {**base, "Técnico": s["datos"].get("Técnico"),
+                        "Auxiliar": s["datos"].get("Auxiliar"),
+                        "Denominación suministro": s["datos"].get(
                     "Denominación suministro"), "Mes": C.columna_mes(anio, mes),
                     "Estado en el cuadro": (estados.get(clave) or {}).get("estado"),
                     "Obs en el cuadro": (estados.get(clave) or {}).get("obs")}

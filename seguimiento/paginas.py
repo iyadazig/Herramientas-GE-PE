@@ -202,7 +202,7 @@ def pagina_cuadro():
                  "sgc_excel")
 
 
-COLUMNAS_CAMBIOS = {"cups": "CUPS", "denominacion": "Denominación suministro", "Mes": "Mes",
+COLUMNAS_CAMBIOS = {"tecnico": "Técnico", "auxiliar": "Auxiliar", "cups": "CUPS", "denominacion": "Denominación suministro", "Mes": "Mes",
                     "antes": "Estado en el cuadro", "despues": "Estado propuesto",
                     "obs_antes": "Obs en el cuadro", "obs_despues": "Obs propuesta",
                     "factura": "Factura"}
@@ -212,7 +212,7 @@ FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
 
 def _df_cambios(cambios, aplicados=False):
     """Cambios (propuestos o ya aplicados) para verlos y descargarlos."""
-    df = pd.DataFrame(cambios, columns=["fecha", "cups", "denominacion", "anio", "mes",
+    df = pd.DataFrame(cambios, columns=["fecha", "tecnico", "auxiliar", "cups", "denominacion", "anio", "mes",
                                         "antes", "despues", "obs_antes", "obs_despues", "obs",
                                         "factura"])
     df["Mes"] = [C.columna_mes(int(a), int(m)) for a, m in zip(df["anio"], df["mes"])]
@@ -222,7 +222,8 @@ def _df_cambios(cambios, aplicados=False):
         df["obs_despues"] = df["obs"]
         columnas = {"fecha": "Aplicado", **columnas, "antes": "Antes", "despues": "Después",
                     "obs_despues": "Obs puesta"}
-        del columnas["obs_antes"]
+        for k in ("obs_antes", "tecnico", "auxiliar"):        # no se guardan en el registro
+            del columnas[k]
     return df[list(columnas)].rename(columns=columnas)
 
 

@@ -418,7 +418,7 @@ def borrar_mios(modulo, filas, describir, borrar, clave, que="registros"):
     hecho = st.session_state.pop(clave + "_hecho", None)
     if hecho:
         st.success(hecho)
-    with st.expander("Borrar %s creados por mí (%d)" % (que, len(mios)), icon=":material/delete:"):
+    with st.expander("Borrar %s creados por mí" % que, icon=":material/delete:"):
         if not mios:
             st.caption("Con estos filtros no hay %s creados por ti. Solo puedes borrar los "
                        "tuyos." % que)
