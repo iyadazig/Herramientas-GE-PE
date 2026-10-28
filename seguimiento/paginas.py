@@ -190,6 +190,9 @@ def pagina_cuadro():
             st.rerun()
 
     _gemweb()
+    with st.expander("Subir una versión actualizada del cuadro (Excel)",
+                     expanded=bool(ss.get("sgc_subir_hecho"))):
+        _importar("sgc_subir")
     with st.expander("Leyenda de estados"):
         st.dataframe(pd.DataFrame(almacen.listar_sgc_listas().get("estados", [])).rename(
             columns={"valor": "Estado", "descripcion": "Descripción", "color": "Color"}).style.map(
@@ -642,17 +645,26 @@ def pagina_admin():
 
 
 def _admin_importar():
-    st.caption("Pasa a la plataforma el Excel combinado de cuadros de seguimiento (pestañas "
-               "CLIENTES, BAJAS, CLAVES, CONTACTOS, SMAC, TELEMEDIDA y Lista) y el Excel de "
-               "contactos de envío. **Sustituye todo** lo que haya en Seguimiento y Control; "
-               "antes se hace una copia de la base de datos. Los ficheros no se guardan: solo "
+    _importar("sgc_imp")
+
+
+def _importar(clave):
+    """Sube el Excel combinado (y, si se quiere, el de contactos de envio) y sustituye con el
+    todo el contenido de Seguimiento y Control."""
+    st.caption("Sube el Excel combinado de cuadros de seguimiento (pestañas CLIENTES, BAJAS, "
+               "CLAVES, CONTACTOS, SMAC, TELEMEDIDA y Lista) y, si quieres, el de contactos de "
+               "envío. **Sustituye todo** lo que haya en Seguimiento y Control por lo que diga "
+               "el Excel: lo cambiado en la plataforma y que no esté en el Excel se pierde. "
+               "Antes se hace una copia de la base de datos. Los ficheros no se guardan: solo "
                "su contenido, en la base de datos.")
+    if ss.get(clave + "_hecho"):
+        st.success(ss.pop(clave + "_hecho"))
     c1, c2 = st.columns(2)
     cuadro = c1.file_uploader("Excel del cuadro de seguimiento", type=["xlsx", "xlsm"],
-                              key="sgc_imp_cuadro")
+                              key=clave + "_cuadro")
     contactos = c2.file_uploader("Excel de contactos de envío (opcional: si no se sube, se "
                                  "conservan los que ya hay)", type=["xlsx", "xlsm"],
-                                 key="sgc_imp_contactos")
+                                 key=clave + "_contactos")
     if not cuadro:
         return
     try:
@@ -671,11 +683,20 @@ def _admin_importar():
         st.info("%d suministros tienen valores que no encajan en su columna (fechas o números "
                 "escritos como texto, columnas sin título): se guardan en la columna «Otros» "
                 "con su título para que no se pierdan." % con_otros)
-    if st.button("Importar y sustituir", type="primary", icon=":material/upload:"):
+    if st.button("Importar y sustituir", type="primary", icon=":material/upload:",
+                 key=clave + "_boton"):
         copia = almacen.copia_seguridad(config.CARPETA_DATOS / "copias_seguridad")
         D.importar(leido, lista_contactos, _usuario())
         almacen.registrar_actividad(_usuario(), MODULO, "Importar Excel", cuadro.name)
-        st.success("Importado. Copia previa de la base de datos: %s" % copia.name)
+        activos = leido["recuento"].get("CLIENTES", 0)
+        ss[clave + "_hecho"] = ("Importado «%s»: %d suministros en el cuadro y %d bajas. Copia "
+                                "previa de la base de datos: %s. Si había cambios de Gemweb "
+                                "pendientes, vuelve a buscarlos."
+                                % (cuadro.name, activos, leido["recuento"].get("BAJAS", 0),
+                                   copia.name))
+        ss.pop(clave + "_cuadro", None)
+        ss.pop(clave + "_contactos", None)
+        st.rerun()
 
 
 def _admin_equipo():

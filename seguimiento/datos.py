@@ -291,8 +291,12 @@ def importar(leido, contactos, usuario):
     filas["contactos_envio"] = contactos
     equipo = _equipo(leido, contactos)
     _completar_listas(leido)
-    return almacen.reemplazar_sgc(leido["suministros"], leido["estados"], filas,
-                                  leido["listas"], equipo, usuario)
+    resultado = almacen.reemplazar_sgc(leido["suministros"], leido["estados"], filas,
+                                       leido["listas"], equipo, usuario)
+    # los suministros cambian de id: los cambios de Gemweb ya buscados no valen
+    from seguimiento import estados_gemweb
+    almacen.guardar_ajuste_sgc(estados_gemweb.PROPUESTA, "")
+    return resultado
 
 
 # ------------------------------------------------------------------- periodos

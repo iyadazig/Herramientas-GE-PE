@@ -115,6 +115,12 @@ class EstadosGemweb(BaseDatos):
         self.assertEqual(len(almacen.listar_cambios_gemweb()), 2)
         self.assertEqual(G.buscar(hoy=dt.date(2026, 10, 26), cliente=self._api())["cambios"], [])
 
+    def test_importar_anula_la_propuesta(self):
+        G.guardar_propuesta(G.buscar(hoy=dt.date(2026, 10, 26), cliente=self._api()))
+        self.assertTrue(G.propuesta()["cambios"])
+        self.importar()                                   # los ids de los suministros cambian
+        self.assertIsNone(G.propuesta())
+
     def test_cups_del_cuadro_fuera_de_gemweb(self):
         fuera = G.cups_fuera_de_gemweb(cliente=GemwebFalso([]))
         self.assertEqual(fuera, [])
