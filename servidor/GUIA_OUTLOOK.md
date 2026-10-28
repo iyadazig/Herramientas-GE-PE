@@ -1,6 +1,6 @@
 # Envío de correos desde la cuenta de Outlook de cada usuario
 
-Los módulos «Enviar informes» y «Avisos de incidencias» de Seguimiento y Control envían los correos
+Los módulos «Enviar Informes Sgto.» y «Avisos de incidencias» de Seguimiento y Control envían los correos
 desde la cuenta de Microsoft 365 de quien pulsa «Enviar», igual que hacían los programas de
 escritorio con su Outlook. Para eso la plataforma usa Microsoft Graph, que es gratuito.
 
@@ -51,7 +51,7 @@ como otra persona. Tampoco puede leer el correo.
 
 ## 5. Conectar cada cuenta (cada usuario, una vez)
 
-1. Abre **Seguimiento y Control → Enviar informes** (o «Avisos de incidencias»).
+1. Abre **Seguimiento y Control → Enviar Informes Sgto.** (o «Avisos de incidencias»).
 2. Pulsa **Conectar mi Outlook**.
 3. Abre el enlace `microsoft.com/devicelogin`, escribe el código que muestra la plataforma y entra con
    tu cuenta de GEYPE.

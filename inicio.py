@@ -73,8 +73,8 @@ menu = {
              "seguimiento-bajas"),
             (seguimiento.pagina_retraso, "Retraso de informes",
              "Cumplimiento del envío de los informes de seguimiento", "seguimiento-retraso"),
-            # cuelgan de «Enviar informes» las tres siguientes (estilo.GRUPOS_MENU)
-            (envios.pagina_informes, "Enviar informes",
+            # cuelgan de «Enviar Informes Sgto.» las tres siguientes (estilo.GRUPOS_MENU)
+            (envios.pagina_informes, "Enviar Informes Sgto.",
              "Informes de seguimiento por correo desde tu cuenta de Outlook",
              "seguimiento-informes"),
             (envios.pagina_incidencias, "Avisos de incidencias",
@@ -93,15 +93,17 @@ menu = {
         _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas", SSAA),
     ],
     GEMWEB: [
+        # tres grupos (estilo.GRUPOS_MENU): consultas de datos, analisis de facturas y
+        # optimizacion; cada uno cuelga de su primera pagina
         _pagina(funcion, titulo, SUB_GEMWEB, ruta, GEMWEB) for funcion, titulo, ruta in (
             (gw.pagina_inventario, "Inventario", "gemweb-inventario"),
             (gw.pagina_consumo_periodo, "Consumo por periodo", "gemweb-consumo-periodo"),
             (gw.pagina_telelecturas, "Telelecturas", "gemweb-telelecturas"),
             (gw.pagina_descarga_masiva, "Descarga masiva por CUPS", "gemweb-descarga-masiva"),
             (gw.pagina_coste_consumo, "Coste y consumo mensual", "gemweb-coste-consumo"),
-            (gw.pagina_optimizacion, "Optimización de potencia", "gemweb-optimizacion"),
             (gw.pagina_incoherencias, "Incoherencias en facturas", "gemweb-incoherencias"),
             (gw.pagina_factura_calculada, "Factura calculada", "gemweb-factura-calculada"),
+            (gw.pagina_optimizacion, "Optimización de potencia", "gemweb-optimizacion"),
             (gw.pagina_simulacion_contrato, "Simulación de contrato",
              "gemweb-simulacion-contrato"))
     ],

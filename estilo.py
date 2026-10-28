@@ -210,10 +210,16 @@ h3, .stMarkdown h3 {
 
 # Paginas que cuelgan de la que tienen justo encima en el menu (inicio.py): listas con las
 # rutas de las subpaginas de cada grupo. Van sangradas bajo ella, con una linea vertical.
-GRUPOS_MENU = [["seguimiento-contactos", "seguimiento-claves", "seguimiento-smac",
-                "seguimiento-telemedida", "seguimiento-bajas"],             # Cuadro de seguimiento
-               ["seguimiento-incidencias", "seguimiento-envios",
-                "seguimiento-contactos-envio"]]                             # Enviar informes
+GRUPOS_MENU = [
+    # Cuadro de seguimiento
+    ["seguimiento-contactos", "seguimiento-claves", "seguimiento-smac", "seguimiento-telemedida",
+     "seguimiento-bajas"],
+    # Enviar Informes Sgto.
+    ["seguimiento-incidencias", "seguimiento-envios", "seguimiento-contactos-envio"],
+    # API de Gemweb: Inventario, Coste y consumo mensual y Optimizacion de potencia
+    ["gemweb-consumo-periodo", "gemweb-telelecturas", "gemweb-descarga-masiva"],
+    ["gemweb-incoherencias", "gemweb-factura-calculada"],
+    ["gemweb-simulacion-contrato"]]
 
 
 def _css_grupos():
