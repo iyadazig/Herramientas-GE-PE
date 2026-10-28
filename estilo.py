@@ -178,16 +178,6 @@ h3, .stMarkdown h3 {
 [data-testid="stSidebarNavLink"][data-gp-activa] span {
     color: %(granate_oscuro)s; font-weight: 600;
 }
-/* paginas que cuelgan de «Cuadro de seguimiento»: sangradas bajo ella, con una linea */
-[data-testid="stSidebarNavLink"][href$="/seguimiento-contactos"],
-[data-testid="stSidebarNavLink"][href$="/seguimiento-claves"],
-[data-testid="stSidebarNavLink"][href$="/seguimiento-smac"],
-[data-testid="stSidebarNavLink"][href$="/seguimiento-telemedida"],
-[data-testid="stSidebarNavLink"][href$="/seguimiento-bajas"] {
-    padding-left: 1rem; margin-left: 2.6rem; border-left: 2px solid %(linea_menu)s;
-    border-radius: 0 6px 6px 0;
-}
-
 /* expanders */
 [data-testid="stExpander"] details { border: 1px solid %(borde)s; border-radius: 6px; }
 [data-testid="stExpander"] summary:hover { color: %(granate)s; }
@@ -216,6 +206,38 @@ h3, .stMarkdown h3 {
 """ % {"granate": GRANATE, "granate_oscuro": GRANATE_OSCURO, "negro": NEGRO, "gris": GRIS,
        "gris_claro": GRIS_CLARO, "beis": BEIS, "borde": BEIS_BORDE, "rosa": ROSA,
        "linea_menu": LINEA_MENU, **{"ico_" + k: v for k, v in ICONOS_MODULO.items()}}
+
+
+# Paginas que cuelgan de la que tienen justo encima en el menu (inicio.py): listas con las
+# rutas de las subpaginas de cada grupo. La pagina de arriba se localiza por ser la anterior
+# (la de inicio no lleva su ruta en el enlace). Cada grupo va en un bloque de fondo rosado, con
+# las subpaginas sangradas y la pagina abierta en blanco.
+GRUPOS_MENU = [["seguimiento-contactos", "seguimiento-claves", "seguimiento-smac",
+                "seguimiento-telemedida", "seguimiento-bajas"]]
+FONDO_GRUPO = "#F5E9E6"
+
+
+def _css_grupos():
+    base = '[data-testid="stSidebarNavItems"] '
+    reglas = []
+    for hijas in GRUPOS_MENU:
+        li = lambda r: 'li:has(a[href$="/%s"])' % r
+        # (un :has dentro de otro no es valido y anularia toda la regla)
+        padre = base + 'li:has(+ li a[href$="/%s"])' % hijas[0]
+        lis = [padre] + [base + li(r) for r in hijas]
+        enlaces = ["%s [data-testid=\"stSidebarNavLink\"]" % x for x in lis]
+        reglas += [
+            "%s { background: %s; margin-left: 0.5rem; }" % (", ".join(lis), FONDO_GRUPO),
+            "%s { border-radius: 8px 8px 0 0; padding-top: 3px; }" % padre,
+            "%s { border-radius: 0 0 8px 8px; padding-bottom: 5px; }" % lis[-1],
+            "%s { margin-left: 0; }" % enlaces[0],
+            "%s { margin-left: 1.6rem; padding-left: 0.9rem; }" % ", ".join(enlaces[1:]),
+            "%s { font-size: 0.85rem; }" % ", ".join(e + " span" for e in enlaces[1:]),
+            "%s { background: #FFFFFF; }" % ", ".join(e + "[data-gp-activa]" for e in enlaces)]
+    return "<style>\n%s\n</style>\n" % "\n".join(reglas)
+
+
+CSS = CSS + _css_grupos()
 
 
 # Textos fijos de los componentes de Streamlit (en ingles y sin opcion de idioma).
