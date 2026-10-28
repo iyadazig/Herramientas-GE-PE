@@ -87,6 +87,17 @@ pago. La factura y la curva no salen del PC.
     - avisos: RL.x según el consumo (Circular CNMC 6/2020), factor de carga mayor del 80 %,
       plazos de menos de un año sin telemedida y requisitos del interrumpible.
   - La telemedida de gas no está en Gemweb: Datadis no tiene gas.
+  - **Plantilla Excel** (`ofertas/plantilla.py`, sin Streamlit), para otros consumos o
+    suministros que no están en Gemweb:
+    - pestañas Suministros (datos, tarifa y potencias P1-P6 o Qd) y Consumos (12 meses × P1-P6,
+      o kWh en gas), prellenadas con lo de Gemweb y con los CUPS que Gemweb no encuentra;
+    - en los de Gemweb manda lo relleno en la plantilla, pero el consumo solo se marca
+      `origen_consumo="Plantilla"` si cambia; los CUPS nuevos son fichas `origen="Manual"` con
+      las mismas claves que `ficha_solicitud`, así que el Excel, el correo y el guardado no
+      cambian;
+    - se puede hacer una solicitud solo con la plantilla («Solicitud sin Gemweb») y mezclar
+      suministros de Gemweb y manuales;
+    - en el Excel, bajo el perfil de los consumos de plantilla, sale `so.NOTA_CONSUMO`.
 - **Estudio de potencia**: optimización de la potencia contratada (6.1TD y 3.0TD > 50 kW)
   con la curva de carga, individual o multipunto.
   - `potencia/` es copia del cálculo del programa de escritorio EstudioPotencia

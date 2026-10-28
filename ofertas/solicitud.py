@@ -81,6 +81,11 @@ MESES_LARGOS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", 
 # cubren las facturas pueden alejarse de un año hasta MARGEN_DIAS sin avisar
 FACTURA_MENSUAL_MAX_DIAS, DIAS_ANIO, MARGEN_DIAS = 45, 365, 15
 AMARILLO, ROJO = "FFFF00", "FF0000"
+# consumo que no sale de las facturas sino de la plantilla de ofertas.plantilla: se avisa bajo
+# el perfil
+CONSUMO_PLANTILLA = "Plantilla"
+NOTA_CONSUMO = ("Consumo previsto facilitado por GE&PE / Expected consumption provided by "
+                "GE&PE")
 
 OSCURO, CLARO, NARANJA = "1F497D", "DAEEF3", "FFC000"
 _borde = Side(style="thin", color="FFFFFF")
@@ -462,6 +467,7 @@ def _potencias_y_perfil(ws, s):
     for col in "CDEFGH":
         _bloque(ws, f"{col}38", f"=IF($I$37=0,0,{col}37/$I$37*100)", True, formato="#,##0.00")
     _bloque(ws, "I38", None, True)
+    _nota_consumo(ws, s, "B39")
 
     grafico = BarChart()
     grafico.type, grafico.grouping, grafico.overlap = "col", "stacked", 100
@@ -530,6 +536,12 @@ def _aspectos_tecnicos(ws, s, fila=18):
         ws[f"{col}{f + 5}"].font = Font(name="Calibri", size=10, bold=True, color=ROJO)
 
 
+def _nota_consumo(ws, s, celda):
+    if s.get("origen_consumo") == CONSUMO_PLANTILLA:
+        ws[celda] = NOTA_CONSUMO
+        ws[celda].font = Font(italic=True, size=9, color=OSCURO)
+
+
 def _perfil_gas(ws, s, fila=26):
     """Gas: perfil de consumo de 12 meses (Qd medio, energia y Qd aplicado; total en E40) y
     grafico de la energia."""
@@ -557,6 +569,7 @@ def _perfil_gas(ws, s, fila=26):
     _bloque(ws, f"C{total}:D{total}", None, True)
     _bloque(ws, f"E{total}:F{total}", f"=SUM(E{cab + 1}:E{cab + 12})", True, formato="#,##0")
     _bloque(ws, f"G{total}:I{total}", None, True)
+    _nota_consumo(ws, s, f"B{total + 1}")
 
     grafico = BarChart()
     grafico.type = "col"

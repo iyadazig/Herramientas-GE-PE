@@ -24,6 +24,7 @@ import almacen
 import estilo
 from gemweb_extractor import paginas as gw
 from ofertas import correo
+from ofertas import plantilla as pl
 from ofertas import solicitud as so
 
 # la registra inicio.py: «Solicitudes guardadas» vuelve a ella al cargar una solicitud
@@ -80,15 +81,39 @@ def pagina_solicitud_ofertas():
         if st.button("Empezar una solicitud nueva"):
             _limpiar_formulario()
             st.rerun()
-        seccion_solicitud_ofertas({"clave": ("guardada", cargada["id"]),
-                                   "fichas": cargada["fichas"], "comun": cargada["comun"]})
+        # la propia solicitud cargada (en la sesion): la plantilla puede cambiar sus fichas
+        cargada.setdefault("clave", ("guardada", cargada["id"]))
+        seccion_solicitud_ofertas(cargada)
         return
 
-    cliente = gw.obtener_cliente()
     st.markdown("Prepara el Excel de **solicitud de ofertas** de varios suministros a la vez, "
                 "de electricidad o de gas natural: datos del suministro, potencias (o, en gas, "
                 "caudal diario Qd) de su última factura y perfil de consumo de los últimos 12 "
-                "meses, sacados de Gemweb.")
+                "meses, sacados de Gemweb. Para usar otros consumos o añadir suministros que no "
+                "están en Gemweb, usa la plantilla Excel (aquí abajo o tras buscar en Gemweb).")
+    res = st.session_state.get("solicitud_ofertas")
+    if res and res.get("sin_gemweb"):
+        st.info("Solicitud con los suministros de la plantilla (sin Gemweb).")
+        if st.button("Empezar una solicitud nueva"):
+            _limpiar_formulario()
+            st.rerun()
+        seccion_solicitud_ofertas(res)
+        return
+    with st.expander("Solicitud sin Gemweb: todos los suministros con la plantilla Excel"):
+        st.caption("Para clientes o suministros que no están en Gemweb. Descarga la plantilla, "
+                   "rellena los suministros y sus consumos mes a mes y súbela.")
+        producto = st.radio("Producto", list(so.PRODUCTOS), horizontal=True,
+                            key="sol_pl_producto",
+                            format_func=lambda p: "Gas natural" if p == so.GAS
+                            else "Electricidad")
+        fichas = _subir_plantilla([], [], producto, "sol_pl_inicio")
+        if fichas:
+            st.session_state.solicitud_ofertas = {
+                "clave": ("plantilla", len(fichas)), "fichas": fichas, "sin_gemweb": True,
+                "producto": producto}
+            st.rerun()
+
+    cliente = gw.obtener_cliente()
     st.subheader("1. Suministros")
     cups_list = gw.pedir_cups()
     st.subheader("2. Facturas para el perfil de consumo")
@@ -165,6 +190,75 @@ def decodificar(valor):
 def _limpiar_formulario():
     for k in [k for k in st.session_state if str(k).startswith("sol_")]:
         del st.session_state[k]
+    if (st.session_state.get("solicitud_ofertas") or {}).get("sin_gemweb"):
+        del st.session_state["solicitud_ofertas"]
+
+
+# ------------------------------------------------------------------- plantilla
+def _subir_plantilla(fichas, cups_sin_ficha, producto, clave):
+    """Descarga de la plantilla (prellenada con las fichas) y subida de la rellena. Devuelve
+    las fichas nuevas al pulsar «Aplicar plantilla» (None mientras tanto)."""
+    gas = producto == so.GAS
+    estilo.boton_descarga(
+        "Solicitud de ofertas", st, "Descargar plantilla (Excel)",
+        data=pl.plantilla_excel(fichas, cups_sin_ficha, producto),
+        file_name="plantilla_solicitud_%s.xlsx" % ("gas" if gas else "electricidad"),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=clave + "_descargar")
+    subida = st.file_uploader("Plantilla rellena", type=["xlsx"], key=clave + "_fichero")
+    if not subida:
+        return None
+    leido = pl.leer_plantilla(subida.getvalue(), producto)
+    errores = leido[2] + pl.errores_de_manuales(leido[0], leido[1], fichas, gas)
+    if errores:
+        st.error("Corrige la plantilla y vuelve a subirla:\n" + "\n".join(
+            "- " + e for e in errores))
+        return None
+    nuevas, cambios = pl.aplicar_plantilla(fichas, leido, producto)
+    st.markdown("**Así quedarían los suministros**")
+    st.dataframe(pd.DataFrame(cambios), hide_index=True, use_container_width=True,
+                 column_config={c: st.column_config.NumberColumn(format="localized") for c in (
+                     "Consumo Gemweb (kWh)", "Consumo nuevo (kWh)")})
+    if st.button("Aplicar plantilla", type="primary", key=clave + "_aplicar"):
+        st.session_state.pop(clave + "_fichero", None)
+        return nuevas
+    return None
+
+
+def bloque_plantilla(res: dict) -> None:
+    """Desplegable para cambiar consumos o añadir suministros con la plantilla. Cambia las
+    fichas de res (la solicitud en la sesion) y su version, para que las tablas se rehagan."""
+    fichas = res.get("fichas") or []
+    con_ficha = {f["cups"] for f in fichas}
+    resumen = res.get("resumen")
+    sin_ficha = [c for c in (list(resumen["CUPS"]) if resumen is not None else [])
+                 if c not in con_ficha]
+    with st.expander("Cambiar consumos o añadir suministros (plantilla Excel)",
+                     expanded=not fichas):
+        if sin_ficha:
+            st.caption("Gemweb no ha encontrado: %s. Van en la plantilla para que los "
+                       "rellenes." % ", ".join(sin_ficha))
+        st.caption("La plantilla sale con los datos y el consumo mes a mes de cada suministro. "
+                   "Cambia lo que quieras (lo que dejes igual se queda) o añade suministros que "
+                   "no están en Gemweb, y súbela.")
+        tipos = {f.get("tipo") or so.ELECTRICIDAD for f in fichas}
+        if len(tipos) == 1:
+            producto = tipos.pop()
+        else:
+            producto = res.get("producto") or st.radio(
+                "Producto", list(so.PRODUCTOS), horizontal=True, key="sol_pl_producto2",
+                format_func=lambda p: "Gas natural" if p == so.GAS else "Electricidad")
+        nuevas = _subir_plantilla(fichas, sin_ficha, producto, "sol_pl_%d" % hash(res["clave"]))
+        if nuevas is not None:
+            res.setdefault("fichas_gemweb", fichas)
+            res["fichas"] = nuevas
+            res["version"] = res.get("version", 0) + 1
+            st.rerun()
+        if res.get("fichas_gemweb") is not None and not res.get("sin_gemweb") and st.button(
+                "Volver a los datos sin plantilla", key="sol_pl_volver"):
+            res["fichas"] = res.pop("fichas_gemweb")
+            res["version"] = res.get("version", 0) + 1
+            st.rerun()
 
 
 # ------------------------------------------------------------------- consideraciones
@@ -393,11 +487,15 @@ def tabla_consideraciones(fichas: list, comun: dict, guardado: dict = None,
 def seccion_solicitud_ofertas(res: dict) -> None:
     """Cabecera, tablas revisables de los suministros y botones de descarga, texto del correo
     y guardado."""
+    st.subheader("4. Solicitud de ofertas")
+    bloque_plantilla(res)
     fichas = res.get("fichas") or []
     if not fichas:
-        st.warning("No se ha encontrado ningún suministro en Gemweb.")
+        st.warning("No se ha encontrado ningún suministro en Gemweb. Puedes añadirlos con la "
+                   "plantilla de aquí arriba.")
         return
-    st.subheader("4. Solicitud de ofertas")
+    # las tablas se rehacen al aplicar la plantilla (nueva version)
+    clave_tablas = (res["clave"], res.get("version", 0))
     st.caption("Excel con el formato de GE&PE: una hoja «Resumen» y otra por suministro con sus "
                "datos, las potencias de su última factura (en gas, los aspectos técnicos), el "
                "perfil de consumo de los últimos 12 meses (cada factura mensual en el mes con "
@@ -448,24 +546,32 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     if desde and hasta and hasta < desde:
         st.warning("La fecha límite de recepción es anterior a la de inicio.")
 
-    st.caption("Revisa los datos de cada suministro (salen de Gemweb).")
+    st.caption("Revisa los datos de cada suministro (salen de Gemweb o de la plantilla).")
     tabla = pd.DataFrame([{v: f.get(k, "") for k, v in COLUMNAS_FICHA.items()} for f in fichas])
     editada = st.data_editor(tabla, hide_index=True, use_container_width=True,
-                             disabled=["CUPS", "Tarifa"], key="sol_tabla_%d" % hash(res["clave"]))
+                             disabled=["CUPS"], key="sol_tabla_%d" % hash(clave_tablas))
     potencias, tecnicos = None, []
     if gas:
-        tecnicos = editor_tecnicos(fichas, res["clave"])
+        tecnicos = editor_tecnicos(fichas, clave_tablas)
     else:
         with st.expander("Potencias que se usarán (última factura de cada suministro)"):
             st.caption("Salen de la última factura; cámbialas si hay que pedir otras (kW).")
             potencias = st.data_editor(
-                pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f["ultima_factura"]},
+                pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f.get("ultima_factura")},
                                    **{p: f["potencias"][n] for n, p in enumerate(so.PERIODOS)})
                               for f in fichas]),
                 hide_index=True, use_container_width=True, disabled=["CUPS", "Última factura"],
                 column_config={p: st.column_config.NumberColumn(min_value=0, format="%g")
                                for p in so.PERIODOS},
-                key="sol_potencias_%d" % hash(res["clave"]))
+                key="sol_potencias_%d" % hash(clave_tablas))
+    with st.expander("Consumo anual de cada suministro"):
+        st.dataframe(pd.DataFrame([{
+            "CUPS": f["cups"], "Alias": f.get("alias") or "",
+            "Consumo anual (kWh)": round(so.consumo_anual(f)),
+            "De dónde sale el consumo": pl.origen_consumo(f)} for f in fichas]),
+            hide_index=True, use_container_width=True,
+            column_config={"Consumo anual (kWh)": st.column_config.NumberColumn(
+                format="localized")})
     for f in fichas:
         if f.get("aviso"):
             # solo es un problema si las facturas cubren mas de un año (dias repetidos)
@@ -489,7 +595,7 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     editada_c = st.data_editor(
         tabla_c, hide_index=True, use_container_width=True, disabled=["CUPS", "Alias"],
         column_config=columnas,
-        key="sol_consid_%d_%d" % (hash(res["clave"]), hash(repr(
+        key="sol_consid_%d_%d" % (hash(clave_tablas), hash(repr(
             (producto, sorted(comun.items()), [t["cogeneracion"] for t in tecnicos])))))
 
     inversa = {v: k for k, v in COLUMNAS_FICHA.items()}
