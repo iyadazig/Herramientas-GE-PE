@@ -215,11 +215,7 @@ GRUPOS_MENU = [
     ["seguimiento-contactos", "seguimiento-claves", "seguimiento-smac", "seguimiento-telemedida",
      "seguimiento-bajas"],
     # Enviar Informes Sgto.
-    ["seguimiento-incidencias", "seguimiento-envios", "seguimiento-contactos-envio"],
-    # API de Gemweb: Inventario, Coste y consumo mensual y Optimizacion de potencia
-    ["gemweb-consumo-periodo", "gemweb-telelecturas", "gemweb-descarga-masiva"],
-    ["gemweb-incoherencias", "gemweb-factura-calculada"],
-    ["gemweb-simulacion-contrato"]]
+    ["seguimiento-incidencias", "seguimiento-envios", "seguimiento-contactos-envio"]]
 
 
 def _css_grupos():

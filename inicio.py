@@ -93,19 +93,18 @@ menu = {
         _pagina(paginas.pagina_fichas, "Fichas de contrato", SUB_SSAA, "fichas", SSAA),
     ],
     GEMWEB: [
-        # tres grupos (estilo.GRUPOS_MENU): consultas de datos, analisis de facturas y
-        # optimizacion; cada uno cuelga de su primera pagina
-        _pagina(funcion, titulo, SUB_GEMWEB, ruta, GEMWEB) for funcion, titulo, ruta in (
+        # las que tienen un fallo conocido de la API (con su triangulo) van al final
+        _pagina(funcion, titulo, SUB_GEMWEB, ruta, GEMWEB) for funcion, titulo, ruta in sorted((
             (gw.pagina_inventario, "Inventario", "gemweb-inventario"),
             (gw.pagina_consumo_periodo, "Consumo por periodo", "gemweb-consumo-periodo"),
             (gw.pagina_telelecturas, "Telelecturas", "gemweb-telelecturas"),
             (gw.pagina_descarga_masiva, "Descarga masiva por CUPS", "gemweb-descarga-masiva"),
             (gw.pagina_coste_consumo, "Coste y consumo mensual", "gemweb-coste-consumo"),
+            (gw.pagina_optimizacion, "Optimización de potencia", "gemweb-optimizacion"),
             (gw.pagina_incoherencias, "Incoherencias en facturas", "gemweb-incoherencias"),
             (gw.pagina_factura_calculada, "Factura calculada", "gemweb-factura-calculada"),
-            (gw.pagina_optimizacion, "Optimización de potencia", "gemweb-optimizacion"),
             (gw.pagina_simulacion_contrato, "Simulación de contrato",
-             "gemweb-simulacion-contrato"))
+             "gemweb-simulacion-contrato")), key=lambda p: p[1] in gw.AVISOS_GEMWEB)
     ],
     OFERTAS: [
         _pagina(ofertas.pagina_solicitud_ofertas, "Crear nueva solicitud",
