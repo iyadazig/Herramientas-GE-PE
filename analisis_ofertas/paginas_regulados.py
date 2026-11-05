@@ -133,6 +133,17 @@ def pagina_datos_regulados():
             gen[c] = (c1 if n % 2 == 0 else c2).number_input(
                 f"{nombre} ({unidad})", min_value=0.0, value=float(d["generales"][c]),
                 format="%.10f" if c == "iee" else "%.7f", key=f"{clave}_g_{c}")
+        st.markdown("**Desvíos de referencia**")
+        st.caption("Media de los 12 últimos meses con liquidación C2 (coste + saldo = neto). "
+                   "Solo informativo: aparece como ayuda en el campo «Desvíos» de las ofertas.")
+        c1, c2 = st.columns(2)
+        for n, (c, nombre, unidad) in enumerate(dr.DESVIOS):
+            gen[c] = (c1 if n % 2 == 0 else c2).number_input(
+                f"{nombre} ({unidad})", value=float(d["generales"].get(c) or 0.0),
+                format="%.3f", key=f"{clave}_g_{c}")
+        gen["desvios_fuente"] = st.text_input(
+            "Periodo y fuente de los desvíos", d["generales"].get("desvios_fuente", ""),
+            key=f"{clave}_g_desvios_fuente")
         st.markdown("**Estimación del precio de mercado**")
         st.caption("Precio previsto de cada mes = % OMIP × cotización OMIP + (1 − % OMIP) × media "
                    "del precio OMIE de ese mes en los últimos años.")

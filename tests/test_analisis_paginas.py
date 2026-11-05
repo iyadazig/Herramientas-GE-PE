@@ -172,6 +172,31 @@ class TablasAnalisis(unittest.TestCase):
         c.loc[0, "% cerrado"] = 0.5
         ap_.aplicar_cierres(self.o, c)
         self.assertEqual([(x.mes, x.pct) for x in self.o.cierres], [(1, 0.5)])
+        self.o.cierres_tipo = "Por MW (carga base)"
+        c = ap_.tabla_cierres(self.e, self.o)
+        c.loc[2, "MW pico"] = 0.2
+        c.loc[2, "Precio pico (€/MWh)"] = 150.0
+        ap_.aplicar_cierres(self.o, c)
+        pico = [x for x in self.o.cierres if x.mes == 3][0]
+        self.assertEqual((pico.mw_pico, pico.precio_pico), (0.2, 150.0))
+
+    def test_ph_de_canarias_y_desvios(self):
+        from analisis_ofertas import paginas as ap_
+        from analisis_ofertas import modelo as mo
+        self.e.suministros[1].sistema = "Canarias"
+        self.assertIn("Canarias Ph|6P", ap_.claves_ap(self.e))
+        self.e.ph_dif, self.e.ph_origen = {1: 20.0}, {1: "ene-26 (ESIOS)"}
+        t = ap_.tabla_ph(self.e)
+        t.loc[0, "Ph − diario (€/MWh)"] = 18.5
+        t.loc[1, "Ph − diario (€/MWh)"] = 21.0
+        ap_.aplicar_ph(self.e, t)
+        self.assertEqual(self.e.ph_dif, {1: 18.5, 2: 21.0})
+        self.assertEqual(self.e.ph_origen, {1: "manual", 2: "manual"})
+        self.e.regulados[2027]["generales"].update(desvios_coste_ref=0.441,
+                                                   desvios_saldo_ref=-0.44,
+                                                   desvios_fuente="C2")
+        self.assertIn("coste de desvíos 0,441", ap_.referencia_desvios(self.e))
+        self.assertEqual(mo.SISTEMA_PH, "Canarias Ph")
 
 
 class Formato(unittest.TestCase):

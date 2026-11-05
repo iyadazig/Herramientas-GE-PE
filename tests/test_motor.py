@@ -127,6 +127,21 @@ class CurvaFichero(unittest.TestCase):
         self.assertEqual(c.valores[(D, 24)], 24.0)
         self.assertEqual(c.inicio, D)
 
+    def test_potencia_en_kw_se_pasa_a_kwh(self):
+        """Exportación de curvas con «Activa (kW)» cuartohoraria: kWh = kW × 0,25 h."""
+        filas = ["CUPS;Fecha;Hora;Activa (kW)"]
+        t = dt.datetime(2026, 4, 1)
+        for i in range(96):
+            filas.append("ES0000;%s;%s;400" % (t.strftime("%d/%m/%Y"),
+                                                (t + dt.timedelta(minutes=15 * i)).strftime(
+                                                    "%H:%M")))
+        c = curva_consumo.leer_curva("\n".join(filas).encode(), "kw.csv")
+        self.assertEqual(c.resolucion, "qh")
+        self.assertAlmostEqual(sum(c.valores.values()), 400 * 24)      # 9.600 kWh en el día
+        self.assertTrue(any("potencia" in a for a in c.avisos))
+        self.assertTrue(curva_consumo.es_potencia("Potencia MW"))
+        self.assertFalse(curva_consumo.es_potencia("Consumo kWh"))
+
     def test_csv_cuartohorario_inicio(self):
         filas = ["fecha y hora,kWh"]
         t = dt.datetime(2026, 4, 1)

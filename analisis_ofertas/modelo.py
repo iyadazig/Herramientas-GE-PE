@@ -37,6 +37,11 @@ SIN_CIERRES, CIERRE_PCT, CIERRE_MW = "Sin cierres", "Por %", "Por MW (carga base
 TIPOS_CIERRE = [SIN_CIERRES, CIERRE_PCT, CIERRE_MW]
 REDUCCIONES_IEE = [0.0, 0.85, 1.0]
 ESTIMADO, CLIENTE = "Estimado (a mano)", "Del cliente (curva)"
+# Precio horario de adquisición de la demanda en Canarias (Ph demanda, Orden TEC/1172/2018,
+# indicador 573 de ESIOS): sus apuntamientos se guardan con este «sistema» («Canarias Ph|6P»).
+SISTEMA_PH = "Canarias Ph"
+# horas de la carga pico de los cierres: de 8 a 20 h, de lunes a viernes
+HORAS_PICO = range(8, 20)
 
 
 def seis(valores, defecto=None) -> list:
@@ -116,6 +121,8 @@ class Cierre:
     pct: float = None             # «Por %»: parte del consumo cerrada (tanto por uno)
     mw: float = None              # «Por MW»: MW de carga base
     precio: float = None          # €/MWh; vacío = OMIP del mes
+    mw_pico: float = None         # «Por MW»: MW de carga pico (8-20 h, lunes a viernes)
+    precio_pico: float = None     # €/MWh del pico; vacío = previsto del pico (sin liquidación)
 
 
 @dataclass
@@ -128,6 +135,10 @@ class Oferta:
     ronda: int = 1
     es_actual: bool = False
     modalidad: str = FIJO
+    # indexados: los CUPS de Canarias van al Ph demanda (ya incluye los costes de ajuste)
+    indice_ph: bool = False
+    # Pass-Pool: el Ci se aplica a la media mensual de OMIE (el Ci ya lleva el perfil)
+    ci_media_mensual: bool = True
     duracion: int = 12                     # meses, cualquiera
     inicio: dt.date = None                 # vacío = el del estudio
     unidad: str = "€/kWh"
@@ -204,6 +215,11 @@ class Estudio:
     omip_manual: dict = field(default_factory=dict)          # {"AAAA-MM": €/MWh}
     ssaa_mes: list = field(default_factory=lambda: [None] * 12)   # €/MWh por mes natural
     ssaa_manual: dict = field(default_factory=dict)          # {"AAAA-MM": €/MWh}
+    # Ph demanda de Canarias − mercado diario (€/MWh) por mes natural, y de qué mes es
+    ph_dif: dict = field(default_factory=dict)               # {mes: €/MWh}
+    ph_origen: dict = field(default_factory=dict)            # {mes: "sep-26 (ESIOS)"}
+    # precio medio de 8 a 20 h de lunes a viernes / media del mes (cierres en carga pico)
+    pico: dict = field(default_factory=dict)                 # {mes: factor}
     ap_omie: dict = field(default_factory=dict)              # {"Península|6P": {mes: [6]}}
     ap_ssaa: dict = field(default_factory=dict)              # vacío = el de OMIE
     ap_origen: dict = field(default_factory=dict)            # {"Península|6P": {mes: texto}}
@@ -289,6 +305,8 @@ def estudio_de_dict(d: dict) -> Estudio:
                         for s in d.get("suministros") or []]
     for s in d["suministros"]:
         s.consumo = _meses_int(s.consumo)
+    for clave in ("ph_dif", "ph_origen", "pico"):
+        d[clave] = _meses_int(d.get(clave))
     for clave in ("ap_omie", "ap_ssaa", "ap_origen"):
         d[clave] = {k: _meses_int(v) for k, v in (d.get(clave) or {}).items()}
     d["ap_cliente"] = {c: {k: (_meses_int(v) if isinstance(v, dict) else v)

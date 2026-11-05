@@ -39,13 +39,14 @@ PT0, NPG = 68, 44
 CI0 = 204
 AO0 = 244
 CU0 = 606
+PHD0, PHA0 = 723, 739          # Ph demanda de Canarias y pico (sección 12 de Parámetros)
 FILA_CFG = {"comercializadora": 5, "producto": 6, "modalidad": 7, "duracion": 8, "unidad": 9,
             "atr": 10, "potencia": 11, "descuento": 12, "base_b": 13, "pc": 15, "os": 16,
             "om": 17, "srad": 18, "desvios": 19, "fee": 20, "base_fee": 21, "k": 22,
             "k_ssaa": 23, "gdo": 24, "fnee": 25, "otros_fijos": 26, "ssaa_modo": 28,
             "banda_min": 29, "banda_max": 30, "techo": 31, "ssaa_perfil": 32,
             "ssaa_perdidas": 33, "ssaa_pct_perdidas": 34, "ssaa_f1": 35, "ssaa_f2": 36,
-            "cierres_tipo": 38, "coste_click": 39}
+            "cierres_tipo": 38, "coste_click": 39, "ph": 43, "cimm": 44}
 RESULTADOS = {"consumo": 5, "potencia": 6, "energia": 7, "peajes": 8, "ssaa": 9, "otros": 10,
               "k": 11, "iee": 12, "servicios": 13, "total": 14}
 
@@ -125,7 +126,9 @@ def oferta_de(ws, cups_por_n: dict) -> mo.Oferta:
                   ssaa_perdidas=c["ssaa_perdidas"] or mo.PERD_NO,
                   ssaa_pct_perdidas=_n(c["ssaa_pct_perdidas"]), ssaa_f1=_n(c["ssaa_f1"], 1.0),
                   ssaa_f2=_n(c["ssaa_f2"], 1.0), cierres_tipo=c["cierres_tipo"] or mo.SIN_CIERRES,
-                  coste_click=_n(c["coste_click"]))
+                  coste_click=_n(c["coste_click"]), indice_ph=c["ph"] == "Sí",
+                  # las plantillas anteriores (sin C44) aplicaban el apuntamiento en Pass-Pool
+                  ci_media_mensual=c["cimm"] == "Sí")
     for r in range(G0 + NSLOT, G0 + NSLOT + NCUST):
         nombre, tar, sis = (ws.cell(r, c).value for c in (3, 4, 5))
         if nombre and tar:
@@ -141,9 +144,13 @@ def oferta_de(ws, cups_por_n: dict) -> mo.Oferta:
     for k in range(36):
         r = CI0 + k
         pct, mw, precio, omip = (ws.cell(r, c).value for c in (6, 7, 8, 5))
-        if pct is not None or mw is not None or (isinstance(precio, (int, float)) and precio != omip):
+        mwp, precio_p, previsto_p = (ws.cell(r, c).value for c in (15, 16, 18))
+        precio_p = precio_p if isinstance(precio_p, (int, float)) and precio_p != previsto_p else None
+        if pct is not None or mw is not None or mwp is not None or precio_p is not None or (
+                isinstance(precio, (int, float)) and precio != omip):
             o.cierres.append(mo.Cierre(k + 1, pct=pct, mw=mw,
-                                       precio=precio if isinstance(precio, (int, float)) else None))
+                                       precio=precio if isinstance(precio, (int, float)) else None,
+                                       mw_pico=mwp, precio_pico=precio_p))
     for si, s in enumerate(SISTEMAS):
         for ci, cal in enumerate(["6P", "3P"]):
             propios = {m: _fila(ws, aprow(AO0, si, ci, m), 3) for m in range(1, 13)}
@@ -201,6 +208,17 @@ def estudio_de(ruta: Path):
         e.ssaa_manual[clave] = _n(pa.cell(r, 14).value)
     e.ap_omie = apuntamientos_de(pa, AP_OM_EFF)
     e.ap_ssaa = apuntamientos_de(pa, AP_SS_EFF)
+    if pa.cell(PHA0, 1).value == "Canarias Ph":         # plantillas con la sección 12
+        for m in range(1, 13):
+            dif, pico = pa.cell(PHD0 + m - 1, 3).value, pa.cell(PHD0 + m - 1, 5).value
+            if isinstance(dif, (int, float)):
+                e.ph_dif[m] = float(dif)
+            if isinstance(pico, (int, float)):
+                e.pico[m] = float(pico)
+        for ci, cal in enumerate(["6P", "3P"]):
+            e.ap_omie[mo.clave_ap(mo.SISTEMA_PH, cal)] = {
+                m: [pa.cell(PHA0 + ci * 12 + m - 1, 11 + p).value for p in range(6)]
+                for m in range(1, 13)}
     hojas = [rs.cell(r, 2).value for r in range(9, 30) if rs.cell(r, 2).value]
     guardados = {}
     for i, h in enumerate(hojas):

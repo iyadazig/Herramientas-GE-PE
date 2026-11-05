@@ -94,6 +94,13 @@ class Validar(unittest.TestCase):
     def setUp(self):
         self.d = dr.datos_anio(2026, {})
 
+    def test_desvios_de_referencia(self):
+        g = dr.datos_anio(2026, {})["generales"]
+        self.assertAlmostEqual(g["desvios_coste_ref"] + g["desvios_saldo_ref"], 0.001)
+        self.assertIn("C2", g["desvios_fuente"])
+        self.d["generales"]["desvios_saldo_ref"] = "x"
+        self.assertIn("tiene que ser un número", "\n".join(dr.validar(self.d)))
+
     def test_errores(self):
         self.d["tarifas"]["3.0TD"]["peajes_energia"] = [0.1] * 5
         self.d["tarifas"]["6.1TD"]["perdidas"][2] = -0.1

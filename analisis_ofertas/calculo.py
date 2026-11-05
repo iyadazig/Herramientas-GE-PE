@@ -8,10 +8,15 @@ libre: se calcula cada mes del contrato (k = 1..duración) y cada periodo.
 Para cada CUPS incluido, con el grupo de precios de su tarifa y sistema (o un grupo propio):
     consumo[k, p]  = perfil del mes natural × crecimiento del año de contrato
     energía        Fijo:          precio / unidad × (1 − descuento)
-                   Pass-Pool:     (Ci × (mercado + regulados) + B) / 1000
+                   Pass-Pool:     (Ci × (mercado + regulados) + B) / 1000; si «el Ci se aplica
+                                  a la media mensual», el mercado va sin apuntamiento
                    Pass-Through:  ((mercado + regulados) × (1 + pérdidas) + B) / 1000
                    mercado = (previsto × (1 − %cerrado) + precio cierre × %cerrado) × apuntamiento
-                             + liquidación de los MW cerrados + clicks
+                             + liquidación de los MW cerrados (base y pico) + clicks
+                   Ph demanda (indexados con «Canarias al Ph», solo CUPS de Canarias):
+                   mercado = (previsto + diferencial Ph − diario del mes) × apuntamiento del Ph
+                             (el Ph ya lleva los costes de ajuste; sin diferencial calculado se
+                             usa el SSAA del estudio)
                    regulados = pagos por capacidad + OS + OM + SRAD + desvíos (si la oferta los
                                añade); B en barras si su base es «Barras central»
     peajes         peajes + cargos de energía del año natural, si el precio no los incluye
@@ -89,6 +94,12 @@ class Contexto:
             return self.e.pct_omip * omip + (1 - self.e.pct_omip) * omie, float(omip)
         return float(omie or 0.0), 0.0
 
+    def ph_dif(self, anio: int, mes: int) -> float:
+        """Lo que el Ph demanda de Canarias lleva encima del mercado diario (€/MWh): el
+        calculado con ESIOS (12 últimos meses) o, si no hay, el SSAA del estudio."""
+        v = self.e.ph_dif.get(mes) if self.e.ph_dif else None
+        return float(v) if v is not None else self.ssaa(anio, mes)
+
     def ssaa(self, anio: int, mes: int) -> float:
         manual = self.e.ssaa_manual.get(f"{anio}-{mes:02d}")
         if manual is not None:
@@ -102,22 +113,29 @@ def _factores(valores) -> list:
 
 
 def apuntamientos(e: mo.Estudio, o: mo.Oferta, sistema: str, cal: str, meses: list,
-                  cups: str = None):
-    """(OMIE, SSAA) de 6 periodos para cada mes [(año, mes)] → dos arrays D × 6."""
+                  cups: str = None, ph: bool = False):
+    """(OMIE, SSAA) de 6 periodos para cada mes [(año, mes)] → dos arrays D × 6. ph: el de
+    mercado es el del Ph demanda de Canarias (el estimado «Canarias Ph» o, si no está, el de
+    Canarias; el del cliente, el calculado con el Ph)."""
     clave = mo.clave_ap(sistema, cal)
     cliente = None
     if cups:
         s = e.suministro(cups)
         if s and s.apuntamiento == mo.CLIENTE:
             cliente = e.ap_cliente.get(cups)
+    est_ss = e.ap_ssaa.get(clave) or e.ap_omie.get(clave) or {}
+    if ph:
+        clave_ph = mo.clave_ap(mo.SISTEMA_PH, cal)
+        clave = clave_ph if e.ap_omie.get(clave_ph) else clave
+        if cliente:
+            cliente = {"omie": cliente["ph"]} if cliente.get("ph") else None
     propio = (o.apuntamientos_propios or {}).get(clave) or {}
     est_om = e.ap_omie.get(clave) or {}
-    est_ss = e.ap_ssaa.get(clave) or est_om
     om, ss = [], []
     for _, m in meses:
         base_om = (cliente or {}).get("omie", {}).get(m) if cliente else None
         base_om = _factores(base_om if base_om else est_om.get(m))
-        prop = mo.seis(propio.get(m))
+        prop = mo.seis(propio.get(m)) if not ph else [None] * 6
         om.append([float(p) if isinstance(p, (int, float)) else b for p, b in zip(prop, base_om)])
         base_ss = (cliente or {}).get("ssaa", {}).get(m) if cliente else None
         ss.append(_factores(base_ss if base_ss else est_ss.get(m)))
@@ -194,6 +212,17 @@ def _horas(anio: int, mes: int) -> int:
     return calendar.monthrange(anio, mes)[1] * 24        # como la plantilla (sin cambios de hora)
 
 
+def _horas_pico(anio: int, mes: int) -> int:
+    """Horas de carga pico del mes: 12 (8-20 h) por día de lunes a viernes."""
+    dias = calendar.monthrange(anio, mes)[1]
+    return sum(12 for d in range(1, dias + 1) if dt.date(anio, mes, d).weekday() < 5)
+
+
+def usa_ph(o: mo.Oferta, sistema: str) -> bool:
+    """¿El CUPS de ese sistema se calcula con el Ph demanda de Canarias en esta oferta?"""
+    return bool(o.indice_ph and o.indexada and sistema == "Canarias")
+
+
 def grupos_de(e: mo.Estudio, o: mo.Oferta) -> dict:
     """{nombre: (tarifa, sistema)} de los grupos de la oferta: los automáticos de las tarifas y
     sistemas de los suministros, y los propios."""
@@ -262,29 +291,41 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
     precio_cierre = np.where(omip > 0, omip, previsto)
     liquidacion = np.zeros(D)
     clicks = np.zeros(D)
+    horas_pico = np.array([_horas_pico(a, m) for a, m in meses], float)
+    previsto_pico = np.array([previsto[k] * float(e.pico.get(m) or 1.0)
+                              for k, (_, m) in enumerate(meses)], float)
+    precio_pico = previsto_pico.copy()
     for k in range(D):
         c = cierres.get(k + 1)
         if c and c.precio is not None:
             precio_cierre[k] = c.precio
+        if c and c.precio_pico is not None:
+            precio_pico[k] = c.precio_pico
         if o.cierres_tipo == mo.CIERRE_PCT and c:
             pct[k] = min(1.0, float(c.pct or 0))
             clicks[k] = pct[k] * o.coste_click
         elif o.cierres_tipo == mo.CIERRE_MW and c and barras_mwh[k] > 0:
-            mw = float(c.mw or 0)
-            liquidacion[k] = mw * horas[k] * (precio_cierre[k] - previsto[k]) / barras_mwh[k]
-            clicks[k] = mw * horas[k] * o.coste_click / barras_mwh[k]
+            mw, mwp = float(c.mw or 0), float(c.mw_pico or 0)
+            liquidacion[k] = (mw * horas[k] * (precio_cierre[k] - previsto[k])
+                              + mwp * horas_pico[k] * (precio_pico[k] - previsto_pico[k])
+                              ) / barras_mwh[k]
+            clicks[k] = (mw * horas[k] + mwp * horas_pico[k]) * o.coste_click / barras_mwh[k]
     base_mercado = previsto * (1 - pct) + precio_cierre * pct
     detalle_cierres = [{"mes": k + 1, "anio_mes": meses[k], "previsto": previsto[k],
                         "omip": omip[k], "pct": pct[k], "precio": precio_cierre[k],
+                        "mw_pico": float((cierres.get(k + 1) or mo.Cierre(0)).mw_pico or 0),
+                        "previsto_pico": previsto_pico[k], "precio_pico": precio_pico[k],
+                        "horas_pico": horas_pico[k],
                         "barras_mwh": barras_mwh[k], "liquidacion": liquidacion[k],
                         "clicks": clicks[k]}
                        for k in range(D)] if o.cierres_tipo != mo.SIN_CIERRES else []
 
     # ---- matrices de coste unitario (€/kWh) de un grupo, D × 6
     ssaa = np.array([ctx.ssaa(a, m) for a, m in meses])
+    dif_ph = np.array([ctx.ph_dif(a, m) for a, m in meses])
     unidad = mo.UNIDADES.get(o.unidad, 1)
 
-    def matrices(tar, sis, gname, ap_om, ap_ss):
+    def matrices(tar, sis, gname, ap_om, ap_ss, ph=False):
         term = [dr.terminos(r, tar) for r in regs]
         perd = np.array([dr.perdidas(r, tar, sis) for r in regs])
         gen = [r["generales"] for r in regs]
@@ -300,7 +341,10 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
             regul += np.array([t["srad"] or [0.0] * 6 for t in term]) * 1000
         regul += (np.array([g["os"] for g in gen]) * o.os + np.array([g["om"] for g in gen]) * o.om
                   + o.desvios)[:, None]
-        mercado = base_mercado[:, None] * ap_om + (liquidacion + clicks)[:, None]
+        if o.modalidad == mo.PASS_POOL and o.ci_media_mensual:
+            ap_om = np.ones_like(ap_om)            # el Ci ya lleva el perfil
+        base = base_mercado + (dif_ph if ph else 0.0)
+        mercado = base[:, None] * ap_om + (liquidacion + clicks)[:, None]
         b = tabla("termino_b", 0.0) * ((1 + perd) if o.base_b == mo.BARRAS else 1)
         if o.modalidad == mo.FIJO:
             E = tabla("energia", 0.0) / unidad * (1 - o.descuento)
@@ -340,13 +384,16 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
     for s, gname in lista:
         tar, sis = grupos[gname]
         cal = mo.calendario_de(tar)
+        ph = usa_ph(o, sis)
         propio = (s.apuntamiento == mo.CLIENTE and e.ap_cliente.get(s.cups) and o.indexada)
         if propio:
             con_cliente.append(s.cups)
-            mats = matrices(tar, sis, gname, *apuntamientos(e, o, sis, cal, meses, s.cups))
+            mats = matrices(tar, sis, gname,
+                            *apuntamientos(e, o, sis, cal, meses, s.cups, ph=ph), ph=ph)
         else:
             if gname not in cache:
-                cache[gname] = matrices(tar, sis, gname, *apuntamientos(e, o, sis, cal, meses))
+                cache[gname] = matrices(tar, sis, gname,
+                                        *apuntamientos(e, o, sis, cal, meses, ph=ph), ph=ph)
             mats = cache[gname]
         E, A, S, O, pot_propia = mats
         c = consumo[s.cups]

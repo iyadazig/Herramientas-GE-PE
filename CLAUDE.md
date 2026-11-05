@@ -121,6 +121,13 @@ pago. La factura y la curva no salen del PC.
     meses). Con 12/24/36 meses da lo mismo que la plantilla; con otras duraciones es más exacto
     (la plantilla redondeaba a años). Apuntamiento de cada CUPS: el propio de la oferta, el del
     cliente (si tiene curva válida y se eligió «Del cliente», solo en indexadas) o el estimado.
+    **Canarias indexado al Ph demanda** (`Oferta.indice_ph`; precio horario de adquisición de
+    la demanda, Orden TEC/1172/2018): en los CUPS de Canarias el mercado es (previsto + «Ph −
+    diario» del mes) × apuntamiento «Canarias Ph»; el Ph ya lleva los costes de ajuste, así
+    que Controles avisa de «posible doble cobro» si la oferta añade SSAA. **Pass-Pool**:
+    `ci_media_mensual` (por defecto) = media mensual de OMIE × Ci, sin apuntamiento (el Ci ya
+    lleva el perfil). **Cierres por MW** en carga base y en **carga
+    pico** (8-20 h de lunes a viernes, liquidada contra previsto × apuntamiento del pico).
   - `apuntamientos.py`: «Profile» del mercado diario (precio medio de las horas del periodo ÷
     precio medio del mes) por sistema (Península, Baleares, Canarias, Ceuta, Melilla) y
     calendario (6P y 2.0TD), **calculado por la app** con la columna «Mercado diario» de las
@@ -131,10 +138,18 @@ pago. La factura y la curva no salen del PC.
     `python -m analisis_ofertas.apuntamientos` (una vez al día; solo calcula meses nuevos). Ya
     no se usa la carpeta «Profile factors». Contrastado con las filas «Profile» de los Excel de
     OMIE (6P ±0,0014); los Excel de OMIE de jun-26 (2.0TD con los factores de Baleares) y
-    ago-26 (P2 de la 2.0TD) traen errores.
+    ago-26 (P2 de la 2.0TD) traen errores. Además calcula, con la API de ESIOS (indicador
+    573, Canarias; clave del script ESIOS_Scraper en `config.FICHERO_TOKEN_ESIOS`, nunca en
+    git), el **Ph demanda de Canarias**: «Canarias Ph|6P/3P» (forma del Ph en el mes) y
+    «Canarias Ph|dif» (media del Ph − media del diario, unos 15-30 €/MWh); y «Península|pico»
+    (8-20 h laborables ÷ media del mes). Los meses ya guardados sin el Ph se recalculan cuando
+    hay clave.
   - Curva del cliente: con un año completo (≥ 360 días y los 12 meses) se calcula su
-    apuntamiento (precio ponderado por su consumo); las curvas se guardan comprimidas con el
-    análisis.
+    apuntamiento (precio ponderado por su consumo; en Canarias también con el Ph); las curvas
+    se guardan comprimidas con el análisis. `curva_consumo.leer_curva` pasa a kWh las columnas
+    de potencia («Activa (kW)»: × 0,25 h en cuartohoraria).
+  - Datos regulados: desvíos de referencia (`desvios_coste_ref`, `desvios_saldo_ref`, C2; solo
+    informativos, ayuda del campo «Desvíos» de la oferta).
   - `resultados.py` (comparativa, oferta mínima, cuadro de mercado, escenarios OMIP ±X %,
     estimado frente a cliente, rondas), `informes.py` (Excel y PDF para el cliente, relación de
     suministros, coste por CUPS y parámetros), `correo.py` (borrador con plantillas y reglas,

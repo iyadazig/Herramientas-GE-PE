@@ -21,6 +21,7 @@ import streamlit as st
 
 import almacen
 import datos_mercado as dm
+import datos_regulados as dr
 import estilo
 from analisis_ofertas import apuntamientos as ap
 from analisis_ofertas import calculo, correo, informes, parametros, resultados, servicio
@@ -266,16 +267,62 @@ def tabla_cierres(e: mo.Estudio, o: mo.Oferta) -> pd.DataFrame:
         previsto, omip = ctx.mercado(f.year, f.month)
         filas.append({"Mes": k + 1, "Fecha": f"{MESES[f.month - 1][:3]}-{f.year % 100:02d}",
                       "Previsto (€/MWh)": previsto, "OMIP (€/MWh)": omip or None,
-                      "% cerrado": c.pct, "MW": c.mw, "Precio de cierre (€/MWh)": c.precio})
+                      "% cerrado": c.pct, "MW": c.mw, "Precio de cierre (€/MWh)": c.precio,
+                      "MW pico": c.mw_pico, "Precio pico (€/MWh)": c.precio_pico})
     return pd.DataFrame(filas)
 
 
 def aplicar_cierres(o: mo.Oferta, df: pd.DataFrame) -> None:
-    o.cierres = [mo.Cierre(int(f["Mes"]), pct=_num(f["% cerrado"]), mw=_num(f["MW"]),
-                           precio=_num(f["Precio de cierre (€/MWh)"]))
-                 for _, f in df.iterrows()
-                 if any(_num(f[c]) is not None for c in ("% cerrado", "MW",
-                                                         "Precio de cierre (€/MWh)"))]
+    def v(f, c):
+        return _num(f[c]) if c in f else None
+    columnas = ("% cerrado", "MW", "Precio de cierre (€/MWh)", "MW pico", "Precio pico (€/MWh)")
+    o.cierres = [mo.Cierre(int(f["Mes"]), pct=v(f, "% cerrado"), mw=v(f, "MW"),
+                           precio=v(f, "Precio de cierre (€/MWh)"), mw_pico=v(f, "MW pico"),
+                           precio_pico=v(f, "Precio pico (€/MWh)"))
+                 for _, f in df.iterrows() if any(v(f, c) is not None for c in columnas)]
+
+
+def tabla_ph(e: mo.Estudio) -> pd.DataFrame:
+    """Lo que el Ph demanda de Canarias lleva encima del mercado diario, por mes natural."""
+    return pd.DataFrame([{"Mes": MESES[m - 1], "Ph − diario (€/MWh)": e.ph_dif.get(m),
+                          "Dato de": e.ph_origen.get(m, "")} for m in range(1, 13)])
+
+
+def aplicar_ph(e: mo.Estudio, df: pd.DataFrame) -> None:
+    for m, (_, f) in enumerate(df.iterrows(), start=1):
+        nuevo = _num(f["Ph − diario (€/MWh)"])
+        antes = e.ph_dif.get(m)
+        if nuevo is None:
+            e.ph_dif.pop(m, None)
+            e.ph_origen.pop(m, None)
+        elif antes is None or abs(nuevo - antes) > 1e-9:
+            e.ph_dif[m] = nuevo
+            e.ph_origen[m] = "manual"
+
+
+def claves_ap(e: mo.Estudio) -> list:
+    """Sistemas y calendarios de los suministros (y el Ph de Canarias si hay CUPS allí)."""
+    usados = {mo.clave_ap(s.sistema, mo.calendario_de(s.tarifa))
+              for s in e.suministros if s.activo and s.tarifa in mo.TARIFAS}
+    usados |= {mo.clave_ap(mo.SISTEMA_PH, mo.calendario_de(s.tarifa))
+               for s in e.suministros if s.activo and s.sistema == "Canarias"
+               and s.tarifa in mo.TARIFAS}
+    return sorted(usados)
+
+
+def referencia_desvios(e: mo.Estudio) -> str:
+    """Texto de ayuda con los desvíos de referencia de los datos regulados."""
+    reg = (e.regulados.get(e.inicio.year) if e.inicio and e.regulados else None) or \
+        dr.datos_anio(e.inicio.year if e.inicio else dt.date.today().year)
+    g = reg.get("generales", {})
+    if g.get("desvios_coste_ref") is None:
+        return ""
+    neto = g["desvios_coste_ref"] + g.get("desvios_saldo_ref", 0.0)
+    return (f"Referencia ({g.get('desvios_fuente', 'ESIOS')}): coste de desvíos "
+            f"{texto_es(g['desvios_coste_ref'], 3)} €/MWh, saldo "
+            f"{texto_es(g.get('desvios_saldo_ref', 0.0), 3)} €/MWh, neto {texto_es(neto, 3)} "
+            "€/MWh. Usa el que cobre la oferta (p. ej. «coste de desvío del sistema» = coste; "
+            "«saldo en valor absoluto» = coste + |saldo|).")
 
 
 def tabla_comparativa(filas: list) -> pd.DataFrame:
@@ -557,6 +604,15 @@ def _mercado(e: mo.Estudio):
         st.caption("Se pueden pegar los 12 valores copiados de Excel (con coma decimal).")
         aplicar_ssaa(e, editor(tabla_ssaa(e), f"ao_ssaa_{_v()}", ["SSAA (€/MWh)"],
                                {"SSAA (€/MWh)": 4}, hide_index=True, disabled=["Mes"]))
+        if any(s.activo and s.sistema == "Canarias" for s in e.suministros):
+            st.markdown("**Ph demanda de Canarias**")
+            st.caption("Lo que el Ph demanda (ESIOS, indicador 573) lleva encima del mercado "
+                       "diario: costes de ajuste, capacidad... Media del mes de los 12 últimos "
+                       "meses. Las ofertas indexadas al Ph usan: (previsto + este valor) × "
+                       "apuntamiento «Canarias Ph». Vacío = el SSAA del mes.")
+            aplicar_ph(e, editor(tabla_ph(e), f"ao_ph_{_v()}", ["Ph − diario (€/MWh)"],
+                                 {"Ph − diario (€/MWh)": 2}, hide_index=True,
+                                 disabled=["Mes", "Dato de"]))
     with t_ap:
         _apuntamientos(e)
     with t_curvas:
@@ -564,14 +620,15 @@ def _mercado(e: mo.Estudio):
 
 
 def _apuntamientos(e: mo.Estudio):
-    usados = sorted({mo.clave_ap(s.sistema, mo.calendario_de(s.tarifa))
-                     for s in e.suministros if s.activo and s.tarifa in mo.TARIFAS})
+    usados = claves_ap(e)
     if not usados:
         return
     st.caption("Apuntamiento del precio del mercado diario (precio medio de las horas de cada "
                "periodo ÷ precio medio del mes) de los 12 últimos meses publicados, calculado "
                "por la aplicación con ESIOS (y los Excel de OMIE de respaldo). «Dato de» indica "
-               "el mes y la fuente; lo cambiado a mano queda como «manual». Vacío = 1.")
+               "el mes y la fuente; lo cambiado a mano queda como «manual». Vacío = 1. "
+               "«Canarias Ph»: forma del Ph demanda de Canarias (ESIOS, indicador 573), para "
+               "las ofertas indexadas al Ph.")
     clave = st.selectbox("Sistema y calendario", usados, key="ao_ap_clave",
                          format_func=lambda c: c.replace("|3P", " · 2.0TD").replace(
                              "|6P", " · 6 periodos"))
@@ -595,6 +652,7 @@ def _apuntamientos(e: mo.Estudio):
         if de and c2.button("Copiar sus apuntamientos"):
             otro = servicio.estudio_de_datos(almacen.analisis(de)["datos"])
             e.ap_omie, e.ap_ssaa, e.ap_origen = otro.ap_omie, otro.ap_ssaa, otro.ap_origen
+            e.ph_dif, e.ph_origen, e.pico = otro.ph_dif, otro.ph_origen, otro.pico
             _subir_version()
             st.rerun()
 
@@ -781,7 +839,20 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             o.base_b = _sel(c5, "Base del término B", mo.BASES, o.base_b, k + "bb")
             c1, c2 = st.columns(2)
             o.desvios = c1.number_input("Desvíos (€/MWh, en barras)", value=float(o.desvios),
-                                        key=k + "desv")
+                                        key=k + "desv", help=referencia_desvios(e) or None)
+            o.indice_ph = c2.checkbox(
+                "Canarias indexado al Ph demanda", o.indice_ph, key=k + "ph",
+                help="Precio horario de adquisición de la demanda en Canarias (Orden "
+                     "TEC/1172/2018, ESIOS). Ya incluye los costes de ajuste: en los CUPS de "
+                     "Canarias el mercado es (previsto + Ph − diario) × apuntamiento del Ph. "
+                     "No añadas SSAA si la oferta no los cobra aparte.")
+            if o.modalidad == mo.PASS_POOL:
+                o.ci_media_mensual = c2.checkbox(
+                    "El Ci se aplica a la media mensual de OMIE", o.ci_media_mensual,
+                    key=k + "cimm",
+                    help="Precio de mercado mensual × Ci, con el Ci que ya incluye el perfil "
+                         "(y las pérdidas): no se aplica el apuntamiento. Desmárcalo si la "
+                         "oferta aplica el Ci sobre el precio apuntado.")
         st.markdown("**Otros conceptos**")
         c1, c2, c3, c4 = st.columns(4)
         o.fee = c1.number_input("Fee / gestión (€/MWh)", value=float(o.fee), key=k + "fee")
@@ -862,15 +933,20 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
         else:
             st.caption("Por %: parte del consumo cerrada a ese precio. Por MW: MW de carga base "
                        "cerrados (se liquida la diferencia con el previsto en el consumo de la "
-                       "cartera en barras). Precio vacío = OMIP del mes.")
+                       "cartera en barras). Precio vacío = OMIP del mes. MW pico: carga de 8 a "
+                       "20 h de lunes a viernes; se liquida contra el previsto del pico "
+                       "(previsto × apuntamiento del pico del mercado diario); precio pico "
+                       "vacío = ese previsto.")
             st.caption("% cerrado en tanto por uno (0,5 = 50 %).")
             editada = editor(
                 tabla_cierres(e, o), f"{k}cier_{o.duracion}_{o.cierres_tipo}",
                 ["Previsto (€/MWh)", "OMIP (€/MWh)", "% cerrado", "MW",
-                 "Precio de cierre (€/MWh)"],
+                 "Precio de cierre (€/MWh)", "MW pico", "Precio pico (€/MWh)"],
                 {"Previsto (€/MWh)": 2, "OMIP (€/MWh)": 2},
                 hide_index=True, use_container_width=True,
-                disabled=["Mes", "Fecha", "Previsto (€/MWh)", "OMIP (€/MWh)"])
+                disabled=["Mes", "Fecha", "Previsto (€/MWh)", "OMIP (€/MWh)"],
+                column_config=({} if o.cierres_tipo == mo.CIERRE_MW else
+                               {"MW pico": None, "Precio pico (€/MWh)": None}))
             aplicar_cierres(o, editada)
     with t_cond:
         c1, c2 = st.columns(2)

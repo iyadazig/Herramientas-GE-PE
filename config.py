@@ -44,6 +44,10 @@ CARPETA_MERCADO = Path(os.environ.get(
 FICHERO_OMIP = CARPETA_MERCADO / "OMIP" / "OMIP_Scraper" / "data" / "omip_history.xlsx"
 FICHERO_OMIE_MEDIO = CARPETA_MERCADO / "precios omel" / "PRECIO MEDIO OMIE.xls"
 CARPETA_OMIE_HORARIO = CARPETA_MERCADO / "Omie"
+# Clave de la API de ESIOS (la del script ESIOS_Scraper; nunca en git). Se usa para el precio
+# horario de la demanda en Canarias (Ph demanda, indicador 573).
+FICHERO_TOKEN_ESIOS = Path(os.environ.get(
+    "SSAA_TOKEN_ESIOS", CARPETA_ESIOS_RED / "ESIOS_Scraper" / "esios_token.txt"))
 
 # Base de datos compartida (usuarios, fichas, historial). En el servidor se puede llevar a
 # otra carpeta con SSAA_CARPETA_DATOS.

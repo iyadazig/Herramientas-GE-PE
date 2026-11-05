@@ -255,7 +255,10 @@
     "impuesto_municipal": 0.015,
     "fnee": 2.4374639,
     "om": 0.0407,
-    "os": 0.20332
+    "os": 0.20332,
+    "desvios_coste_ref": 0.441,
+    "desvios_saldo_ref": -0.44,
+    "desvios_fuente": "ESIOS C2 oct-25 a sep-26, media aritmética horaria (coste 799 + saldo 800 = 0,00 €/MWh neto)"
    },
    "mercado": {
     "pct_omip": 0.95,

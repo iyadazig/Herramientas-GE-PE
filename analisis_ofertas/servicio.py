@@ -140,6 +140,14 @@ def apuntamientos_vigentes(e: mo.Estudio, calculados: list, hoy: dt.date = None,
     """Apuntamientos estimados del estudio = los calculados de los 12 últimos meses (con su mes,
     año y fuente). solo_vacios: no toca los que ya tiene (los cambiados a mano se quedan)."""
     v = ap.vigentes(calculados, hoy)
+    for m, d in v.pop(ap.CLAVE_DIF_PH, {}).items():
+        if solo_vacios and e.ph_dif.get(m) is not None:
+            continue
+        e.ph_dif[m] = d["factores"][0]
+        e.ph_origen[m] = ap.etiqueta(d["anio"], m, d["fuente"])
+    for m, d in v.pop(ap.CLAVE_PICO, {}).items():
+        if not (solo_vacios and e.pico.get(m)):
+            e.pico[m] = d["factores"][0]
     for clave, meses in v.items():
         for m, d in meses.items():
             if solo_vacios and (e.ap_omie.get(clave) or {}).get(m):
@@ -183,9 +191,19 @@ def desempaquetar_curvas(blob: bytes) -> dict:
     return salida
 
 
-def apuntamientos_cliente(e: mo.Estudio, curvas: dict, precios_de=None) -> dict:
+def precios_ph_mes(anio: int, mes: int):
+    """(Ph demanda de Canarias del mes, fuente) para el apuntamiento del cliente."""
+    ph = ap.precios_ph(anio, mes)
+    if not ap.completo(ph, anio, mes):
+        raise ap.SinPrecios(f"Ph demanda {ap.MESES[mes - 1]} {anio} incompleto")
+    return ph, "ESIOS Ph"
+
+
+def apuntamientos_cliente(e: mo.Estudio, curvas: dict, precios_de=None, ph_de=None) -> dict:
     """Calcula el apuntamiento propio de cada CUPS con curva y lo guarda en el estudio (solo
-    los válidos). Devuelve {cups: resultado} con la cobertura y el motivo de los no válidos."""
+    los válidos). En Canarias calcula también el del Ph demanda (para las ofertas indexadas al
+    Ph; si no se puede, esas usan el estimado). Devuelve {cups: resultado} con la cobertura y
+    el motivo de los no válidos."""
     salida = {}
     for cups, curva in (curvas or {}).items():
         s = e.suministro(cups)
@@ -198,6 +216,11 @@ def apuntamientos_cliente(e: mo.Estudio, curvas: dict, precios_de=None) -> dict:
             e.ap_cliente[cups] = {"omie": r["factores"], "fuentes": r["fuentes"],
                                   "desde": cob["desde"].isoformat(),
                                   "hasta": cob["hasta"].isoformat(), "dias": cob["dias"]}
+            if s.sistema == "Canarias":
+                rph = ap.apuntamiento_cliente(curva, s.sistema, s.tarifa,
+                                              ph_de or precios_ph_mes)
+                if rph["valida"]:
+                    e.ap_cliente[cups]["ph"] = rph["factores"]
         else:
             e.ap_cliente.pop(cups, None)
             if s.apuntamiento == mo.CLIENTE:
@@ -333,7 +356,10 @@ def controles(e: mo.Estudio, res: dict = None) -> list:
                        + ", ".join(sin_omip)))
     if indexadas and sin_omie:
         salida.append(("error", "Meses sin media de OMIE: " + ", ".join(sin_omie)))
-    if any(o and o.ssaa_modo != mo.SSAA_INCLUIDOS for o in e.ofertas + [e.actual]):
+    sin_dif_ph = len([m for m in range(1, 13) if e.ph_dif.get(m) is not None]) < 12
+    con_ph = [o for o in e.ofertas + [e.actual] if o and o.indexada and o.indice_ph]
+    if any(o and o.ssaa_modo != mo.SSAA_INCLUIDOS for o in e.ofertas + [e.actual]) or (
+            con_ph and sin_dif_ph):
         if any(v is None for v in e.ssaa_mes) and not e.ssaa_manual:
             salida.append(("error", "Faltan los SSAA de algún mes (sección Mercado)."))
     usados = {mo.clave_ap(s.sistema, mo.calendario_de(s.tarifa)) for s in e.suministros
@@ -343,7 +369,21 @@ def controles(e: mo.Estudio, res: dict = None) -> list:
         if indexadas and vacios:
             salida.append(("aviso", f"Apuntamientos de {clave.replace('|', ' ')} vacíos en "
                                     f"{len(vacios)} meses: se usa 1."))
+    if con_ph and sin_dif_ph:
+        salida.append(("aviso", "Falta el Ph demanda de Canarias calculado con ESIOS en algún "
+                                "mes: en esos meses el Ph se estima como mercado + SSAA del "
+                                "estudio."))
     for o in e.ofertas + ([e.actual] if e.actual else []):
+        canarias = [s for s, _ in calculo.incluidos(e, o)[0] if s.sistema == "Canarias"]
+        if o.indexada and o.indice_ph:
+            if not canarias:
+                salida.append(("aviso", f"«{o.nombre}»: indexada al Ph demanda de Canarias, "
+                                        "pero no tiene CUPS de Canarias (no cambia nada)."))
+            elif o.ssaa_modo != mo.SSAA_INCLUIDOS:
+                salida.append(("aviso", f"«{o.nombre}»: posible doble cobro. El Ph demanda de "
+                                        "Canarias ya incluye los costes de ajuste (SSAA) y la "
+                                        f"oferta añade además SSAA ({o.ssaa_modo}). Revisa "
+                                        "la oferta."))
         if not o.comercializadora:
             salida.append(("aviso", f"«{o.nombre}»: falta la comercializadora."))
         if o.email_gestor and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", o.email_gestor):

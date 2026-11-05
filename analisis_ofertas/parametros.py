@@ -80,9 +80,14 @@ def tabla_regulados(regs: dict) -> pd.DataFrame:
 def tabla_generales(regs: dict) -> pd.DataFrame:
     filas = []
     for anio, d in sorted(regs.items()):
-        for clave, nombre, unidad in dr.GENERALES:
+        for clave, nombre, unidad in dr.GENERALES + dr.DESVIOS:
+            if clave not in d["generales"]:
+                continue
+            origen = _origen_reg(dict(d, anio=anio))
+            if clave in dict((c, 0) for c, _, _ in dr.DESVIOS):
+                origen = d["generales"].get("desvios_fuente") or origen
             filas.append({"Año": anio, "Parámetro": nombre, "Valor": d["generales"].get(clave),
-                          "Unidad": unidad, "Origen": _origen_reg(dict(d, anio=anio))})
+                          "Unidad": unidad, "Origen": origen})
     return pd.DataFrame(filas)
 
 
@@ -122,6 +127,8 @@ def tabla_apuntamientos(ap_omie: dict, origen: dict = None, ap_ssaa: dict = None
     for clave in sorted(ap_omie, key=lambda c: (mo.SISTEMAS.index(c.split("|")[0])
                                                 if c.split("|")[0] in mo.SISTEMAS else 9, c)):
         sistema, cal = clave.split("|")
+        if cal not in ("6P", "3P"):                 # diferencial del Ph y pico: otra tabla
+            continue
         for m in range(1, 13):
             valores = mo.seis((ap_omie[clave] or {}).get(m))
             if not any(v is not None for v in valores):
@@ -133,6 +140,20 @@ def tabla_apuntamientos(ap_omie: dict, origen: dict = None, ap_ssaa: dict = None
                     ap_ssaa[clave][m] != ap_omie[clave].get(m):
                 fila["SSAA distinto"] = "sí"
             filas.append(fila)
+    return pd.DataFrame(filas)
+
+
+def tabla_ph_pico(ph_dif: dict, ph_origen: dict = None, pico: dict = None) -> pd.DataFrame:
+    """Por mes natural: lo que el Ph demanda de Canarias lleva encima del mercado diario y el
+    apuntamiento de la carga pico (8-20 h de lunes a viernes) del mercado diario."""
+    filas = [{"Mes": ap.MESES[m - 1],
+              "Ph Canarias − diario (€/MWh)": (ph_dif or {}).get(m),
+              "Dato de": (ph_origen or {}).get(m, ""),
+              "Pico 8-20 h L-V / media del mes": (pico or {}).get(m)}
+             for m in range(1, 13)]
+    if not any(f["Ph Canarias − diario (€/MWh)"] is not None
+               or f["Pico 8-20 h L-V / media del mes"] is not None for f in filas):
+        return pd.DataFrame()
     return pd.DataFrame(filas)
 
 
@@ -150,11 +171,15 @@ def tablas_estudio(e: mo.Estudio) -> dict:
     anios = sorted({mo.sumar_meses(e.inicio, k).year for k in range(e.horizonte())})
     ctx = calculo.Contexto(e)
     regs = {a: dict(ctx.regulados(a), anio=a) for a in anios}
-    return {"Regulados por tarifa": tabla_regulados(regs),
-            "Generales": tabla_generales(regs),
-            "Mercado y SSAA": tabla_mercado(e),
-            "Apuntamientos": tabla_apuntamientos(e.ap_omie, e.ap_origen, e.ap_ssaa),
-            "Fuentes": tabla_fuentes(regs)}
+    salida = {"Regulados por tarifa": tabla_regulados(regs),
+              "Generales": tabla_generales(regs),
+              "Mercado y SSAA": tabla_mercado(e),
+              "Apuntamientos": tabla_apuntamientos(e.ap_omie, e.ap_origen, e.ap_ssaa)}
+    ph = tabla_ph_pico(e.ph_dif, e.ph_origen, e.pico)
+    if not ph.empty:
+        salida["Ph Canarias y pico"] = ph
+    salida["Fuentes"] = tabla_fuentes(regs)
+    return salida
 
 
 def tablas_vigentes(anios: list = None, calculados: list = None, hoy: dt.date = None,
@@ -186,6 +211,11 @@ def tablas_vigentes(anios: list = None, calculados: list = None, hoy: dt.date = 
             calculados = []
     ap_omie, origen = apuntamientos_vigentes(calculados, hoy)
     salida["Apuntamientos"] = tabla_apuntamientos(ap_omie, origen)
+    dif = {m: v[0] for m, v in (ap_omie.get(ap.CLAVE_DIF_PH) or {}).items()}
+    pico = {m: v[0] for m, v in (ap_omie.get(ap.CLAVE_PICO) or {}).items()}
+    ph = tabla_ph_pico(dif, origen.get(ap.CLAVE_DIF_PH), pico)
+    if not ph.empty:
+        salida["Ph Canarias y pico"] = ph
     salida["Fuentes"] = tabla_fuentes(regs)
     salida["_avisos"] = avisos
     return salida

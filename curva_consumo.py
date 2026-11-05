@@ -188,6 +188,12 @@ def detectar_columnas(cabecera):
     return {"fecha": fecha, "hora": hora, "kwh": candidatas[0] if candidatas else None}
 
 
+def es_potencia(nombre) -> bool:
+    """¿La columna de consumo es potencia media del intervalo (kW, MW), no energía?"""
+    n = re.sub(r"[^a-z]", " ", str(nombre).lower())
+    return bool(re.search(r"\b(k|m)?w\b", n)) and not re.search(r"\b(k|m)?wh\b", n)
+
+
 def _factor_unidad(nombre):
     n = nombre.lower()
     if "mwh" in n:
@@ -291,6 +297,14 @@ def leer_curva(datos, nombre, columnas=None):
         if len(regs) not in esperado:
             avisos.append("%s: %d registros (incompleto)." % (f, len(regs)))
 
+    nombre_col = str(cabecera[cols["kwh"]])
+    if es_potencia(nombre_col):
+        # potencia media del intervalo (kW o MW): energía = potencia × duración del intervalo
+        horas = 0.25 if resolucion == "qh" else 1.0
+        escala = horas * (1000.0 if re.search(r"\bmw\b", nombre_col.lower()) else 1.0)
+        valores = {k: v * escala for k, v in valores.items()}
+        avisos.append("La columna «%s» es potencia: se pasa a kWh multiplicando por %s h."
+                      % (nombre_col, str(horas).replace(".", ",")))
     return Curva(resolucion=resolucion, valores=valores,
                  columnas={k: (str(cabecera[v]) if v is not None else None)
                            for k, v in cols.items()},

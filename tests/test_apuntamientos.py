@@ -176,10 +176,27 @@ class Seleccion(unittest.TestCase):
             if (a, m) == (2026, 7):
                 raise ap.SinPrecios("julio 2026: nada")
             return self.calculo(a, m, ap.ESIOS if (a, m) != (2026, 8) else ap.OMIE)
-        with mock.patch.object(ap, "calcular_mes", side_effect=calcular):
+        with mock.patch.object(ap, "calcular_mes", side_effect=calcular), \
+                mock.patch.object(ap, "hay_clave_esios", return_value=False):
             avisos = ap.actualizar(hoy, guardados, guardar=hechos.append, meses_atras=4)
         self.assertEqual([(c["anio"], c["mes"]) for c in hechos], [(2026, 9), (2026, 8)])
         self.assertEqual(avisos, ["julio 2026: nada"])
+
+    def test_con_clave_de_esios_se_recalcula_lo_que_no_tiene_el_ph(self):
+        hoy = dt.date(2026, 11, 5)
+        con_ph = self.calculo(2026, 9)
+        con_ph["factores"][ap.CLAVE_DIF_PH] = [20.0]
+        guardados = {(2026, 10): self.calculo(2026, 10), (2026, 9): con_ph}
+        hechos = []
+
+        def calcular(a, m, carpeta=None):
+            c = self.calculo(a, m)
+            c["factores"][ap.CLAVE_DIF_PH] = [21.0]
+            return c
+        with mock.patch.object(ap, "calcular_mes", side_effect=calcular), \
+                mock.patch.object(ap, "hay_clave_esios", return_value=True):
+            ap.actualizar(hoy, guardados, guardar=hechos.append, meses_atras=2)
+        self.assertEqual([(c["anio"], c["mes"]) for c in hechos], [(2026, 10)])
 
     def test_vigentes_los_12_ultimos(self):
         calculados = [self.calculo(2025, m, valor=0.5) for m in range(1, 13)] + \
@@ -192,6 +209,74 @@ class Seleccion(unittest.TestCase):
         self.assertEqual(ap.etiqueta(2025, 12, ap.OMIE), "dic-25 (OMIE)")
         self.assertFalse(ap.pendientes(calculados, dt.date(2026, 11, 5)))    # octubre está
         self.assertTrue(ap.pendientes(calculados, dt.date(2027, 1, 5)))      # falta diciembre
+
+
+class PhCanarias(unittest.TestCase):
+    def respuesta(self, anio, mes, valor=lambda f, h: 100.0):
+        """Respuesta de la API (indicador 573) del mes, con un día antes y otro después."""
+        valores = []
+        ini = dt.date(anio, mes, 1) - dt.timedelta(days=1)
+        fin = dt.date(anio, mes, calendar.monthrange(anio, mes)[1]) + dt.timedelta(days=1)
+        f = ini
+        while f <= fin:
+            marzo, octubre = ap.calendario.dias_cambio_hora(f.year)
+            n = 23 if f == marzo else 25 if f == octubre else 24
+            for h in range(1, n + 1):
+                inicio = ap.hora_inicio(f, h)
+                utc = dt.datetime(f.year, f.month, f.day) + dt.timedelta(hours=h - 1)
+                for geo, extra in (("Canarias", 0.0), ("Baleares", 50.0)):
+                    valores.append({"value": valor(f, h) + extra, "geo_name": geo,
+                                    "datetime": f"{f.isoformat()}T{inicio:02d}:00:00.000+01:00",
+                                    "datetime_utc": utc.isoformat() + "Z"})
+            f += dt.timedelta(days=1)
+        return {"indicator": {"values": valores}}
+
+    def test_precios_del_ph_con_el_dia_de_25_horas(self):
+        r = self.respuesta(2026, 10, valor=lambda f, h: float(h))
+        ph = ap.precios_ph(2026, 10, descargar=lambda url: r)
+        self.assertTrue(ap.completo(ph, 2026, 10))
+        self.assertEqual(ph[(dt.date(2026, 10, 25), 25)], 25.0)       # solo Canarias
+        self.assertEqual(ph[(dt.date(2026, 10, 1), 1)], 1.0)
+        self.assertNotIn((dt.date(2026, 9, 30), 1), ph)
+
+    def test_sin_clave_o_sin_red(self):
+        def falla(url):
+            raise OSError("sin red")
+        with self.assertRaises(ap.SinPrecios):
+            ap.precios_ph(2026, 9, descargar=falla)
+
+    def test_calcular_mes_con_el_ph_y_el_pico(self):
+        diario = {k: (200.0 if k[0].weekday() < 5 and 8 <= ap.hora_inicio(*k) < 20 else 100.0)
+                  for k in horas_del_mes(2026, 9)}
+        ph = {k: v + 25.0 for k, v in diario.items()}
+        with mock.patch.object(ap, "precios_mes", return_value=(diario, ap.ESIOS)):
+            c = ap.calcular_mes(2026, 9, ph_de=lambda a, m: ph)
+        media = sum(diario.values()) / len(diario)
+        self.assertAlmostEqual(c["factores"][ap.CLAVE_DIF_PH][0], 25.0)
+        self.assertAlmostEqual(c["factores"][ap.CLAVE_PICO][0], 200.0 / media)
+        self.assertIn("Canarias Ph|6P", c["factores"])
+        self.assertIn("Canarias Ph|3P", c["factores"])
+        # sin Ph: solo el diario
+        def sin(a, m):
+            raise ap.SinPrecios("nada")
+        with mock.patch.object(ap, "precios_mes", return_value=(diario, ap.ESIOS)):
+            c = ap.calcular_mes(2026, 9, ph_de=sin)
+        self.assertNotIn(ap.CLAVE_DIF_PH, c["factores"])
+
+    def test_vigentes_y_estudio(self):
+        from analisis_ofertas import modelo as mo
+        from analisis_ofertas import servicio
+        self.assertEqual(ap.SISTEMA_PH, mo.SISTEMA_PH)
+        calc = {"anio": 2026, "mes": 9, "fuente": ap.ESIOS,
+                "factores": {"Canarias|6P": [1.0] * 6, "Canarias Ph|6P": [1.1] * 6,
+                             ap.CLAVE_DIF_PH: [22.5], ap.CLAVE_PICO: [1.15]}}
+        e = mo.Estudio()
+        servicio.apuntamientos_vigentes(e, [calc], hoy=dt.date(2026, 11, 5))
+        self.assertEqual(e.ph_dif[9], 22.5)
+        self.assertEqual(e.ph_origen[9], "sep-26 (ESIOS)")
+        self.assertEqual(e.pico[9], 1.15)
+        self.assertEqual(e.ap_omie["Canarias Ph|6P"][9], [1.1] * 6)
+        self.assertNotIn(ap.CLAVE_DIF_PH, e.ap_omie)
 
 
 def curva_año(desde=dt.date(2025, 10, 1), dias=365, kwh=lambda f, h: 1.0, saltar=()):

@@ -42,6 +42,9 @@ GENERALES = [("iee", "Impuesto eléctrico (IEE)", "tanto por uno"),
              ("fnee", "FNEE", "€/MWh"),
              ("om", "Pago al Operador del Mercado (OM)", "€/MWh"),
              ("os", "Pago al Operador del Sistema (OS)", "€/MWh")]
+# desvíos de referencia (informativos: ayuda de la ficha de oferta). Pueden ser negativos.
+DESVIOS = [("desvios_coste_ref", "Desvíos: coste medio (ESIOS indicador 799, C2)", "€/MWh"),
+           ("desvios_saldo_ref", "Desvíos: saldo medio (ESIOS indicador 800, C2)", "€/MWh")]
 MERCADO = [("pct_omip", "Ponderación de OMIP en el precio previsto", "tanto por uno"),
            ("anios_media_omie", "Años de la media mensual de OMIE", "años")]
 
@@ -215,6 +218,9 @@ def validar(datos: dict) -> list:
         v = g.get(clave)
         if not isinstance(v, (int, float)) or v < 0:
             errores.append(f"{nombre}: falta o es negativo.")
+    for clave, nombre, _ in DESVIOS:
+        if clave in g and not isinstance(g[clave], (int, float)):
+            errores.append(f"{nombre}: tiene que ser un número.")
     for clave in ("iee", "impuesto_municipal"):
         if isinstance(g.get(clave), (int, float)) and g[clave] >= 1:
             errores.append("Los porcentajes van en tanto por uno (5,11 % = 0,0511).")

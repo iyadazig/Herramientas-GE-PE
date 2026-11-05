@@ -21,6 +21,15 @@ Las horas van numeradas como en ESIOS (1..23/24/25 por orden dentro del día) y 
 de inicio peninsular; en Canarias se aplican las franjas sobre esa hora, igual que los Excel de
 OMIE. Solo se usan meses completos.
 
+Ph demanda de Canarias (precio horario de adquisición de la demanda en el sistema eléctrico
+aislado, Orden TEC/1172/2018): indicador 573 de la API de ESIOS («Precio medio de la demanda en
+los SNP por sistema», Canarias), con la clave del script ESIOS_Scraper (config.
+FICHERO_TOKEN_ESIOS). Con él se calculan, además, los apuntamientos «Canarias Ph|6P» y
+«Canarias Ph|3P» (forma del Ph en el mes) y «Canarias Ph|dif» = media del Ph − media del mercado
+diario del mes (lo que el Ph lleva encima del diario: costes de ajuste, capacidad...).
+«Península|pico»: precio medio de las horas de 8 a 20 h de lunes a viernes / media del mes (para
+los cierres en carga pico).
+
 Se guardan en almacen (apuntamientos_calculados) y el análisis usa, para cada mes del año, el
 de los 12 últimos meses calculados, con su mes, año y fuente. Con la curva horaria de un año
 completo de un CUPS se calcula su apuntamiento propio (precio ponderado por su consumo).
@@ -45,6 +54,12 @@ ZONA_CALENDARIO = {"Baleares": "Illes Balears"}       # nombre en potencia/calen
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
          "septiembre", "octubre", "noviembre", "diciembre"]
 ESIOS, OMIE = "ESIOS", "OMIE"
+SISTEMA_PH = "Canarias Ph"                 # = modelo.SISTEMA_PH
+CLAVE_DIF_PH = f"{SISTEMA_PH}|dif"
+CLAVE_PICO = "Península|pico"
+INDICADOR_PH, GEO_PH = 573, "Canarias"
+API_ESIOS = "https://api.esios.ree.es"
+HORAS_PICO = range(8, 20)
 DIAS_CURVA_COMPLETA = 360
 
 
@@ -246,14 +261,81 @@ def precios_mes(anio: int, mes: int, carpeta_omie: Path = None):
     raise SinPrecios(f"{MESES[mes - 1]} {anio}: " + "; ".join(motivos))
 
 
+# ------------------------------------------------------------------- Ph demanda de Canarias
+def hay_clave_esios() -> bool:
+    return Path(config.FICHERO_TOKEN_ESIOS).is_file()
+
+
+def _descargar_esios(url: str) -> dict:
+    import json
+    import urllib.request
+    try:
+        token = Path(config.FICHERO_TOKEN_ESIOS).read_text(encoding="utf-8").strip()
+    except OSError as e:
+        raise SinPrecios(f"sin la clave de la API de ESIOS ({e})")
+    pet = urllib.request.Request(url, headers={
+        "x-api-key": token, "User-Agent": "herramientas-geype",
+        "Accept": "application/json; application/vnd.esios-api-v1+json"})
+    with urllib.request.urlopen(pet, timeout=120) as r:
+        return json.loads(r.read())
+
+
+def precios_ph(anio: int, mes: int, descargar=None) -> dict:
+    """{(fecha, hora ESIOS): €/MWh} del Ph demanda de Canarias del mes (indicador 573). Las
+    horas van en hora peninsular, numeradas por orden dentro del día (1..23/24/25)."""
+    ini = dt.date(anio, mes, 1) - dt.timedelta(days=1)
+    fin = dt.date(anio, mes, calendar.monthrange(anio, mes)[1]) + dt.timedelta(days=1)
+    url = (f"{API_ESIOS}/indicators/{INDICADOR_PH}?start_date={ini.isoformat()}T00:00"
+           f"&end_date={fin.isoformat()}T23:59")
+    try:
+        valores = (descargar or _descargar_esios)(url)["indicator"]["values"]
+    except SinPrecios:
+        raise
+    except Exception as e:                                   # noqa: BLE001 (red, formato)
+        raise SinPrecios(f"Ph demanda {MESES[mes - 1]} {anio}: {e}")
+    por_dia = {}
+    for v in valores:
+        if v.get("geo_name") != GEO_PH or v.get("value") is None:
+            continue
+        local = dt.datetime.fromisoformat(v["datetime"][:19])           # hora peninsular
+        utc = v.get("datetime_utc") or v["datetime"]
+        por_dia.setdefault(local.date(), []).append((utc, float(v["value"])))
+    salida = {}
+    for f, lista in por_dia.items():
+        if (f.year, f.month) == (anio, mes):
+            for i, (_, x) in enumerate(sorted(lista)):
+                salida[(f, i + 1)] = x
+    return salida
+
+
+def factor_pico(precios: dict) -> float:
+    """Precio medio de las horas de 8 a 20 h de lunes a viernes / precio medio del mes."""
+    claves = sorted(precios)
+    valores = np.array([precios[k] for k in claves], float)
+    sel = np.array([f.weekday() < 5 and hora_inicio(f, h) in HORAS_PICO for f, h in claves])
+    base = valores.mean() if len(valores) else 0
+    return float(valores[sel].mean() / base) if base and sel.any() else 1.0
+
+
 # ------------------------------------------------------------------- cálculo mensual
-def calcular_mes(anio: int, mes: int, carpeta_omie: Path = None) -> dict:
+def calcular_mes(anio: int, mes: int, carpeta_omie: Path = None, ph_de=None) -> dict:
     """Apuntamientos del mes para todos los sistemas y calendarios:
-    {"anio", "mes", "fuente", "factores": {"Península|6P": [6 valores], ...}}."""
+    {"anio", "mes", "fuente", "factores": {"Península|6P": [6 valores], ...}}; con el Ph de
+    Canarias (si se puede descargar), también «Canarias Ph|6P», «Canarias Ph|3P» y
+    «Canarias Ph|dif». ph_de(año, mes) -> precios del Ph (para las pruebas)."""
     precios, fuente = precios_mes(anio, mes, carpeta_omie)
-    return {"anio": anio, "mes": mes, "fuente": fuente,
-            "factores": {f"{s}|{c}": profile(precios, s, c)
-                         for s in SISTEMAS for c in CALENDARIOS}}
+    factores = {f"{s}|{c}": profile(precios, s, c) for s in SISTEMAS for c in CALENDARIOS}
+    factores[CLAVE_PICO] = [factor_pico(precios)]
+    try:
+        ph = (ph_de or precios_ph)(anio, mes)
+    except SinPrecios:
+        ph = None
+    if ph and completo(ph, anio, mes):
+        for c in CALENDARIOS:
+            factores[f"{SISTEMA_PH}|{c}"] = profile(ph, "Canarias", c)
+        factores[CLAVE_DIF_PH] = [float(np.mean(list(ph.values()))
+                                        - np.mean(list(precios.values())))]
+    return {"anio": anio, "mes": mes, "fuente": fuente, "factores": factores}
 
 
 def meses_a_calcular(hoy: dt.date, n: int = 12) -> list:
@@ -281,14 +363,16 @@ def actualizar(hoy: dt.date = None, guardados: dict = None, carpeta_omie: Path =
     avisos = []
     for a, m in meses_a_calcular(hoy, meses_atras):
         previo = guardados.get((a, m))
-        if previo and previo.get("fuente") == ESIOS:
+        # completo = de ESIOS y con el Ph de Canarias (o sin clave de ESIOS para pedirlo)
+        if previo and previo.get("fuente") == ESIOS and (
+                CLAVE_DIF_PH in (previo.get("factores") or {}) or not hay_clave_esios()):
             continue
         try:
             c = calcular_mes(a, m, carpeta_omie)
         except SinPrecios as e:
             avisos.append(str(e))
             continue
-        if previo and previo.get("fuente") == c["fuente"]:
+        if previo and previo.get("fuente") == c["fuente"] and                 set(c["factores"]) <= set(previo.get("factores") or {}):
             continue
         guardar(c)
     return avisos
@@ -304,7 +388,8 @@ def vigentes(calculados: list, hoy: dt.date = None) -> dict:
         if (c["anio"], c["mes"]) < (hoy.year, hoy.month):
             por_mes[c["mes"]] = c                    # se queda el más reciente
     salida = {}
-    for clave in (f"{s}|{c}" for s in SISTEMAS for c in CALENDARIOS):
+    claves = [f"{s}|{c}" for s in SISTEMAS + [SISTEMA_PH] for c in CALENDARIOS]
+    for clave in claves + [CLAVE_DIF_PH, CLAVE_PICO]:
         salida[clave] = {m: {"factores": c["factores"][clave], "anio": c["anio"],
                              "fuente": c["fuente"]}
                          for m, c in por_mes.items() if clave in c["factores"]}

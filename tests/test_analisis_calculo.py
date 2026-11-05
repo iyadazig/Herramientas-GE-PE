@@ -131,7 +131,7 @@ class Indexado(unittest.TestCase):
         e = estudio()
         e.ap_omie[mo.clave_ap("Península", "6P")] = {m: [1.2, None, None, None, None, 0.8]
                                                      for m in range(1, 13)}
-        o = oferta(modalidad=mo.PASS_POOL)
+        o = oferta(modalidad=mo.PASS_POOL, ci_media_mensual=False)
         r = calculo.calcular_oferta(e, o)
         self.assertAlmostEqual(r.conceptos["energia"].sum(), 12000 * 0.12 + 12000 * 0.08)
         o.apuntamientos_propios[mo.clave_ap("Península", "6P")] = {1: [2.0] + [None] * 5}
@@ -159,6 +159,109 @@ class Indexado(unittest.TestCase):
         self.assertAlmostEqual(r.conceptos["energia"][0], 2000 * (100 + liq + click) / 1000)
         self.assertEqual(len(r.cierres), 12)
         self.assertAlmostEqual(r.cierres[0]["barras_mwh"], barras)
+
+
+    def test_pass_pool_ci_sobre_la_media_mensual(self):
+        """Media mensual de OMIE × Ci (el Ci ya lleva el perfil)."""
+        e = estudio()
+        e.ap_omie[mo.clave_ap("Península", "6P")] = {m: [1.2, None, None, None, None, 0.8]
+                                                     for m in range(1, 13)}
+        o = oferta(modalidad=mo.PASS_POOL)
+        self.assertTrue(o.ci_media_mensual)                  # por defecto
+        o.precios["6.1TD"] = [mo.PreciosAnio(termino_b=[30.0] * 6,
+                                             ci=[1.3, 1, 1, 1, 1, 0.9])]
+        r = calculo.calcular_oferta(e, o)
+        self.assertAlmostEqual(r.conceptos["energia"].sum(),
+                               12000 * (1.3 * 100 + 30) / 1000 + 12000 * (0.9 * 100 + 30) / 1000)
+
+    def test_cierres_en_carga_pico(self):
+        e = estudio()
+        e.pico = {1: 1.2}
+        o = oferta(modalidad=mo.PASS_POOL, cierres_tipo=mo.CIERRE_MW, coste_click=0.15,
+                   cierres=[mo.Cierre(1, mw_pico=0.002, precio_pico=110.0)])
+        r = calculo.calcular_oferta(e, o)
+        barras = 2000 * 1.1 / 1000
+        horas_pico = 21 * 12                                 # enero de 2027: 21 laborables
+        self.assertEqual(r.cierres[0]["horas_pico"], horas_pico)
+        self.assertAlmostEqual(r.cierres[0]["previsto_pico"], 120.0)
+        liq = 0.002 * horas_pico * (110 - 120) / barras
+        click = 0.002 * horas_pico * 0.15 / barras
+        self.assertAlmostEqual(r.conceptos["energia"][0], 2000 * (100 + liq + click) / 1000)
+        # sin precio pico: se liquida contra el previsto (solo el click)
+        o.cierres = [mo.Cierre(1, mw_pico=0.002)]
+        r = calculo.calcular_oferta(e, o)
+        self.assertAlmostEqual(r.conceptos["energia"][0], 2000 * (100 + click) / 1000)
+
+
+class PhCanarias(unittest.TestCase):
+    """Indexados al Ph demanda de Canarias."""
+
+    def estudio(self):
+        e = estudio(2)
+        e.suministros[1].sistema = "Canarias"
+        e.ap_omie[mo.clave_ap("Canarias", "6P")] = {m: [1.5] * 6 for m in range(1, 13)}
+        return e
+
+    def ph_indexada(self, **kw):
+        datos = dict(modalidad=mo.PASS_THROUGH, indice_ph=True, os=True, om=True,
+                     pagos_capacidad=True, desvios=0.5, fee=1.0, k=0.015,
+                     fnee=mo.BARRAS, atr_incluido=False)
+        o = oferta(**dict(datos, **kw))
+        o.precios["6.1TD"] = [mo.PreciosAnio(termino_b=[0.0] * 6)]
+        return o
+
+    def test_solo_los_cups_de_canarias_y_con_el_diferencial(self):
+        e = self.estudio()
+        e.ph_dif = {m: 20.0 for m in range(1, 13)}
+        e.ap_omie[mo.clave_ap(mo.SISTEMA_PH, "6P")] = {m: [1.1] * 6 for m in range(1, 13)}
+        con = calculo.calcular_oferta(e, self.ph_indexada())
+        sin = calculo.calcular_oferta(e, self.ph_indexada(indice_ph=False))
+        # Península igual; Canarias: (100 + 20) × 1,1 (apuntamiento del Ph) en vez de 100 × 1,5
+        self.assertAlmostEqual(con.por_cups[CUPS_A]["total"], sin.por_cups[CUPS_A]["total"])
+        reg = 1.0 + 0.2 + 0.04 + 0.5
+        e_con = ((120 * 1.1 + reg) * 1.1) / 1000 * 24000
+        e_sin = ((100 * 1.5 + reg) * 1.1) / 1000 * 24000
+        self.assertAlmostEqual(con.por_cups[CUPS_B]["anios"][0]["energia"], e_con)
+        self.assertAlmostEqual(sin.por_cups[CUPS_B]["anios"][0]["energia"], e_sin)
+        # K sobre energía, fee (sin pérdidas) y FNEE en barras; no sobre los peajes
+        otros = (1.0 + 2.0 * 1.1) / 1000 * 24000
+        self.assertAlmostEqual(con.por_cups[CUPS_B]["anios"][0]["otros"], otros)
+        self.assertAlmostEqual(con.por_cups[CUPS_B]["anios"][0]["k"],
+                               0.015 * (e_con + otros))
+
+    def test_sin_ph_calculado_usa_el_ssaa_y_el_apuntamiento_de_canarias(self):
+        e = self.estudio()                                   # sin ph_dif ni «Canarias Ph»
+        r = calculo.calcular_oferta(e, self.ph_indexada(desvios=0.0, os=False, om=False,
+                                                 pagos_capacidad=False))
+        self.assertAlmostEqual(r.por_cups[CUPS_B]["anios"][0]["energia"],
+                               (100 + 10.0) * 1.5 * 1.1 / 1000 * 24000)
+
+    def test_apuntamiento_del_cliente_con_el_ph(self):
+        e = self.estudio()
+        e.ph_dif = {m: 0.0 for m in range(1, 13)}
+        e.suministros[1].apuntamiento = mo.CLIENTE
+        e.ap_cliente[CUPS_B] = {"omie": {m: [2.0] * 6 for m in range(1, 13)},
+                                "ph": {m: [1.2] * 6 for m in range(1, 13)}}
+        o = self.ph_indexada(desvios=0.0, os=False, om=False, pagos_capacidad=False)
+        r = calculo.calcular_oferta(e, o)
+        self.assertAlmostEqual(r.por_cups[CUPS_B]["anios"][0]["energia"],
+                               100 * 1.2 * 1.1 / 1000 * 24000)
+        del e.ap_cliente[CUPS_B]["ph"]                      # sin el del Ph: el estimado
+        r = calculo.calcular_oferta(e, o)
+        self.assertAlmostEqual(r.por_cups[CUPS_B]["anios"][0]["energia"],
+                               100 * 1.5 * 1.1 / 1000 * 24000)
+
+    def test_controles(self):
+        from analisis_ofertas import servicio
+        e = self.estudio()
+        o = self.ph_indexada(ssaa_modo=mo.SSAA_PLANO)
+        e.ofertas = [o]
+        textos = " ".join(t for _, t in servicio.controles(e))
+        self.assertIn("posible doble cobro", textos)
+        self.assertIn("Falta el Ph demanda", textos)
+        e.suministros[1].sistema = "Península"
+        textos = " ".join(t for _, t in servicio.controles(e))
+        self.assertIn("no tiene CUPS de Canarias", textos)
 
 
 class Ssaa(unittest.TestCase):
@@ -279,7 +382,7 @@ class ApuntamientoCliente(unittest.TestCase):
         clave = mo.clave_ap("Península", "6P")
         e.ap_omie[clave] = {m: [1.0] * 6 for m in range(1, 13)}
         e.ap_cliente[CUPS_A] = {"omie": {m: [1.3] * 6 for m in range(1, 13)}}
-        pp = oferta(modalidad=mo.PASS_POOL)
+        pp = oferta(modalidad=mo.PASS_POOL, ci_media_mensual=False)
         base = calculo.calcular_oferta(e, pp)
         e.suministros[0].apuntamiento = mo.CLIENTE
         con = calculo.calcular_oferta(e, pp)
@@ -339,6 +442,8 @@ class Json(unittest.TestCase):
         texto = json.dumps(mo.estudio_a_dict(e))
         d = mo.estudio_de_dict(json.loads(texto))
         self.assertEqual(d.ofertas[0].cierres[0].mw, 1.5)
+        self.assertTrue(d.ofertas[0].ci_media_mensual)
+        self.assertFalse(d.ofertas[0].indice_ph)
         self.assertEqual(d.ofertas[0].email_gestor, "ana@example.com")
         self.assertEqual(d.ap_omie["Península|6P"][1], [1.0] * 6)
         self.assertEqual(d.ap_cliente[CUPS_A]["omie"][1], [1.2] * 6)
