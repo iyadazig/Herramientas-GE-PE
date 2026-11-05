@@ -27,6 +27,8 @@ from analisis_ofertas import calculo, correo, informes, parametros, resultados, 
 from analisis_ofertas import modelo as mo
 
 MODULO = "Análisis de ofertas"
+REINTENTO_APUNTAMIENTOS = 3600          # s entre intentos de calcular un mes aún sin publicar
+_ultimo_intento = [0.0]
 PAGINA_FORMULARIO = None            # la fija inicio.py («Nuevo análisis»)
 PER = mo.PERIODOS
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -292,6 +294,19 @@ def cargar_analisis(id_analisis: int) -> bool:
     return True
 
 
+def _apuntamientos_al_dia() -> list:
+    """Apuntamientos calculados; si falta el último mes, intenta calcularlo (como mucho una vez
+    por hora en el servidor: mientras no se publique, no se repite en cada página)."""
+    import time
+    calc = almacen.listar_apuntamientos()
+    if ap.pendientes(calc) and time.time() - _ultimo_intento[0] > REINTENTO_APUNTAMIENTOS:
+        _ultimo_intento[0] = time.time()
+        with st.spinner("Calculando los apuntamientos de los últimos meses…"):
+            ap.actualizar()
+        calc = almacen.listar_apuntamientos()
+    return calc
+
+
 def _fecha_hora(iso: str) -> str:
     return dt.datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M") if iso else ""
 
@@ -317,7 +332,7 @@ def _origen():
             sol = almacen.solicitud(elegida)
             with st.spinner("Preparando datos regulados, mercado y apuntamientos…"):
                 e = servicio.estudio_desde_solicitud(sol)
-                avisos = servicio.preparar(e)
+                avisos = servicio.preparar(e, _apuntamientos_al_dia())
             _empezar(e, avisos, sol.get("ref") or "")
             almacen.registrar_actividad(_usuario(), MODULO, "Nuevo análisis", f"Solicitud {elegida}")
             st.rerun()
@@ -341,7 +356,7 @@ def _origen():
             fichas, _ = pl.aplicar_plantilla([], leido)
             with st.spinner("Preparando datos regulados, mercado y apuntamientos…"):
                 e = servicio.estudio_desde_fichas(fichas, cliente, inicio)
-                avisos = servicio.preparar(e)
+                avisos = servicio.preparar(e, _apuntamientos_al_dia())
             _empezar(e, avisos)
             st.rerun()
 
@@ -449,12 +464,8 @@ def _apuntamientos(e: mo.Estudio):
     c1, c2 = st.columns(2)
     if c1.button("Actualizar con los últimos calculados",
                  help="Sustituye todos los apuntamientos (también los cambiados a mano)."):
-        calc = almacen.listar_apuntamientos()
-        if ap.pendientes(calc):
-            with st.spinner("Calculando los apuntamientos del último mes…"):
-                ap.actualizar()
-            calc = almacen.listar_apuntamientos()
-        servicio.apuntamientos_vigentes(e, calc)
+        _ultimo_intento[0] = 0.0                     # el usuario lo pide: se intenta ya
+        servicio.apuntamientos_vigentes(e, _apuntamientos_al_dia())
         _subir_version()
         st.rerun()
     otros = [a for a in almacen.listar_analisis() if a["id"] != st.session_state.get("ao_id")]
@@ -974,13 +985,7 @@ def pagina_parametros():
                 "de la última sesión y medias de OMIE) y apuntamientos calculados por la "
                 "aplicación con los 12 últimos meses publicados. Cada análisis guardado conserva "
                 "los suyos (en «Análisis guardados»).")
-    calc = almacen.listar_apuntamientos()
-    if ap.pendientes(calc):
-        with st.spinner("Calculando los apuntamientos de los últimos meses…"):
-            avisos = ap.actualizar()
-        for a in avisos:
-            st.caption("Sin precios: " + a)
-        calc = almacen.listar_apuntamientos()
+    calc = _apuntamientos_al_dia()
     tablas = parametros.tablas_vigentes(calculados=calc)
     for a in tablas.get("_avisos", []):
         st.caption(a)

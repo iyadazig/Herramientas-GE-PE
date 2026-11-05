@@ -66,6 +66,8 @@ pago. La factura y la curva no salen del PC.
 - **API de Gemweb**: `gemweb_extractor/paginas.py`, convertido de `API_Gemweb/app.py` (una función por
   operación: inventario, consumo por periodo, telelecturas, descarga masiva por CUPS,
   coste/consumo mensual, optimización de potencia, incoherencias, factura calculada).
+- **Ofertas** (grupo del menú; la actividad sigue anotando «Solicitud de ofertas» y «Análisis
+  de ofertas» por separado).
 - **Solicitud de ofertas**: `ofertas/paginas.py` (consulta Gemweb con las funciones de
   `gemweb_extractor/paginas.py`), `ofertas/solicitud.py` (formato del Excel) y `ofertas/correo.py`
   (texto del correo a las comercializadoras). Sección propia
@@ -98,13 +100,76 @@ pago. La factura y la curva no salen del PC.
     - se puede hacer una solicitud solo con la plantilla («Solicitud sin Gemweb») y mezclar
       suministros de Gemweb y manuales;
     - en el Excel, bajo el perfil de los consumos de plantilla, sale `so.NOTA_CONSUMO`.
+  - **Duración libre**: tantas alternativas de duración como se quiera (hasta 12), en meses
+    desde el inicio o con fecha fin. Se guardan como fechas fin en
+    `consideraciones["duraciones"]`; `so.plazos(c)` las lee y entiende las solicitudes antiguas
+    (`duracion`, `duracion2`, `duracion3`). El Excel y el correo muestran también los meses.
+- **Análisis de ofertas** (`analisis_ofertas/`): valora las ofertas de electricidad recibidas
+  frente al contrato actual con la metodología de la plantilla Excel multipunto
+  (`Documents\Noelia\Plantilla_estudios_electricidad\generar_plantilla.py`, que es la
+  especificación de cálculo). Comprobado con dos estudios reales hechos con la plantilla (un
+  multipunto con CUPS en Canarias y otro de 4 CUPS): mismos importes por oferta, año y concepto
+  con diferencia 0 (`python -m herramientas.comparar_plantilla ESTUDIO.xlsx`, solo en local:
+  esos Excel no van a git).
+  - `modelo.py`: Estudio, Suministro, Oferta (fijo, Pass-Pool, Pass-Through; precios por grupo
+    tarifa+sistema o grupo propio y año de contrato; cierres OMIP por % o por MW; 5 modos de
+    SSAA; FNEE/GdO/fee neto o barras; K/IM; condiciones; **comercializadora, gestor y email**;
+    ronda) y JSON de ida y vuelta. **Duración libre en meses**, independiente de la solicitud.
+  - `calculo.py`: coste mes a mes por CUPS y periodo (potencia del año natural de cada mes,
+    IEE por año de contrato con mínimo y reducción). El contrato actual se proyecta a toda la
+    duración y cada oferta se compara con él **en sus mismos meses** (€/año = total × 12 /
+    meses). Con 12/24/36 meses da lo mismo que la plantilla; con otras duraciones es más exacto
+    (la plantilla redondeaba a años). Apuntamiento de cada CUPS: el propio de la oferta, el del
+    cliente (si tiene curva válida y se eligió «Del cliente», solo en indexadas) o el estimado.
+  - `apuntamientos.py`: «Profile» del mercado diario (precio medio de las horas del periodo ÷
+    precio medio del mes) por sistema (Península, Baleares, Canarias, Ceuta, Melilla) y
+    calendario (6P y 2.0TD), **calculado por la app** con la columna «Mercado diario» de las
+    hojas `PFMHORAS_COM` del Excel de ESIOS y, de respaldo, la matriz día × hora de los Excel
+    mensuales de `Datos de mercado\Omie\AAAA` (el año sale del nombre del fichero). Se usan
+    los 12 últimos meses completos (tabla `apuntamientos_calculados`); cada valor lleva su mes,
+    año y fuente («sep-26 (ESIOS)»), y se puede cambiar a mano («manual»). Tarea del servidor:
+    `python -m analisis_ofertas.apuntamientos` (una vez al día; solo calcula meses nuevos). Ya
+    no se usa la carpeta «Profile factors». Contrastado con las filas «Profile» de los Excel de
+    OMIE (6P ±0,0014); los Excel de OMIE de jun-26 (2.0TD con los factores de Baleares) y
+    ago-26 (P2 de la 2.0TD) traen errores.
+  - Curva del cliente: con un año completo (≥ 360 días y los 12 meses) se calcula su
+    apuntamiento (precio ponderado por su consumo); las curvas se guardan comprimidas con el
+    análisis.
+  - `resultados.py` (comparativa, oferta mínima, cuadro de mercado, escenarios OMIP ±X %,
+    estimado frente a cliente, rondas), `informes.py` (Excel y PDF para el cliente, relación de
+    suministros, coste por CUPS y parámetros), `correo.py` (borrador con plantillas y reglas,
+    sin IA), `parametros.py` («Parámetros utilizados»), `servicio.py` (crear desde una
+    solicitud o la plantilla de suministros, congelar regulados/mercado/apuntamientos,
+    controles, adjudicar) y `paginas.py` («Nuevo análisis», «Análisis guardados»,
+    «Parámetros utilizados»).
+  - Cada análisis guarda **congelados** los datos regulados, el mercado y los apuntamientos que
+    usó (tabla `analisis_ofertas` de `almacen`, con curvas e informes). Al adjudicar, la
+    solicitud de origen pasa a «Adjudicada» con la comercializadora añadida.
+  - `almacen.contactos_comercializadoras()`: último gestor y email de cada comercializadora,
+    para proponerlos en una oferta nueva.
+  - Pruebas: `tests/test_analisis_calculo.py` (una rama de fórmula por caso, duraciones de 6,
+    18, 33 y 60 meses), `test_apuntamientos.py`, `test_analisis_parametros.py`,
+    `test_analisis_paginas.py` (tablas y recorrido completo con AppTest), con datos ficticios.
+- **Datos regulados** (`datos_regulados.py` + `regulados/regulados.json`): peajes y cargos de las
+  8 tarifas (2.0TD, 3.0TD, 3.0TDVE, 6.1TD, 6.1TDVE, 6.2-6.4TD), pagos por capacidad, pérdidas
+  por tarifa (y por sistema si se quieren otras), SRAD, IEE y mínimos, impuesto municipal, FNEE,
+  OS/OM, % OMIP y años de la media de OMIE, temporadas y periodos por sistema (Circular 3/2020,
+  igual que `potencia/calendario.py`). Por año; un año sin publicar copia el último. Lo guardado
+  en Administración → «Datos regulados» (tabla `datos_regulados`, con historial) prevalece
+  sobre la semilla. `precios_potencia()` da la forma de `potencia/precios.json`.
+- **Datos de mercado** (`datos_mercado.py`, solo lectura, `config.CARPETA_MERCADO`, variable
+  `SSAA_CARPETA_MERCADO`): OMIP de `OMIP\OMIP_Scraper\data\omip_history.xlsx` (FTB, última
+  sesión, M > Q > YR) y medias de `precios omel\PRECIO MEDIO OMIE.xls` (hoja «desde 2019»,
+  cabecera «mes/año»). Copia temporal con reintentos, caché por fecha de modificación y avisos
+  si están desactualizados.
 - **Estudio de potencia**: optimización de la potencia contratada (6.1TD y 3.0TD > 50 kW)
   con la curva de carga, individual o multipunto.
   - `potencia/` es copia del cálculo del programa de escritorio EstudioPotencia
     (`..\estudio_potencia_cuartohorario`, sin su interfaz tkinter): `calculo`, `calendario`,
     `lector_curva`, `graficos` (matplotlib) e `informe_pdf` (reportlab).
-  - Sus precios regulados están en `potencia/precios.json`. **Cada año se actualizan aquí y
-    en `config/precios.json` del programa de escritorio**, mientras siga existiendo.
+  - Sus precios regulados salen de Administración → «Datos regulados»
+    (`datos_regulados.precios_potencia`), con `potencia/precios.json` de respaldo. Para el
+    programa de escritorio, esa página descarga el `precios.json` del año.
   - `estudio_potencia/servicio.py`: lógica sin Streamlit (curvas subidas o de Gemweb, cálculo,
     tablas, PDF, empaquetar para guardar).
   - `estudio_potencia/paginas.py`: «Nuevo estudio» y «Estudios guardados».
@@ -125,7 +190,7 @@ pago. La factura y la curva no salen del PC.
   - Indicadores frente al periodo anterior de la misma duración.
   - Resumen por usuario con gráficos por módulo y por mes.
   - Tabla única del trabajo guardado: revisiones, altas y cambios de fichas, solicitudes y su
-    seguimiento, estudios y consultas de «Descarga datos API Gemweb» (de la actividad). Al
+    seguimiento, análisis de ofertas y sus actualizaciones, estudios y consultas de «Descarga datos API Gemweb» (de la actividad). Al
     pulsar una fila se abre y se descarga su informe, Excel o PDF.
   - Pestaña de actividad. Los intentos de acceso con un usuario que no existe se anotan sin
     usuario (el nombre tecleado va en el detalle), así no aparecen como alguien del equipo.
@@ -140,7 +205,7 @@ pago. La factura y la curva no salen del PC.
   pestañas; al reimportar se respeta tal como se ha dejado en Administración y solo se añaden
   nombres nuevos que lleven suministros activos en el cuadro (`datos._equipo_al_reimportar`).
 - **Borrar:** cada usuario puede borrar solo lo que ha creado él (revisiones de SSAA,
-  solicitudes de ofertas, estudios de potencia y envíos de Seguimiento), con
+  solicitudes y análisis de ofertas, estudios de potencia y envíos de Seguimiento), con
   `estilo.borrar_mios` y `almacen.borrar_*` (comprueban el usuario en la consulta).
 - **Fichas e historial de SSAA:** la denominación y el titular de cada CUPS salen del cuadro de
   Seguimiento y Control (`seguimiento.datos.nombres_por_cups`).
@@ -154,7 +219,8 @@ pago. La factura y la curva no salen del PC.
 - **Administración** (solo administradores): `paginas.pagina_usuarios`,
   `paginas.pagina_credenciales` (credenciales de Gemweb comunes) y
   `seguimiento.paginas.pagina_admin` (importar los Excel de seguimiento, equipo, listas de
-  valores y los IDs de la aplicación de Outlook).
+  valores y los IDs de la aplicación de Outlook) y
+  `analisis_ofertas.paginas_regulados.pagina_datos_regulados` (datos regulados por año).
 Las páginas de función reciben la cabecera corporativa con `_pagina()` de `inicio.py`, que
 además anota en la actividad que se ha abierto la página (una vez por sesión).
 
@@ -175,7 +241,8 @@ Pensado para 9 compañeros en la oficina y por VPN: la app corre en un servidor
 (`python lanzador.py --servidor`, puerto 8501, cortafuegos limitado a oficina + VPN) y se
 usa desde el navegador. Instalación: `servidor/GUIA_SERVIDOR.md` y
 `servidor/instalar_servidor.ps1` (cortafuegos, arranque automático, descargas de ESIOS y
-copia diaria de la base de datos).
+copia diaria de la base de datos). Tarea diaria recomendada para los apuntamientos:
+`python -m analisis_ofertas.apuntamientos` (si no está, se calculan al abrir el análisis).
 
 - `almacen.py`: SQLite `revisor_ssaa.db` en `config.CARPETA_DATOS` (variable
   `SSAA_CARPETA_DATOS`), modo WAL y escrituras con `BEGIN IMMEDIATE` para varios usuarios a
