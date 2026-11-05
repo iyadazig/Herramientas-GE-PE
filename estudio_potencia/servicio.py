@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
+import datos_regulados
 from potencia import informe_pdf
 from potencia.calculo import (N_P, Estudio, ResumenMultipunto, Tarifa, cargar_precios, evaluar,
                               fmt, fmt_pot, opciones_inversion_defecto, texto_conceptos,
@@ -42,7 +43,12 @@ AVISO_HORARIA = ("En Gemweb este suministro tiene lectura HORARIA: cada cuarto d
 
 
 def precios():
-    return cargar_precios()
+    """Precios regulados del año en curso de Administración → Datos regulados (si el año no
+    está publicado, los del último año); si no se pueden leer, los de potencia/precios.json."""
+    try:
+        return datos_regulados.precios_potencia()
+    except Exception:
+        return cargar_precios()
 
 
 # ------------------------------------------------------------------- suministro

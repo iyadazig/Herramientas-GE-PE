@@ -15,6 +15,9 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
   estudios_potencia     cada estudio de potencia guardado: quien, cuando, titular, CUPS,
                         ahorro e inversion de la propuesta optima, datos del formulario, los
                         suministros con sus curvas ya leidas (comprimidos) y el PDF
+  datos_regulados       peajes, cargos, impuestos y parametros de mercado de cada año guardados
+                        desde Administracion (prevalecen sobre regulados/regulados.json), con
+                        su historial de cambios
   actividad             lo que no se guarda en otra tabla: accesos, paginas abiertas, consultas
                         a Gemweb y descargas (quien, cuando, modulo, accion, detalle breve)
   sgc_*                 Seguimiento y Control: suministros del cuadro (datos en JSON), estados
@@ -72,6 +75,11 @@ CREATE TABLE IF NOT EXISTS estudios_potencia (
     tipo TEXT NOT NULL, titular TEXT, cups TEXT, suministros INTEGER, tarifa TEXT,
     ahorro REAL, inversion REAL, datos TEXT NOT NULL, curvas BLOB, pdf BLOB);
 CREATE INDEX IF NOT EXISTS ix_hist_cups ON contratos_historial(cups);
+CREATE TABLE IF NOT EXISTS datos_regulados (
+    anio INTEGER PRIMARY KEY, datos TEXT NOT NULL, actualizado TEXT NOT NULL, usuario TEXT);
+CREATE TABLE IF NOT EXISTS datos_regulados_historial (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER NOT NULL, datos TEXT NOT NULL,
+    fecha TEXT NOT NULL, usuario TEXT);
 CREATE TABLE IF NOT EXISTS actividad (
     id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
     modulo TEXT, accion TEXT NOT NULL, detalle TEXT);
@@ -514,6 +522,47 @@ def estudio_potencia(id_estudio):
 
 def borrar_estudio_potencia(id_estudio, usuario):
     return _borrar_propio("estudios_potencia", id_estudio, usuario)
+
+
+# ------------------------------------------------------------------- datos regulados
+def guardar_datos_regulados(anio, datos, usuario):
+    """Guarda los datos regulados de un año (y la version en el historial)."""
+    texto = json.dumps(datos, ensure_ascii=False)
+    ahora = _ahora()
+    with _con(escribir=True) as con:
+        con.execute("INSERT INTO datos_regulados (anio, datos, actualizado, usuario) "
+                    "VALUES (?,?,?,?) ON CONFLICT(anio) DO UPDATE SET datos=excluded.datos, "
+                    "actualizado=excluded.actualizado, usuario=excluded.usuario",
+                    (int(anio), texto, ahora, usuario))
+        con.execute("INSERT INTO datos_regulados_historial (anio, datos, fecha, usuario) "
+                    "VALUES (?,?,?,?)", (int(anio), texto, ahora, usuario))
+
+
+def datos_regulados_guardados():
+    """{año: datos} guardados desde Administracion."""
+    with _con() as con:
+        return {r["anio"]: json.loads(r["datos"])
+                for r in con.execute("SELECT anio, datos FROM datos_regulados")}
+
+
+def info_datos_regulados():
+    """{año: (actualizado, usuario)} de lo guardado."""
+    with _con() as con:
+        return {r["anio"]: (r["actualizado"], r["usuario"]) for r in con.execute(
+            "SELECT anio, actualizado, usuario FROM datos_regulados")}
+
+
+def historial_datos_regulados(anio):
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, anio, fecha, usuario FROM datos_regulados_historial WHERE anio=? "
+            "ORDER BY id DESC", (int(anio),))]
+
+
+def borrar_datos_regulados(anio):
+    """Vuelve a los de la semilla (el historial se conserva)."""
+    with _con(escribir=True) as con:
+        con.execute("DELETE FROM datos_regulados WHERE anio=?", (int(anio),))
 
 
 # ------------------------------------------------------------------- seguimiento y control

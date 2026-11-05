@@ -19,6 +19,7 @@ import almacen
 import estilo
 import paginas
 from gemweb_extractor import paginas as gw
+from analisis_ofertas import paginas_regulados as regulados
 from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
 from seguimiento import envios
@@ -138,6 +139,9 @@ if usuario["admin"]:
                 "Acceso a la API de Gemweb para toda la plataforma", "credenciales", ADMIN),
         _pagina(seguimiento.pagina_admin, "Seguimiento y Control",
                 "Importar el cuadro, equipo, listas de valores y Outlook", "admin-seguimiento", ADMIN),
+        _pagina(regulados.pagina_datos_regulados, "Datos regulados",
+                "Peajes, cargos, impuestos y parámetros de mercado de cada año",
+                "datos-regulados", ADMIN),
     ]
 # «Mi trabajo»: el panel con lo del propio usuario. Va sin titulo de modulo y su enlace se
 # oculta (estilo.CSS); se abre con el boton de la barra lateral
