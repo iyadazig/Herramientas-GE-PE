@@ -36,6 +36,15 @@ def _carpeta_esios():
 
 CARPETA_ESIOS = _carpeta_esios()
 
+# Datos de mercado para el analisis de ofertas (solo lectura): OMIP diario (OMIP_Scraper) y
+# medias mensuales de OMIE (Excel mantenido a mano). Hora a hora del mercado diario: los
+# Excel mensuales de la carpeta Omie (respaldo de ESIOS para los apuntamientos).
+CARPETA_MERCADO = Path(os.environ.get(
+    "SSAA_CARPETA_MERCADO", CARPETA_ESIOS_RED.parent))
+FICHERO_OMIP = CARPETA_MERCADO / "OMIP" / "OMIP_Scraper" / "data" / "omip_history.xlsx"
+FICHERO_OMIE_MEDIO = CARPETA_MERCADO / "precios omel" / "PRECIO MEDIO OMIE.xls"
+CARPETA_OMIE_HORARIO = CARPETA_MERCADO / "Omie"
+
 # Base de datos compartida (usuarios, fichas, historial). En el servidor se puede llevar a
 # otra carpeta con SSAA_CARPETA_DATOS.
 CARPETA_DATOS = Path(os.environ.get("SSAA_CARPETA_DATOS", CARPETA))
