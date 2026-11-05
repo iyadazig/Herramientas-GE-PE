@@ -205,11 +205,14 @@ def apuntamientos_cliente(e: mo.Estudio, curvas: dict, precios_de=None) -> dict:
     return salida
 
 
-def periodo_curva(hoy: dt.date = None):
-    """(desde, hasta) de los 12 últimos meses completos: el año que se pide a Gemweb."""
+MESES_BUSQUEDA_CURVA = 24          # meses hacia atrás en los que se busca en Gemweb
+
+
+def periodo_curva(hoy: dt.date = None, meses: int = MESES_BUSQUEDA_CURVA):
+    """(desde, hasta) que se pide a Gemweb: los últimos `meses` meses hasta ayer. De ahí se
+    toman los 12 últimos meses completos que tenga la curva."""
     hoy = hoy or dt.date.today()
-    hasta = dt.date(hoy.year, hoy.month, 1) - dt.timedelta(days=1)
-    return mo.sumar_meses(dt.date(hasta.year, hasta.month, 1), -11), hasta
+    return mo.sumar_meses(dt.date(hoy.year, hoy.month, 1), -meses), hoy - dt.timedelta(days=1)
 
 
 def a_horaria(curva) -> dict:
@@ -224,19 +227,23 @@ def a_horaria(curva) -> dict:
 
 def comprobar_curvas_gemweb(e: mo.Estudio, cliente, hoy: dt.date = None, precios_de=None,
                             al_avanzar=None):
-    """Descarga de Gemweb la curva de los 12 últimos meses completos de todos los suministros
-    del estudio, comprueba si se puede usar (año completo) y calcula el apuntamiento de los
-    que sí. cliente: gemweb.ClienteGemweb. al_avanzar(fraccion, texto).
-    -> ({cups: curva horaria}, [fila por CUPS: CUPS, Alias, En Gemweb, Desde, Hasta, Días con
-    dato, Se puede usar, Motivo])."""
+    """Busca en Gemweb la curva de todos los suministros del estudio (últimos 24 meses), toma
+    los 12 últimos meses completos que tenga cada una, comprueba si es un año completo y
+    calcula su apuntamiento. NO cambia lo que usa cada CUPS: lo decide el usuario después,
+    viendo el desde y el hasta (elegir_apuntamiento). cliente: gemweb.ClienteGemweb.
+    al_avanzar(fraccion, texto).
+    -> ({cups: curva horaria de esos 12 meses}, [fila por CUPS: CUPS, Alias, En Gemweb,
+    Datos desde, Datos hasta, Año usado desde, Año usado hasta, Días con dato, Se puede
+    usar, Motivo])."""
     desde, hasta = periodo_curva(hoy)
     curvas, filas = {}, []
     activos = [s for s in e.suministros if s.activo]
     for i, s in enumerate(activos):
         if al_avanzar:
-            al_avanzar(i / max(1, len(activos)), f"{s.cups}: descargando la curva de Gemweb…")
-        fila = {"CUPS": s.cups, "Alias": s.alias, "En Gemweb": "No", "Desde": None,
-                "Hasta": None, "Días con dato": 0, "Se puede usar": "No", "Motivo": ""}
+            al_avanzar(i / max(1, len(activos)), f"{s.cups}: buscando la curva en Gemweb…")
+        fila = {"CUPS": s.cups, "Alias": s.alias, "En Gemweb": "No", "Datos desde": None,
+                "Datos hasta": None, "Año usado desde": None, "Año usado hasta": None,
+                "Días con dato": 0, "Se puede usar": "No", "Motivo": ""}
         try:
             curva, _ = cliente.curva(s.cups, desde, hasta)
         except Exception as err:                            # noqa: BLE001 (GemwebError, red)
@@ -245,18 +252,40 @@ def comprobar_curvas_gemweb(e: mo.Estudio, cliente, hoy: dt.date = None, precios
             continue
         fila["En Gemweb"] = "Sí"
         horaria = a_horaria(curva)
-        curvas[s.cups] = horaria
         dias = sorted({k[0] for k in horaria})
         if dias:
-            fila["Desde"], fila["Hasta"] = dias[0], dias[-1]
+            fila["Datos desde"], fila["Datos hasta"] = dias[0], dias[-1]
+        cob = ap.cobertura(horaria)
+        if cob.get("meses"):
+            fila["Año usado desde"], fila["Año usado hasta"] = cob["desde"], cob["hasta"]
+            # solo los 12 meses que se usan (se guardan con el análisis)
+            horaria = {k: v for k, v in horaria.items() if (k[0].year, k[0].month)
+                       in set(cob["meses"])}
+        curvas[s.cups] = horaria
         r = apuntamientos_cliente(e, {s.cups: horaria}, precios_de)[s.cups]
-        fila["Días con dato"] = r["cobertura"].get("dias", len(dias))
+        fila["Días con dato"] = r["cobertura"].get("dias", 0)
         fila["Se puede usar"] = "Sí" if r["valida"] else "No"
-        fila["Motivo"] = r["motivo"] or "Año completo: se puede usar su apuntamiento."
+        fila["Motivo"] = r["motivo"] or "Año completo: puedes usar su apuntamiento."
         filas.append(fila)
     if al_avanzar:
         al_avanzar(1.0, "Comprobación terminada.")
     return curvas, filas
+
+
+def elegir_apuntamiento(e: mo.Estudio, usar: dict) -> list:
+    """Aplica lo que decide el usuario: {cups: True (su curva) / False (el estimado)}. Solo se
+    puede usar la curva si su apuntamiento está calculado (año completo). Devuelve los CUPS
+    que no se han podido poner con su curva."""
+    sin_curva = []
+    for cups, quiere in usar.items():
+        s = e.suministro(cups)
+        if not s:
+            continue
+        if quiere and not e.ap_cliente.get(cups):
+            sin_curva.append(cups)
+            quiere = False
+        s.apuntamiento = mo.CLIENTE if quiere else mo.ESTIMADO
+    return sin_curva
 
 
 # ------------------------------------------------------------------- controles

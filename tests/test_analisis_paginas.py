@@ -218,10 +218,12 @@ class Formato(unittest.TestCase):
 
 
 class Gemweb(unittest.TestCase):
-    def test_comprobar_curvas(self):
+    def test_comprobar_curvas_y_elegir(self):
         import datetime as dt
         from analisis_ofertas import servicio
         from analisis_ofertas import apuntamientos as apm
+        from analisis_ofertas import modelo as mo
+        from analisis_ofertas import paginas as ap_
         from tests.test_analisis_calculo import estudio
         from tests.test_apuntamientos import curva_año, horas_del_mes
         import curva_consumo
@@ -231,7 +233,8 @@ class Gemweb(unittest.TestCase):
                 if cups.endswith("BB"):
                     raise RuntimeError("El CUPS no está en el inventario de Gemweb.")
                 self.periodo = (desde, hasta)
-                valores = {(f, h, q): 0.25 for (f, h) in curva_año(dt.date(2025, 10, 1))
+                # Gemweb tiene datos del 01/06/2025 al 24/08/2026 (agosto, a medias)
+                valores = {(f, h, q): 0.25 for (f, h) in curva_año(dt.date(2025, 6, 1), 450)
                            for q in range(1, 5)}
                 return curva_consumo.Curva("qh", valores), {}
 
@@ -240,13 +243,29 @@ class Gemweb(unittest.TestCase):
         curvas, filas = servicio.comprobar_curvas_gemweb(
             e, falso, hoy=dt.date(2026, 11, 5),
             precios_de=lambda a, m: ({k: 80.0 for k in horas_del_mes(a, m)}, apm.ESIOS))
-        self.assertEqual(falso.periodo, (dt.date(2025, 11, 1), dt.date(2026, 10, 31)))
+        self.assertEqual(falso.periodo, (dt.date(2024, 11, 1), dt.date(2026, 11, 4)))
         a, b = filas
         self.assertEqual((a["En Gemweb"], a["Se puede usar"], b["En Gemweb"]), ("Sí", "Sí", "No"))
+        self.assertEqual((a["Datos desde"], a["Datos hasta"]),
+                         (dt.date(2025, 6, 1), dt.date(2026, 8, 24)))
+        # los 12 últimos meses completos que tiene: ago-25 a jul-26
+        self.assertEqual((a["Año usado desde"], a["Año usado hasta"]),
+                         (dt.date(2025, 8, 1), dt.date(2026, 7, 31)))
         self.assertIn("inventario", b["Motivo"])
-        self.assertIn(e.suministros[0].cups, e.ap_cliente)
-        self.assertEqual(list(curvas), [e.suministros[0].cups])
-        self.assertAlmostEqual(next(iter(curvas[e.suministros[0].cups].values())), 1.0)
+        cups_a, cups_b = e.suministros[0].cups, e.suministros[1].cups
+        self.assertIn(cups_a, e.ap_cliente)
+        self.assertEqual(min(k[0] for k in curvas[cups_a]), dt.date(2025, 8, 1))
+        self.assertAlmostEqual(next(iter(curvas[cups_a].values())), 1.0)
+        # hasta que el usuario lo decide, todos con el estimado
+        self.assertEqual({s.apuntamiento for s in e.suministros}, {mo.ESTIMADO})
+        t = ap_.tabla_eleccion(e, filas)
+        self.assertEqual(list(t["Usar su curva"]), [False, False])
+        no = servicio.elegir_apuntamiento(e, {cups_a: True, cups_b: True})
+        self.assertEqual(no, [cups_b])
+        self.assertEqual([s.apuntamiento for s in e.suministros], [mo.CLIENTE, mo.ESTIMADO])
+        self.assertEqual(list(ap_.tabla_eleccion(e, filas)["Usar su curva"]), [True, False])
+        servicio.elegir_apuntamiento(e, {cups_a: False})
+        self.assertEqual(e.suministros[0].apuntamiento, mo.ESTIMADO)
 
 
 class PaginaAnalisis(unittest.TestCase):

@@ -656,15 +656,21 @@ def _curvas(e: mo.Estudio):
             st.rerun()
 
 
+def tabla_eleccion(e: mo.Estudio, filas: list) -> pd.DataFrame:
+    """Resultado de la comprobación con la columna «Usar su curva» (lo que usa cada CUPS)."""
+    return pd.DataFrame([dict(f, **{"Usar su curva": bool(
+        e.suministro(f["CUPS"]) and e.suministro(f["CUPS"]).apuntamiento == mo.CLIENTE)})
+        for f in filas])
+
+
 def _comprobar_gemweb(e: mo.Estudio, curvas: dict):
-    """Descarga de Gemweb la curva del último año de todos los suministros y dice si se puede
-    usar para su apuntamiento."""
+    """Busca en Gemweb la curva de todos los suministros, enseña de qué fechas es el año que se
+    usaría y deja que el usuario decida en cuáles se usa."""
     import gemweb
-    desde, hasta = servicio.periodo_curva()
     st.markdown("**Comprobar la curva horaria en Gemweb**")
-    st.caption(f"Descarga la curva de todos los suministros del {desde:%d/%m/%Y} al "
-               f"{hasta:%d/%m/%Y} (12 últimos meses completos), comprueba si tiene el año "
-               "completo y, si es así, calcula su apuntamiento. Puede tardar unos minutos.")
+    st.caption("Busca la curva de todos los suministros en los últimos 24 meses y toma los 12 "
+               "últimos meses completos que tenga cada uno. Si es un año completo calcula su "
+               "apuntamiento; después decides en cuáles se usa. Puede tardar unos minutos.")
     if st.button("Comprobar en Gemweb", key="ao_gemweb"):
         cred, _origen = gemweb.cargar_credenciales()
         if not cred:
@@ -684,12 +690,27 @@ def _comprobar_gemweb(e: mo.Estudio, curvas: dict):
                                     f"Curvas de {len(filas)} suministros")
         _subir_version()
     filas = st.session_state.get("ao_gemweb_filas")
-    if filas:
-        validas = sum(1 for f in filas if f["Se puede usar"] == "Sí")
-        st.markdown(f"{validas} de {len(filas)} suministros con curva de un año completo.")
-        st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
-                     column_config={"Desde": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                                    "Hasta": st.column_config.DateColumn(format="DD/MM/YYYY")})
+    if not filas:
+        return
+    validas = sum(1 for f in filas if f["Se puede usar"] == "Sí")
+    st.markdown(f"{validas} de {len(filas)} suministros con un año completo de curva. Marca "
+                "«Usar su curva» en los que quieras usar su apuntamiento (solo en los que se "
+                "puede) y pulsa «Guardar la elección».")
+    fechas = {c: st.column_config.DateColumn(format="DD/MM/YYYY") for c in (
+        "Datos desde", "Datos hasta", "Año usado desde", "Año usado hasta")}
+    elegida = editor(tabla_eleccion(e, filas), f"ao_gemweb_tabla_{_v()}", hide_index=True,
+                     use_container_width=True,
+                     disabled=[c for c in filas[0] if c != "Usar su curva"],
+                     column_config=dict(fechas, **{
+                         "Usar su curva": st.column_config.CheckboxColumn()}))
+    if st.button("Guardar la elección", key="ao_gemweb_elegir"):
+        no = servicio.elegir_apuntamiento(e, {f["CUPS"]: bool(f["Usar su curva"])
+                                              for _, f in elegida.iterrows()})
+        _subir_version()
+        if no:
+            st.warning("Sin un año completo de curva, se queda el estimado en: " + ", ".join(no))
+        else:
+            st.rerun()
 
 
 # =================================================================== 4-5. ofertas
