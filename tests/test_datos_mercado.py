@@ -95,13 +95,13 @@ class Omip(Base):
                                           dt.date(2026, 11, 4)])
         s = dm.sesion_omip(c)
         self.assertEqual(s["fecha"], dt.date(2026, 11, 4))
-        self.assertEqual(dm.omip_mes(s, 2027, 1), (120.0, "M Jan-27"))      # mensual
+        self.assertEqual(dm.omip_mes(s, 2027, 1), (120.0, "M ene-27"))      # mensual
         self.assertEqual(dm.omip_mes(s, 2027, 2), (90.0, "Q1-27"))          # trimestral
         self.assertEqual(dm.omip_mes(s, 2027, 8), (80.0, "YR-27"))          # anual
         self.assertEqual(dm.omip_mes(s, 2028, 1), (60.0, "YR-28"))
         self.assertEqual(dm.omip_mes(s, 2029, 1), (None, None))             # sin cotización
         self.assertEqual(dm.omip_mes(dm.sesion_omip(c, dt.date(2026, 11, 1)), 2027, 1),
-                         (100.0, "M Jan-27"))
+                         (100.0, "M ene-27"))
 
     def test_precio_previsto(self):
         s = dm.sesion_omip(dm.omip(self.ruta))

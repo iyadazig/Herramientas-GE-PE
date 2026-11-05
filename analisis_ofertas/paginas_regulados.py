@@ -16,6 +16,7 @@ import streamlit as st
 import almacen
 import datos_regulados as dr
 import estilo
+from analisis_ofertas.paginas import editor
 
 MODULO = "Administración"
 PERIODOS = ["P1", "P2", "P3", "P4", "P5", "P6"]
@@ -115,20 +116,16 @@ def pagina_datos_regulados():
                    "resto se ignora.")
         for c, nombre, unidad in dr.CONCEPTOS:
             st.markdown(f"**{nombre}** ({unidad})")
-            editadas[c] = st.data_editor(
-                tabla_concepto(d, c), hide_index=True, use_container_width=True,
-                disabled=["Tarifa"], key=f"{clave}_{c}",
-                column_config={p: st.column_config.NumberColumn(min_value=0, format="%.6f")
-                               for p in PERIODOS})
+            editadas[c] = editor(tabla_concepto(d, c), f"ao_{clave}_{c}", PERIODOS,
+                                 hide_index=True, use_container_width=True,
+                                 disabled=["Tarifa"])
     with t_sis:
         st.caption("La Circular 3/2020 (art. 11) fija los mismos coeficientes en todo el "
                    "territorio. Rellena una fila solo si quieres usar otras pérdidas en un sistema "
                    "(por ejemplo, las publicadas por REE); vacía = las de la tarifa.")
-        sistemas = st.data_editor(
-            tabla_perdidas_sistema(d), hide_index=True, use_container_width=True,
-            disabled=["Sistema", "Tarifa"], key=f"{clave}_sis",
-            column_config={p: st.column_config.NumberColumn(min_value=0, max_value=1,
-                                                            format="%.4f") for p in PERIODOS})
+        sistemas = editor(tabla_perdidas_sistema(d), f"ao_{clave}_sis", PERIODOS,
+                          hide_index=True, use_container_width=True,
+                          disabled=["Sistema", "Tarifa"])
     with t_gen:
         gen = {}
         c1, c2 = st.columns(2)

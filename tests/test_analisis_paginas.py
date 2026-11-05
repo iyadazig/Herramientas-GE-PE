@@ -174,6 +174,81 @@ class TablasAnalisis(unittest.TestCase):
         self.assertEqual([(x.mes, x.pct) for x in self.o.cierres], [(1, 0.5)])
 
 
+class Formato(unittest.TestCase):
+    def test_numeros_pegados_de_excel(self):
+        from analisis_ofertas import paginas as ap_
+        casos = {"16,56": 16.56, "1.234,5": 1234.5, "16.56": 16.56, "1.234.567": 1234567.0,
+                 " 27,40 ": 27.4, "-0,5": -0.5, "": None, None: None, "abc": None, 3: 3.0,
+                 float("nan"): None, "12 €": 12.0}
+        for texto, esperado in casos.items():
+            self.assertEqual(ap_.numero_es(texto), esperado, texto)
+        self.assertEqual([ap_.texto_es(v, 2) for v in (16.56, 20.0, None, 1234.567)],
+                         ["16,56", "20", "", "1234,57"])
+        self.assertEqual(ap_.contrato_es("M Jan-27"), "M ene-27")
+
+    def test_meses_en_espanol_en_el_mercado(self):
+        from analisis_ofertas import paginas as ap_
+        from tests.test_analisis_calculo import estudio
+        e = estudio()
+        e.mercado["2027-01"]["contrato"] = "M Jan-27"
+        t = ap_.tabla_mercado(e)
+        self.assertEqual((t.loc[0, "Mes"], t.loc[0, "Contrato"], t.loc[0, "Clave"]),
+                         ("ene-27", "M ene-27", "2027-01"))
+
+    def test_comercializadoras(self):
+        from analisis_ofertas import comercializadoras as coms
+        self.assertEqual(len(coms.COMERCIALIZADORAS), 57)
+        self.assertEqual(coms.COMERCIALIZADORAS[0], "ACCIONA GREEN ENERGY DEVELOPMENTS SL")
+        self.assertIn("ENDESA ENERGÍA, S.A.U.", coms.COMERCIALIZADORAS)
+        self.assertEqual(coms.opciones()[0], "")
+        self.assertEqual(coms.opciones("OTRA SA")[:2], ["", "OTRA SA"])     # guardada antes
+
+    def test_filtro_de_solicitudes(self):
+        from analisis_ofertas import paginas as ap_
+        sols = [{"usuario": "ana", "cliente": "EMPRESA UNO", "ref": "R-1", "cups": "ES01",
+                 "denominaciones": "Sede central | Almacén"},
+                {"usuario": "luis", "cliente": "OTRA EMPRESA", "ref": "", "cups": "ES02",
+                 "denominaciones": "Oficina"}]
+        self.assertEqual(len(ap_.solicitudes_filtradas(sols)), 2)
+        self.assertEqual([s["usuario"] for s in ap_.solicitudes_filtradas(sols, usuarios=["ana"])],
+                         ["ana"])
+        self.assertEqual(len(ap_.solicitudes_filtradas(sols, cliente="otra")), 1)
+        self.assertEqual(len(ap_.solicitudes_filtradas(sols, denominacion="almacén")), 1)
+        self.assertEqual(len(ap_.solicitudes_filtradas(sols, denominacion="es02")), 1)
+
+
+class Gemweb(unittest.TestCase):
+    def test_comprobar_curvas(self):
+        import datetime as dt
+        from analisis_ofertas import servicio
+        from analisis_ofertas import apuntamientos as apm
+        from tests.test_analisis_calculo import estudio
+        from tests.test_apuntamientos import curva_año, horas_del_mes
+        import curva_consumo
+
+        class Falso:
+            def curva(self, cups, desde, hasta):
+                if cups.endswith("BB"):
+                    raise RuntimeError("El CUPS no está en el inventario de Gemweb.")
+                self.periodo = (desde, hasta)
+                valores = {(f, h, q): 0.25 for (f, h) in curva_año(dt.date(2025, 10, 1))
+                           for q in range(1, 5)}
+                return curva_consumo.Curva("qh", valores), {}
+
+        e = estudio(2)
+        falso = Falso()
+        curvas, filas = servicio.comprobar_curvas_gemweb(
+            e, falso, hoy=dt.date(2026, 11, 5),
+            precios_de=lambda a, m: ({k: 80.0 for k in horas_del_mes(a, m)}, apm.ESIOS))
+        self.assertEqual(falso.periodo, (dt.date(2025, 11, 1), dt.date(2026, 10, 31)))
+        a, b = filas
+        self.assertEqual((a["En Gemweb"], a["Se puede usar"], b["En Gemweb"]), ("Sí", "Sí", "No"))
+        self.assertIn("inventario", b["Motivo"])
+        self.assertIn(e.suministros[0].cups, e.ap_cliente)
+        self.assertEqual(list(curvas), [e.suministros[0].cups])
+        self.assertAlmostEqual(next(iter(curvas[e.suministros[0].cups].values())), 1.0)
+
+
 class PaginaAnalisis(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -185,6 +260,12 @@ class PaginaAnalisis(unittest.TestCase):
         self.p.stop()
         almacen._iniciado.clear()
         self.tmp.cleanup()
+
+    def test_denominaciones_de_las_solicitudes(self):
+        almacen.guardar_solicitud("ana", {"cliente": "X", "cups": ["ES01", "ES02"]},
+                                  {"suministros": [{"cups": "ES01", "alias": "Sede"},
+                                                   {"cups": "ES02", "alias": "Almacén"}]}, "", b"")
+        self.assertEqual(almacen.listar_solicitudes()[0]["denominaciones"], "Sede | Almacén")
 
     def test_recorrido_completo(self):
         from streamlit.testing.v1 import AppTest

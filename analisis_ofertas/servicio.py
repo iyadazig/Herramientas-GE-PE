@@ -205,6 +205,60 @@ def apuntamientos_cliente(e: mo.Estudio, curvas: dict, precios_de=None) -> dict:
     return salida
 
 
+def periodo_curva(hoy: dt.date = None):
+    """(desde, hasta) de los 12 últimos meses completos: el año que se pide a Gemweb."""
+    hoy = hoy or dt.date.today()
+    hasta = dt.date(hoy.year, hoy.month, 1) - dt.timedelta(days=1)
+    return mo.sumar_meses(dt.date(hasta.year, hasta.month, 1), -11), hasta
+
+
+def a_horaria(curva) -> dict:
+    """Curva (horaria o cuartohoraria, claves ESIOS) → {(fecha, hora): kWh}."""
+    if curva.resolucion != "qh":
+        return dict(curva.valores)
+    salida = {}
+    for (f, h, _), v in curva.valores.items():
+        salida[(f, h)] = salida.get((f, h), 0.0) + v
+    return salida
+
+
+def comprobar_curvas_gemweb(e: mo.Estudio, cliente, hoy: dt.date = None, precios_de=None,
+                            al_avanzar=None):
+    """Descarga de Gemweb la curva de los 12 últimos meses completos de todos los suministros
+    del estudio, comprueba si se puede usar (año completo) y calcula el apuntamiento de los
+    que sí. cliente: gemweb.ClienteGemweb. al_avanzar(fraccion, texto).
+    -> ({cups: curva horaria}, [fila por CUPS: CUPS, Alias, En Gemweb, Desde, Hasta, Días con
+    dato, Se puede usar, Motivo])."""
+    desde, hasta = periodo_curva(hoy)
+    curvas, filas = {}, []
+    activos = [s for s in e.suministros if s.activo]
+    for i, s in enumerate(activos):
+        if al_avanzar:
+            al_avanzar(i / max(1, len(activos)), f"{s.cups}: descargando la curva de Gemweb…")
+        fila = {"CUPS": s.cups, "Alias": s.alias, "En Gemweb": "No", "Desde": None,
+                "Hasta": None, "Días con dato": 0, "Se puede usar": "No", "Motivo": ""}
+        try:
+            curva, _ = cliente.curva(s.cups, desde, hasta)
+        except Exception as err:                            # noqa: BLE001 (GemwebError, red)
+            fila["Motivo"] = str(err)
+            filas.append(fila)
+            continue
+        fila["En Gemweb"] = "Sí"
+        horaria = a_horaria(curva)
+        curvas[s.cups] = horaria
+        dias = sorted({k[0] for k in horaria})
+        if dias:
+            fila["Desde"], fila["Hasta"] = dias[0], dias[-1]
+        r = apuntamientos_cliente(e, {s.cups: horaria}, precios_de)[s.cups]
+        fila["Días con dato"] = r["cobertura"].get("dias", len(dias))
+        fila["Se puede usar"] = "Sí" if r["valida"] else "No"
+        fila["Motivo"] = r["motivo"] or "Año completo: se puede usar su apuntamiento."
+        filas.append(fila)
+    if al_avanzar:
+        al_avanzar(1.0, "Comprobación terminada.")
+    return curvas, filas
+
+
 # ------------------------------------------------------------------- controles
 def controles(e: mo.Estudio, res: dict = None) -> list:
     """[(nivel, texto)] con nivel 'error' (el resultado no es fiable) o 'aviso'."""

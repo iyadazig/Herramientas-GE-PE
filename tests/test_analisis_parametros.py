@@ -31,7 +31,7 @@ class Estudio(unittest.TestCase):
         e.ap_omie["Península|6P"] = {1: [1.2, 1.0, None, None, None, 0.8]}
         e.ap_origen["Península|6P"] = {1: "ene-26 (ESIOS)"}
         e.omip_manual["2027-02"] = 120.0
-        e.mercado["2027-01"]["contrato"] = "M Jan-27"
+        e.mercado["2027-01"]["contrato"] = "M ene-27"
         t = pm.tablas_estudio(e)
         self.assertEqual(set(t), {"Regulados por tarifa", "Generales", "Mercado y SSAA",
                                   "Apuntamientos", "Fuentes"})
@@ -41,7 +41,7 @@ class Estudio(unittest.TestCase):
         self.assertTrue(fila[["P3", "P4", "P5", "P6"]].isna().all(axis=None))
         merc = t["Mercado y SSAA"]
         self.assertEqual(list(merc["Mes"][:2]), ["ene-27", "feb-27"])
-        self.assertEqual(list(merc["Contrato OMIP"][:2]), ["M Jan-27", "manual"])
+        self.assertEqual(list(merc["Contrato OMIP"][:2]), ["M ene-27", "manual"])
         self.assertEqual(merc["OMIP (€/MWh)"][1], 120.0)
         aps = t["Apuntamientos"]
         self.assertEqual((aps["Dato de"][0], aps["P1"][0]), ("ene-26 (ESIOS)", 1.2))

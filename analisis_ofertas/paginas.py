@@ -24,6 +24,7 @@ import datos_mercado as dm
 import estilo
 from analisis_ofertas import apuntamientos as ap
 from analisis_ofertas import calculo, correo, informes, parametros, resultados, servicio
+from analisis_ofertas import comercializadoras as coms
 from analisis_ofertas import modelo as mo
 
 MODULO = "Análisis de ofertas"
@@ -43,6 +44,45 @@ def _num(v, defecto=None):
         return float(v)
     except (TypeError, ValueError):
         return defecto
+
+
+def numero_es(v):
+    """Número escrito o pegado al estilo español: «16,56», «1.234,5», «16.56» (None si vacío o
+    no es un número)."""
+    if v is None or v is pd.NA:
+        return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return None if isinstance(v, float) and math.isnan(v) else float(v)
+    t = str(v).strip().replace("\u00a0", "").replace(" ", "").replace("€", "").replace("%", "")
+    if t in ("", "None", "nan", "—", "-"):
+        return None
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    elif t.count(".") > 1:
+        t = t.replace(".", "")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def texto_es(v, decimales: int = 6) -> str:
+    """16.56 → «16,56» (sin ceros de más)."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return ""
+    return f"{float(v):.{decimales}f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+MESES_EN = {"Jan": "ene", "Feb": "feb", "Mar": "mar", "Apr": "abr", "May": "may", "Jun": "jun",
+            "Jul": "jul", "Aug": "ago", "Sep": "sep", "Oct": "oct", "Nov": "nov", "Dec": "dic"}
+
+
+def contrato_es(texto) -> str:
+    """«M Jan-27» (análisis guardados antes) → «M ene-27»."""
+    texto = texto or ""
+    for en, es in MESES_EN.items():
+        texto = texto.replace(f" {en}-", f" {es}-")
+    return texto
 
 
 def tabla_suministros(e: mo.Estudio) -> pd.DataFrame:
@@ -78,8 +118,10 @@ def tabla_mercado(e: mo.Estudio) -> pd.DataFrame:
         clave = f"{f.year}-{f.month:02d}"
         fila = e.mercado.get(clave) or {}
         previsto, omip = ctx.mercado(f.year, f.month)
-        filas.append({"Mes": clave, "OMIP (€/MWh)": omip or None,
-                      "Contrato": "manual" if clave in e.omip_manual else fila.get("contrato"),
+        filas.append({"Clave": clave, "Mes": f"{MESES[f.month - 1][:3]}-{f.year % 100:02d}",
+                      "OMIP (€/MWh)": omip or None,
+                      "Contrato": "manual" if clave in e.omip_manual else contrato_es(
+                          fila.get("contrato")),
                       "Media OMIE (€/MWh)": fila.get("omie_media"),
                       "Previsto (€/MWh)": previsto})
     return pd.DataFrame(filas)
@@ -88,7 +130,7 @@ def tabla_mercado(e: mo.Estudio) -> pd.DataFrame:
 def aplicar_mercado(e: mo.Estudio, df: pd.DataFrame) -> None:
     """Un OMIP distinto del de la sesión queda como ajuste a mano del mes."""
     for _, f in df.iterrows():
-        clave = f["Mes"]
+        clave = f["Clave"]
         original = (e.mercado.get(clave) or {}).get("omip")
         nuevo = _num(f["OMIP (€/MWh)"])
         if nuevo is not None and (original is None or abs(nuevo - original) > 1e-9):
@@ -307,11 +349,78 @@ def _apuntamientos_al_dia() -> list:
     return calc
 
 
+def editor(df: pd.DataFrame, clave: str, numeros=(), decimales: dict = None, **kw):
+    """st.data_editor con dos arreglos:
+    - las columnas numéricas van como texto en formato español, así al pegar desde Excel
+      «16,56» se lee 16,56 (el editor numérico de Streamlit tomaba la coma como separador de
+      miles y daba 1656);
+    - la tabla de partida se guarda la primera vez y no cambia mientras no cambie la clave: si
+      se le pasara cada vez la tabla rehecha con lo editado, Streamlit pierde la edición y hay
+      que pulsar Enter dos veces."""
+    bases = st.session_state.setdefault("ao_bases", {})
+    if clave not in bases:
+        base = df.copy()
+        for c in numeros:
+            base[c] = [texto_es(v, (decimales or {}).get(c, 6)) for v in base[c]]
+        bases[clave] = base
+    config = dict(kw.pop("column_config", None) or {})
+    for c in numeros:
+        config[c] = st.column_config.TextColumn(c)
+    editada = st.data_editor(bases[clave], key=clave, column_config=config, **kw).copy()
+    malos = []
+    for c in numeros:
+        valores = list(editada[c])
+        editada[c] = [numero_es(v) for v in valores]
+        malos += [str(v) for v, n in zip(valores, editada[c])
+                  if n is None and str(v or "").strip() not in ("", "None", "nan")]
+    if malos:
+        st.warning("No se entienden como números (se dejan vacíos): " + ", ".join(malos[:6]))
+    return editada
+
+
 def _fecha_hora(iso: str) -> str:
     return dt.datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M") if iso else ""
 
 
 # =================================================================== 1. origen
+def solicitudes_filtradas(sols: list, cliente: str = "", denominacion: str = "",
+                          usuarios: list = None) -> list:
+    """Solicitudes que contienen el texto del cliente (cliente, Ref. o CIF) y de la
+    denominación del suministro (alias o CUPS), de los usuarios elegidos (vacío = todos)."""
+    cliente, denominacion = cliente.strip().lower(), denominacion.strip().lower()
+    return [s for s in sols
+            if (not usuarios or s["usuario"] in usuarios)
+            and (not cliente or cliente in " ".join(str(s.get(k) or "") for k in (
+                "cliente", "ref")).lower())
+            and (not denominacion or denominacion in " ".join(str(s.get(k) or "") for k in (
+                "denominaciones", "cups")).lower())]
+
+
+def filtrar_solicitudes(sols: list) -> list:
+    """Filtros de la lista de solicitudes; por defecto, las del usuario conectado."""
+    nombres = {u["usuario"]: u["nombre"] for u in almacen.listar_usuarios()}
+    yo = _usuario()
+    c1, c2, c3 = st.columns(3)
+    cliente = c1.text_input("Cliente", key="ao_f_cliente", placeholder="Cliente o Ref.")
+    denominacion = c2.text_input("Denominación del suministro", key="ao_f_denom",
+                                 placeholder="Alias o CUPS")
+    todos = sorted({s["usuario"] for s in sols if s["usuario"]} | ({yo} if yo else set()))
+    usuarios = c3.multiselect("Usuario", todos, default=[yo] if yo in todos else [],
+                              key="ao_f_usuarios", placeholder="Todos",
+                              format_func=lambda u: nombres.get(u, u))
+    filtradas = solicitudes_filtradas(sols, cliente, denominacion, usuarios)
+    st.caption(f"{len(filtradas)} de {len(sols)} solicitudes" + (
+        " (por defecto, las tuyas: quita el filtro de usuario para ver todas)"
+        if usuarios == [yo] else ""))
+    if filtradas:
+        st.dataframe(pd.DataFrame([{
+            "Nº": s["id"], "Guardada": _fecha_hora(s["fecha"]),
+            "Usuario": nombres.get(s["usuario"], s["usuario"]), "Ref.": s["ref"],
+            "Cliente": s["cliente"], "Suministros": s["suministros"],
+            "Denominaciones": s.get("denominaciones") or "", "Estado": s["estado"]}
+            for s in filtradas]), hide_index=True, use_container_width=True, height=min(
+                38 + 35 * len(filtradas), 300))
+    return filtradas
 def _origen():
     estilo.seccion(1, "Origen", "Solicitud de ofertas guardada o plantilla de suministros")
     modo = st.radio("Partir de", ["Una solicitud de ofertas guardada",
@@ -322,6 +431,10 @@ def _origen():
         if not sols:
             st.info("No hay solicitudes de electricidad guardadas. Crea una en «Crear nueva "
                     "solicitud» (con los datos de Gemweb) o usa la plantilla de suministros.")
+            return
+        sols = filtrar_solicitudes(sols)
+        if not sols:
+            st.info("Ninguna solicitud con estos filtros.")
             return
         por_id = {s["id"]: s for s in sols}
         elegida = st.selectbox("Solicitud", list(por_id), key="ao_sol", format_func=lambda i: (
@@ -388,9 +501,10 @@ def _suministros(e: mo.Estudio):
     st.caption("Sistema eléctrico propuesto por la dirección (revísalo). Reducción del impuesto "
                "eléctrico: 0, 0,85 (usos del art. 98.1) o 1 (exento). Apuntamiento: «Del "
                "cliente» solo en los CUPS con curva de un año completo (sección 3).")
-    editada = st.data_editor(
-        tabla_suministros(e), hide_index=True, use_container_width=True,
-        key=f"ao_sum_{_v()}", disabled=["CUPS", "Consumo anual (kWh)"],
+    editada = editor(
+        tabla_suministros(e), f"ao_sum_{_v()}",
+        ["Alquiler (€/mes)"] + [f"Pot. {p} (kW)" for p in PER],
+        hide_index=True, use_container_width=True, disabled=["CUPS", "Consumo anual (kWh)"],
         column_config={
             "Tarifa": st.column_config.SelectboxColumn(options=mo.TARIFAS, required=True),
             "Sistema": st.column_config.SelectboxColumn(options=mo.SISTEMAS, required=True),
@@ -425,19 +539,24 @@ def _mercado(e: mo.Estudio):
     with t_merc:
         st.caption("Precio previsto = % OMIP × OMIP + (1 − % OMIP) × media de OMIE del mes. "
                    "Cambia el OMIP de un mes para ajustarlo a mano.")
-        editada = st.data_editor(tabla_mercado(e), hide_index=True, use_container_width=True,
-                                 key=f"ao_merc_{_v()}_{e.horizonte()}",
-                                 disabled=["Mes", "Contrato", "Previsto (€/MWh)"],
-                                 column_config={c: st.column_config.NumberColumn(format="%.2f")
-                                                for c in ("OMIP (€/MWh)", "Media OMIE (€/MWh)",
-                                                          "Previsto (€/MWh)")})
+        c_ed, c_prev = st.columns([3, 1])
+        with c_ed:
+            editada = editor(tabla_mercado(e).drop(columns=["Previsto (€/MWh)"]),
+                             f"ao_merc_{_v()}_{e.horizonte()}",
+                             ["OMIP (€/MWh)", "Media OMIE (€/MWh)"],
+                             {"OMIP (€/MWh)": 2, "Media OMIE (€/MWh)": 2},
+                             hide_index=True, use_container_width=True,
+                             disabled=["Mes", "Contrato"], column_config={"Clave": None})
         aplicar_mercado(e, editada)
+        with c_prev:
+            previsto = tabla_mercado(e)[["Mes", "Previsto (€/MWh)"]].copy()
+            previsto["Previsto (€/MWh)"] = [texto_es(v, 2) for v in previsto["Previsto (€/MWh)"]]
+            st.dataframe(previsto, hide_index=True, use_container_width=True)
     with t_ssaa:
         st.caption("SSAA medios de cada mes natural (€/MWh), a mano en cada estudio.")
-        aplicar_ssaa(e, st.data_editor(tabla_ssaa(e), hide_index=True, key=f"ao_ssaa_{_v()}",
-                                       disabled=["Mes"], column_config={
-                                           "SSAA (€/MWh)": st.column_config.NumberColumn(
-                                               format="%.2f")}))
+        st.caption("Se pueden pegar los 12 valores copiados de Excel (con coma decimal).")
+        aplicar_ssaa(e, editor(tabla_ssaa(e), f"ao_ssaa_{_v()}", ["SSAA (€/MWh)"],
+                               {"SSAA (€/MWh)": 4}, hide_index=True, disabled=["Mes"]))
     with t_ap:
         _apuntamientos(e)
     with t_curvas:
@@ -456,10 +575,9 @@ def _apuntamientos(e: mo.Estudio):
     clave = st.selectbox("Sistema y calendario", usados, key="ao_ap_clave",
                          format_func=lambda c: c.replace("|3P", " · 2.0TD").replace(
                              "|6P", " · 6 periodos"))
-    editada = st.data_editor(tabla_ap(e, clave), hide_index=True, use_container_width=True,
-                             key=f"ao_ap_{clave}_{_v()}", disabled=["Mes", "Dato de"],
-                             column_config={p: st.column_config.NumberColumn(format="%.4f")
-                                            for p in PER})
+    tabla = tabla_ap(e, clave)
+    editada = editor(tabla, f"ao_ap_{clave}_{_v()}", [p for p in PER if p in tabla.columns],
+                     hide_index=True, use_container_width=True, disabled=["Mes", "Dato de"])
     aplicar_ap(e, clave, editada)
     c1, c2 = st.columns(2)
     if c1.button("Actualizar con los últimos calculados",
@@ -488,6 +606,8 @@ def _curvas(e: mo.Estudio):
                "horarios del mismo año. Después elige «Del cliente (curva)» en la tabla de "
                "suministros o con el botón de abajo. Las curvas se guardan con el análisis.")
     curvas = st.session_state.setdefault("ao_curvas", {})
+    _comprobar_gemweb(e, curvas)
+    st.markdown("**O sube la curva de un CUPS en un fichero**")
     c1, c2 = st.columns([2, 3])
     cups = c1.selectbox("CUPS", [s.cups for s in e.suministros if s.activo], key="ao_curva_cups")
     fichero = c2.file_uploader("Curva (CSV o Excel de Gemweb, Datadis o distribuidora)",
@@ -536,6 +656,42 @@ def _curvas(e: mo.Estudio):
             st.rerun()
 
 
+def _comprobar_gemweb(e: mo.Estudio, curvas: dict):
+    """Descarga de Gemweb la curva del último año de todos los suministros y dice si se puede
+    usar para su apuntamiento."""
+    import gemweb
+    desde, hasta = servicio.periodo_curva()
+    st.markdown("**Comprobar la curva horaria en Gemweb**")
+    st.caption(f"Descarga la curva de todos los suministros del {desde:%d/%m/%Y} al "
+               f"{hasta:%d/%m/%Y} (12 últimos meses completos), comprueba si tiene el año "
+               "completo y, si es así, calcula su apuntamiento. Puede tardar unos minutos.")
+    if st.button("Comprobar en Gemweb", key="ao_gemweb"):
+        cred, _origen = gemweb.cargar_credenciales()
+        if not cred:
+            st.error("No hay credenciales de Gemweb (Administración → Credenciales de Gemweb).")
+            return
+        barra = st.progress(0.0, text="Conectando con Gemweb…")
+        try:
+            cliente = gemweb.ClienteGemweb(*cred)
+            nuevas, filas = servicio.comprobar_curvas_gemweb(
+                e, cliente, al_avanzar=lambda f, t: barra.progress(min(1.0, f), text=t))
+        except Exception as err:                            # noqa: BLE001
+            st.error(f"No se ha podido consultar Gemweb: {err}")
+            return
+        curvas.update(nuevas)
+        st.session_state.ao_gemweb_filas = filas
+        almacen.registrar_actividad(_usuario(), MODULO, "Consulta Gemweb",
+                                    f"Curvas de {len(filas)} suministros")
+        _subir_version()
+    filas = st.session_state.get("ao_gemweb_filas")
+    if filas:
+        validas = sum(1 for f in filas if f["Se puede usar"] == "Sí")
+        st.markdown(f"{validas} de {len(filas)} suministros con curva de un año completo.")
+        st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
+                     column_config={"Desde": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                                    "Hasta": st.column_config.DateColumn(format="DD/MM/YYYY")})
+
+
 # =================================================================== 4-5. ofertas
 def _contactos() -> dict:
     if "ao_contactos" not in st.session_state:
@@ -558,8 +714,11 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
         ["Configuración", "Precios", "Grupos y CUPS", "Cierres OMIP", "Condiciones"])
     with t_conf:
         c1, c2, c3 = st.columns(3)
-        o.comercializadora = c1.text_input("Comercializadora", o.comercializadora,
-                                           key=k + "com").strip()
+        opciones = coms.opciones(o.comercializadora)
+        o.comercializadora = c1.selectbox(
+            "Comercializadora", opciones, key=k + "com",
+            index=opciones.index(o.comercializadora) if o.comercializadora in opciones else 0,
+            format_func=lambda c: c or "— Elige —", help="Escribe para buscar en la lista.")
         contacto = _contactos().get(o.comercializadora.upper()) if o.comercializadora else None
         if contacto and not (o.gestor or o.email_gestor):
             o.gestor, o.email_gestor = contacto["gestor"], contacto["email"]
@@ -657,23 +816,22 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             st.markdown(f"**{CONCEPTOS_PRECIO[concepto]}**" + (f" ({unidad})" if concepto ==
                                                                 "energia" else ""))
             tabla = tabla_precios(e, o, concepto)
-            editada = st.data_editor(
-                tabla, hide_index=True, use_container_width=True, disabled=["Grupo", "Año"],
-                key=f"{k}pr_{concepto}_{len(tabla)}_{o.modalidad}",
-                column_config={p: st.column_config.NumberColumn(format="%.6f") for p in PER})
+            editada = editor(tabla, f"{k}pr_{concepto}_{len(tabla)}_{o.modalidad}_{o.unidad}",
+                             PER, hide_index=True, use_container_width=True,
+                             disabled=["Grupo", "Año"])
             aplicar_precios(o, concepto, editada)
     with t_grupos:
         st.caption("Grupos propios: para dar a algunos CUPS un precio distinto del de su tarifa. "
                    "Después asígnalos en la tabla de CUPS.")
-        grupos = st.data_editor(tabla_grupos_propios(o), hide_index=True, num_rows="dynamic",
-                                key=k + "gp", column_config={
+        grupos = editor(tabla_grupos_propios(o), k + "gp", hide_index=True, num_rows="dynamic",
+                        column_config={
                                     "Tarifa": st.column_config.SelectboxColumn(options=mo.TARIFAS),
                                     "Sistema": st.column_config.SelectboxColumn(
                                         options=mo.SISTEMAS)})
         aplicar_grupos_propios(o, grupos)
-        cups = st.data_editor(
-            tabla_cups_oferta(e, o), hide_index=True, use_container_width=True,
-            key=f"{k}cups_{len(o.grupos_propios)}", disabled=["CUPS", "Alias", "Tarifa", "Sistema"],
+        cups = editor(
+            tabla_cups_oferta(e, o), f"{k}cups_{len(o.grupos_propios)}", hide_index=True,
+            use_container_width=True, disabled=["CUPS", "Alias", "Tarifa", "Sistema"],
             column_config={"Grupo propio": st.column_config.SelectboxColumn(
                 options=[""] + [g.nombre for g in o.grupos_propios])})
         aplicar_cups_oferta(o, cups)
@@ -684,12 +842,14 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             st.caption("Por %: parte del consumo cerrada a ese precio. Por MW: MW de carga base "
                        "cerrados (se liquida la diferencia con el previsto en el consumo de la "
                        "cartera en barras). Precio vacío = OMIP del mes.")
-            editada = st.data_editor(
-                tabla_cierres(e, o), hide_index=True, use_container_width=True,
-                key=f"{k}cier_{o.duracion}",
-                disabled=["Mes", "Fecha", "Previsto (€/MWh)", "OMIP (€/MWh)"],
-                column_config={"% cerrado": st.column_config.NumberColumn(
-                    min_value=0, max_value=1, format="%.2f", help="Tanto por uno (0,5 = 50 %)")})
+            st.caption("% cerrado en tanto por uno (0,5 = 50 %).")
+            editada = editor(
+                tabla_cierres(e, o), f"{k}cier_{o.duracion}_{o.cierres_tipo}",
+                ["Previsto (€/MWh)", "OMIP (€/MWh)", "% cerrado", "MW",
+                 "Precio de cierre (€/MWh)"],
+                {"Previsto (€/MWh)": 2, "OMIP (€/MWh)": 2},
+                hide_index=True, use_container_width=True,
+                disabled=["Mes", "Fecha", "Previsto (€/MWh)", "OMIP (€/MWh)"])
             aplicar_cierres(o, editada)
     with t_cond:
         c1, c2 = st.columns(2)

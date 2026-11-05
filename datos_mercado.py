@@ -168,7 +168,7 @@ def sesion_omip(cotizaciones: pd.DataFrame, fecha: dt.date = None) -> dict:
 def omip_mes(sesion: dict, anio: int, mes: int):
     """(precio, contrato usado) del mes con prioridad M > Q > YR, o (None, None)."""
     if (anio, mes) in sesion["M"]:
-        return sesion["M"][(anio, mes)], f"M {MESES_EN[mes - 1]}-{anio % 100:02d}"
+        return sesion["M"][(anio, mes)], f"M {MESES[mes - 1][:3]}-{anio % 100:02d}"
     q = (mes - 1) // 3 + 1
     if (anio, q) in sesion["Q"]:
         return sesion["Q"][(anio, q)], f"Q{q}-{anio % 100:02d}"
