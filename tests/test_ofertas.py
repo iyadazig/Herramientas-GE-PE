@@ -151,6 +151,32 @@ class Excel(unittest.TestCase):
         self.assertEqual(h["F80"].fill.fgColor.rgb[-6:], so.NARANJA)
         self.assertFalse(any("exención" in str(v) or "excedentes" in str(v) for v in valores))
 
+    def test_cuatro_y_siete_duraciones_en_la_hoja(self):
+        for fines in (["30/06/2027", "31/12/2027", "30/09/2029", "31/12/2031"],
+                      ["30/06/2027", "31/12/2027", "30/06/2028", "31/12/2028", "30/09/2029",
+                       "31/12/2029", "15/03/2031"]):
+            c = {"inicio": "01/01/2027", "duraciones": fines + [""]}
+            h = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud({}, [
+                {"cups": "ES0000000000000000XX", "tarifa": "6.1TD",
+                 "consideraciones": c}])))["1. 000000XX"]
+            filas = [f for f in range(60, 120) if h[f"D{f}"].value == "Hasta / Until"]
+            self.assertEqual([h[f"F{f}"].value for f in filas], fines)
+            meses = [h[f"G{f}"].value for f in filas]
+            self.assertEqual((meses[0], meses[fines.index("30/09/2029")]),
+                             ("6 meses / months", "33 meses / months"))
+            if len(fines) == 7:
+                self.assertIsNone(meses[-1])           # 15/03/2031 no es de meses enteros
+
+    def test_duracion_en_meses(self):
+        self.assertEqual([so.fin_por_meses(dt.date(2027, 1, 1), m) for m in (6, 12, 18, 33, 60)],
+                         [dt.date(2027, 6, 30), dt.date(2027, 12, 31), dt.date(2028, 6, 30),
+                          dt.date(2029, 9, 30), dt.date(2031, 12, 31)])
+        self.assertEqual(so.fin_por_meses(dt.date(2027, 3, 15), 12), dt.date(2028, 3, 14))
+        self.assertEqual(so.fin_por_meses(dt.date(2027, 1, 31), 1), dt.date(2027, 2, 28))
+        self.assertEqual(so.meses_de_plazo("01/01/2027", "29/09/2029"), None)
+        self.assertEqual(so.meses_de_plazo("15/03/2027", "14/03/2028"), 12)
+        self.assertEqual(so.meses_de_plazo("", "14/03/2028"), None)
+
     def test_sin_precio_fijo_la_fila_queda_vacia(self):
         h = openpyxl.load_workbook(io.BytesIO(so.excel_solicitud({}, [
             {"cups": "ES0000000000000000XX", "tarifa": "6.1TD",
@@ -175,8 +201,23 @@ class TablaConsideraciones(unittest.TestCase):
         a, b = (op.consideraciones_de(f) for _, f in t.iterrows())
         self.assertEqual((a["indexado"], a["inicio"], a["gdo"]), (["PVPC"], "01/01/2027", False))
         self.assertEqual((a["exencion"], a["pct_consumo_exento"]), (False, None))
-        self.assertEqual((b["gdo"], b["exencion"], b["pct_consumo_exento"], b["duracion"]),
-                         (True, True, 50.0, ""))
+        self.assertEqual((b["gdo"], b["exencion"], b["pct_consumo_exento"], b["duraciones"]),
+                         (True, True, 50.0, ["", "", ""]))
+
+    def test_tantas_columnas_de_plazo_como_alternativas(self):
+        from ofertas import paginas as op
+        comun = {o: False for o in op.COLUMNAS_CASILLA}
+        comun.update({op.INICIO: dt.date(2027, 1, 1), op.PCT_CONSUMO: None, op.PCT_TIPO: None})
+        fines = [dt.date(2027, 6, 30), dt.date(2028, 6, 30), dt.date(2029, 9, 30),
+                 dt.date(2031, 12, 31), None, dt.date(2032, 12, 31), dt.date(2033, 12, 31)]
+        comun.update({op.columna_plazo(n + 1): f for n, f in enumerate(fines)})
+        t = op.tabla_consideraciones([{"cups": "A"}], comun)
+        self.assertEqual(op.columnas_plazo(t.columns),
+                         [op.DURACION] + [f"{op.DURACION} {n}" for n in range(2, 8)])
+        c = op.consideraciones_de(t.iloc[0])
+        self.assertEqual(c["duraciones"][4], "")
+        self.assertEqual(so.plazos(c), ["30/06/2027", "30/06/2028", "30/09/2029", "31/12/2031",
+                                        "31/12/2032", "31/12/2033"])
 
 
 class GuardarYCargar(unittest.TestCase):
@@ -184,14 +225,27 @@ class GuardarYCargar(unittest.TestCase):
         from ofertas import paginas as op
         for v in (dt.date(2027, 1, 1), dt.time(12, 0), "R-1", True, 85.0, None):
             self.assertEqual(op.decodificar(json.loads(json.dumps(op.codificar(v)))), v)
-        c = {"fijo": False, "indexado": ["PVPC"], "inicio": "01/01/2027", "duracion": "",
-             "duracion2": "31/12/2028", "duracion3": "", "temporada": True, "gdo": True,
+        c = {"fijo": False, "indexado": ["PVPC"], "inicio": "01/01/2027",
+             "duraciones": ["", "31/12/2028", ""], "temporada": True, "gdo": True,
              "excedentes": False, "exencion": True, "pct_consumo_exento": 85.0,
              "pct_tipo_exencion": None}
-        fila = pd.Series(op.fila_de(c))
+        fila = pd.Series(op.fila_de(c, 3))
         fila[op.INICIO] = pd.Timestamp(fila[op.INICIO])
         fila[op.DURACION2] = pd.Timestamp(fila[op.DURACION2])
         self.assertEqual(op.consideraciones_de(fila), c)
+
+    def test_solicitud_antigua_con_tres_fechas(self):
+        """Las solicitudes guardadas antes de la duracion libre (duracion, duracion2 y
+        duracion3) se cargan con sus fechas en las mismas columnas."""
+        from ofertas import paginas as op
+        antigua = {"indexado": ["PVPC"], "inicio": "01/01/2027", "duracion": "31/12/2027",
+                   "duracion2": "", "duracion3": "31/12/2029"}
+        fila = op.fila_de(antigua, 3)
+        self.assertEqual([fila[op.columna_plazo(n)] for n in (1, 2, 3)],
+                         [dt.date(2027, 12, 31), None, dt.date(2029, 12, 31)])
+        self.assertEqual(so.plazos(antigua), ["31/12/2027", "31/12/2029"])
+        # con mas alternativas que antes, las nuevas columnas salen vacias
+        self.assertIsNone(op.fila_de(antigua, 5)[op.columna_plazo(5)])
 
     def test_tabla_con_lo_guardado_si_lo_comun_no_cambia(self):
         from ofertas import paginas as op
@@ -209,23 +263,45 @@ class GuardarYCargar(unittest.TestCase):
 
 class Correo(unittest.TestCase):
     def suministro(self, cups, tarifa="6.1TD", **c):
-        base = {"indexado": ["PVPC"], "inicio": "01/01/2027", "duracion": "31/12/2027",
-                "duracion2": "", "duracion3": "", "temporada": False, "exencion": False,
+        base = {"indexado": ["PVPC"], "inicio": "01/01/2027", "duraciones": ["31/12/2027"],
+                "temporada": False, "exencion": False,
                 "gdo": False, "excedentes": False}
         base.update(c)
         return {"grupo": "GRUPO DE PRUEBA", "razon": "EMPRESA DE PRUEBA SA", "cups": cups,
                 "tarifa": tarifa, "perfil": {1: [1000, 0, 0, 0, 0, 500]},
                 "consideraciones": base}
 
+    TRES = ["31/12/2027", "31/12/2028", "31/12/2029"]
+
+    def test_cualquier_numero_de_duraciones(self):
+        una = correo.texto_correo(self.cab, [self.suministro(
+            "ES0000000000000000XX", duraciones=["30/06/2028"])])
+        self.assertIn("Duración del contrato: hasta el 30 de junio de 2028 (18 meses).", una)
+        siete = ["30/06/2027", "31/12/2027", "30/06/2028", "31/12/2028", "30/09/2029",
+                 "31/12/2029", "15/03/2031"]
+        texto = correo.texto_correo(self.cab, [self.suministro(
+            "ES0000000000000000XX", duraciones=siete)])
+        self.assertIn("Duración del contrato: siete alternativas, hasta el 30 de junio de 2027 "
+                      "(6 meses), ", texto)
+        self.assertIn("hasta el 30 de septiembre de 2029 (33 meses)", texto)
+        # una fecha fin que no es de meses enteros sale sin meses
+        self.assertIn("y hasta el 15 de marzo de 2031.", texto)
+        # solicitud guardada antes de la duracion libre
+        antigua = self.suministro("ES0000000000000000XX")
+        del antigua["consideraciones"]["duraciones"]
+        antigua["consideraciones"].update({"duracion": "31/12/2027", "duracion2": "",
+                                           "duracion3": "31/12/2028"})
+        self.assertIn("dos alternativas, hasta el 31 de diciembre de 2027 (12 meses) y hasta el "
+                      "31 de diciembre de 2028 (24 meses).", correo.texto_correo(self.cab,
+                                                                                [antigua]))
+
     cab = {"email": "prueba@example.com", "recepcion_desde": "22/10/2026",
            "recepcion_hasta": "23/10/2026", "recepcion_hora": "12:00"}
 
     def test_igual_en_todos(self):
         texto = correo.texto_correo(self.cab, [
-            self.suministro("ES0000000000000000XX", gdo=True, duracion2="31/12/2028",
-                            duracion3="31/12/2029"),
-            self.suministro("ES0000000000000001XX", gdo=True, duracion2="31/12/2028",
-                            duracion3="31/12/2029")])
+            self.suministro("ES0000000000000000XX", gdo=True, duraciones=self.TRES),
+            self.suministro("ES0000000000000001XX", gdo=True, duraciones=self.TRES)])
         self.assertIn("del cliente GRUPO DE PRUEBA en España", texto)
         self.assertIn("• CUPS: ES0000000000000000XX (EMPRESA DE PRUEBA SA)\n", texto)
         self.assertIn("consumo anual previsto total de 3.000 kWh", texto)
@@ -233,8 +309,8 @@ class Correo(unittest.TestCase):
         self.assertIn("• Tipo de contrato: anual.\n", texto)
         self.assertIn("inicio del contrato: 1 de enero de 2027.\n", texto)
         self.assertIn("Duración del contrato: tres alternativas, hasta el 31 de diciembre de "
-                      "2027, hasta el 31 de diciembre de 2028 y hasta el 31 de diciembre de "
-                      "2029.", texto)
+                      "2027 (12 meses), hasta el 31 de diciembre de 2028 (24 meses) y hasta el "
+                      "31 de diciembre de 2029 (36 meses).", texto)
         self.assertIn("deben incluir garantías de origen (GdO).", texto)
         self.assertIn("Fecha máxima: 23 de octubre de 2026, antes de las 12:00 horas.", texto)
         self.assertIn("\nprueba@example.com\n", texto)
@@ -429,7 +505,7 @@ class GasFormulario(unittest.TestCase):
     def test_consideraciones_ida_y_vuelta(self):
         from ofertas import paginas as op
         c = {"fijo": False, "indexado": ["Indexado MIBGAS (PVB)", "Indexado Brent con coberturas"],
-             "inicio": "01/01/2027", "duracion": "31/12/2027", "duracion2": "", "duracion3": "",
+             "inicio": "01/01/2027", "duraciones": ["31/12/2027", "", ""],
              "temporada": False, "gdo": True, "ieh": so.IEH_GENERAL, "pct_ieh": 40.0}
         fila = pd.Series(op.fila_de_gas(c))
         for col in (op.INICIO, op.DURACION):

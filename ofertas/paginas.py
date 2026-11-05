@@ -39,14 +39,26 @@ COLUMNAS_FICHA = {"grupo": "Cliente/Grupo", "razon": "Razón social", "cif": "CI
                   "tarifa": "Tarifa"}
 
 # tabla de consideraciones de la oferta (una fila por suministro)
-INICIO, DURACION, DURACION2, DURACION3 = (
-    "Fecha prevista de inicio", "Duración del contrato hasta", "Duración del contrato hasta 2",
-    "Duración del contrato hasta 3")
+# duracion del contrato: tantas alternativas (fechas fin) como se quiera, hasta MAX_PLAZOS
+INICIO, DURACION = "Fecha prevista de inicio", "Duración del contrato hasta"
+MAX_PLAZOS = 12
+
+
+def columna_plazo(n: int) -> str:
+    """Columna de la tabla de consideraciones de la alternativa de plazo n (1, 2, 3...)."""
+    return DURACION if n == 1 else f"{DURACION} {n}"
+
+
+def columnas_plazo(columnas) -> list:
+    """Columnas de plazo (fechas fin) de una fila o tabla, en orden."""
+    return sorted((c for c in columnas if str(c).startswith(DURACION)),
+                  key=lambda c: int(c[len(DURACION):] or 1))
+
+
+DURACION2, DURACION3 = columna_plazo(2), columna_plazo(3)
 TEMPORADA, EXENCION = "De temporada", "Sujeto a exención de impuesto eléctrico"
 GDO, EXCEDENTES = "Incluye GdO", "Compensación de excedentes"
 PCT_CONSUMO, PCT_TIPO = "% consumo sujeto a exención", "% tipo de exención"
-COLUMNAS_FECHA = [INICIO, DURACION, DURACION2, DURACION3]
-PLAZOS = ("duracion", "duracion2", "duracion3")
 TIPOLOGIAS = [so.PRECIO_FIJO] + so.PRECIO_INDEXADO
 COLUMNAS_CASILLA = TIPOLOGIAS + [TEMPORADA, EXENCION, GDO, EXCEDENTES]
 
@@ -61,13 +73,19 @@ COLUMNAS_TECNICOS = {"qd": "Qd a contratar (kWh/día)", "telemedida": "Telemedid
                      "dias": "Días de uso a la semana", "interrumpible": "Interrumpible"}
 NUMEROS_TECNICOS = ("qd", "presion", "dias")
 
+def _n(n: int) -> str:
+    """Sufijo de la clave del control del plazo n ('' el primero, como antes)."""
+    return "" if n == 1 else str(n)
+
+
 # claves de los controles del formulario que se guardan para volver a cargarlo
 CLAVES_FORMULARIO = (["sol_ref", "sol_fecha", "sol_gestor", "sol_tel", "sol_email",
                       "sol_producto", "sol_rec_desde", "sol_rec_hasta", "sol_rec_hora",
                       "sol_temporada", "sol_gdo", "sol_excedentes", "sol_exencion",
-                      "sol_pct_consumo", "sol_pct_tipo", "sol_inicio", "sol_duracion",
-                      "sol_duracion2", "sol_duracion3", "sol_gdo_gas", "sol_ieh",
-                      "sol_pct_ieh"]
+                      "sol_pct_consumo", "sol_pct_tipo", "sol_inicio", "sol_n_plazos",
+                      "sol_plazo_modo", "sol_gdo_gas", "sol_ieh", "sol_pct_ieh"]
+                     + ["sol_duracion" + _n(n) for n in range(1, MAX_PLAZOS + 1)]
+                     + ["sol_meses" + _n(n) for n in range(1, MAX_PLAZOS + 1)]
                      + ["sol_op_" + o for o in TIPOLOGIAS]
                      + ["sol_opg_" + o for o in TIPOLOGIAS_GAS])
 
@@ -267,8 +285,7 @@ def consideraciones_de(fila) -> dict:
     exento = bool(fila[EXENCION])
     return {"fijo": bool(fila[so.PRECIO_FIJO]),
             "indexado": [o for o in so.PRECIO_INDEXADO if bool(fila[o])],
-            "inicio": _texto(fila[INICIO]), "duracion": _texto(fila[DURACION]),
-            "duracion2": _texto(fila[DURACION2]), "duracion3": _texto(fila[DURACION3]),
+            "inicio": _texto(fila[INICIO]), "duraciones": _duraciones(fila),
             "temporada": bool(fila[TEMPORADA]),
             "gdo": bool(fila[GDO]), "excedentes": bool(fila[EXCEDENTES]),
             "exencion": exento,
@@ -278,13 +295,28 @@ def consideraciones_de(fila) -> dict:
                                   _texto(fila[PCT_TIPO]) else None)}
 
 
-def fila_de(c: dict) -> dict:
+def _duraciones(fila) -> list:
+    """Fechas fin de las columnas de plazo de una fila (con '' en las vacias, para que cada
+    alternativa siga en su columna al volver a cargarla)."""
+    return [_texto(fila[col]) for col in columnas_plazo(fila.keys())]
+
+
+def _fechas_de(c: dict, n_plazos: int) -> dict:
+    """Columnas de inicio y de plazo de una fila a partir de lo guardado (las solicitudes
+    antiguas tenian las claves fijas duracion, duracion2 y duracion3)."""
+    lista = (list(c["duraciones"]) if c.get("duraciones") is not None
+             else [c.get(k) or "" for k in ("duracion", "duracion2", "duracion3")])
+    lista += [""] * (n_plazos - len(lista))
+    fila = {INICIO: _fecha(c["inicio"]) if c.get("inicio") else None}
+    fila.update({columna_plazo(n + 1): _fecha(d) if d else None for n, d in enumerate(lista)})
+    return fila
+
+
+def fila_de(c: dict, n_plazos: int = 1) -> dict:
     """Lo contrario de consideraciones_de: fila de la tabla a partir de lo guardado."""
     fila = {so.PRECIO_FIJO: c.get("fijo", True)}
     fila.update({o: o in (c.get("indexado") or []) for o in so.PRECIO_INDEXADO})
-    for col, k in ((INICIO, "inicio"), (DURACION, "duracion"), (DURACION2, "duracion2"),
-                   (DURACION3, "duracion3")):
-        fila[col] = _fecha(c[k]) if c.get(k) else None
+    fila.update(_fechas_de(c, n_plazos))
     fila.update({TEMPORADA: bool(c.get("temporada")), GDO: bool(c.get("gdo")),
                  EXCEDENTES: bool(c.get("excedentes")), EXENCION: bool(c.get("exencion")),
                  PCT_CONSUMO: c.get("pct_consumo_exento"), PCT_TIPO: c.get("pct_tipo_exencion")})
@@ -295,20 +327,17 @@ def consideraciones_de_gas(fila) -> dict:
     """Gas: consideraciones de la oferta de un suministro a partir de su fila de la tabla."""
     return {"fijo": _si(fila[so.PRECIO_FIJO]),
             "indexado": [o for o in so.PRECIO_INDEXADO_GAS if _si(fila[o])],
-            "inicio": _texto(fila[INICIO]), "duracion": _texto(fila[DURACION]),
-            "duracion2": _texto(fila[DURACION2]), "duracion3": _texto(fila[DURACION3]),
+            "inicio": _texto(fila[INICIO]), "duraciones": _duraciones(fila),
             "temporada": False, "gdo": _si(fila[GDO_GAS]),
             "ieh": _texto(fila[IEH]) or so.IEH_REDUCIDO,
             "pct_ieh": float(fila[PCT_IEH]) if _texto(fila[PCT_IEH]) else None}
 
 
-def fila_de_gas(c: dict) -> dict:
+def fila_de_gas(c: dict, n_plazos: int = 1) -> dict:
     """Lo contrario de consideraciones_de_gas."""
     fila = {so.PRECIO_FIJO: c.get("fijo", True)}
     fila.update({o: o in (c.get("indexado") or []) for o in so.PRECIO_INDEXADO_GAS})
-    for col, k in ((INICIO, "inicio"), (DURACION, "duracion"), (DURACION2, "duracion2"),
-                   (DURACION3, "duracion3")):
-        fila[col] = _fecha(c[k]) if c.get(k) else None
+    fila.update(_fechas_de(c, n_plazos))
     fila.update({GDO_GAS: bool(c.get("gdo")), IEH: c.get("ieh") or so.IEH_REDUCIDO,
                  PCT_IEH: c.get("pct_ieh")})
     return fila
@@ -452,17 +481,57 @@ def consideraciones_comunes_gas() -> dict:
     return _fechas_comunes(comun)
 
 
+MODOS_PLAZO = ["Meses desde el inicio", "Fecha fin"]
+
+
+def _plazos_guardados() -> int:
+    """Alternativas de plazo de la solicitud cargada (las antiguas tenian tres)."""
+    valores = st.session_state.get("sol_valores", {})
+    if valores.get("sol_n_plazos"):
+        return int(valores["sol_n_plazos"])
+    return 3 if "sol_duracion" in valores else 1
+
+
 def _fechas_comunes(comun: dict) -> dict:
-    """Fecha prevista de inicio y hasta tres fechas fin (comun a electricidad y gas)."""
-    comun[INICIO] = st.date_input("Fecha prevista de inicio del contrato", format="DD/MM/YYYY",
-                                  key="sol_inicio", **_valor("sol_inicio", None))
-    st.caption("Duración del contrato: rellena al menos una fecha fin; cada una es una "
-               "alternativa de plazo para la oferta.")
-    c1, c2, c3 = st.columns(3)
-    for col, clave, n in ((c1, DURACION, ""), (c2, DURACION2, "2"), (c3, DURACION3, "3")):
-        comun[clave] = col.date_input(f"Duración del contrato hasta {n}".strip(),
-                                      format="DD/MM/YYYY", key="sol_duracion" + n,
-                                      **_valor("sol_duracion" + n, None))
+    """Fecha prevista de inicio y las alternativas de duracion, tantas como se quiera, en meses
+    o con fecha fin (comun a electricidad y gas). Se guardan como fechas fin."""
+    c_ini, c_num, c_modo = st.columns([1, 1, 1.4])
+    comun[INICIO] = c_ini.date_input("Fecha prevista de inicio del contrato",
+                                     format="DD/MM/YYYY", key="sol_inicio",
+                                     **_valor("sol_inicio", None))
+    n_plazos = int(c_num.number_input(
+        "Alternativas de duración", min_value=1, max_value=MAX_PLAZOS, step=1,
+        key="sol_n_plazos", **_valor("sol_n_plazos", _plazos_guardados()),
+        help="Cuántos plazos distintos se piden (12, 18, 24, 33 meses…). Cada uno es una "
+             "alternativa de duración para la oferta."))
+    guardado = st.session_state.get("sol_valores", {})
+    # las solicitudes antiguas se hicieron con fechas fin
+    defecto = MODOS_PLAZO[1] if ("sol_duracion" in guardado
+                                 and "sol_plazo_modo" not in guardado) else MODOS_PLAZO[0]
+    modo = c_modo.radio("Indicar la duración en", MODOS_PLAZO, horizontal=True,
+                        key="sol_plazo_modo", **_indice("sol_plazo_modo", MODOS_PLAZO, defecto))
+    inicio = comun[INICIO]
+    if modo == MODOS_PLAZO[0] and not inicio:
+        st.info("Para indicar la duración en meses, elige antes la fecha prevista de inicio.")
+    columnas = st.columns(min(n_plazos, 4))
+    for n in range(1, n_plazos + 1):
+        col = columnas[(n - 1) % len(columnas)]
+        etiqueta = "Duración" + (f" {n}" if n_plazos > 1 else "")
+        if modo == MODOS_PLAZO[0]:
+            meses = col.number_input(f"{etiqueta} (meses)", min_value=1, max_value=240, step=1,
+                                     key="sol_meses" + _n(n), **_valor("sol_meses" + _n(n), None))
+            fin = so.fin_por_meses(inicio, meses) if meses and inicio else None
+            if fin:
+                col.caption(f"Hasta el {fin:%d/%m/%Y}")
+        else:
+            fin = col.date_input(f"{etiqueta}: hasta", format="DD/MM/YYYY",
+                                 key="sol_duracion" + _n(n),
+                                 **_valor("sol_duracion" + _n(n), None))
+            meses = so.meses_de_plazo(inicio.strftime("%d/%m/%Y") if inicio else None,
+                                      fin.strftime("%d/%m/%Y") if fin else None)
+            if meses:
+                col.caption(f"{meses} meses")
+        comun[columna_plazo(n)] = fin
     return comun
 
 
@@ -472,11 +541,12 @@ def tabla_consideraciones(fichas: list, comun: dict, guardado: dict = None,
     guardada y lo comun no ha cambiado desde entonces, con lo que tenia cada suministro."""
     usar_guardado = guardado is not None and guardado == comun
     de_guardado = fila_de_gas if gas else fila_de
+    n_plazos = len(columnas_plazo(comun))
     tabla = pd.DataFrame([dict({"CUPS": f["cups"], "Alias": f.get("alias", "")},
-                               **(de_guardado(f["consideraciones"])
+                               **(de_guardado(f["consideraciones"], n_plazos)
                                   if usar_guardado and f.get("consideraciones") else comun))
                           for f in fichas])
-    for col in COLUMNAS_FECHA:
+    for col in [INICIO] + columnas_plazo(tabla.columns):
         tabla[col] = pd.to_datetime(tabla[col])
     for col in (PCT_IEH,) if gas else (PCT_CONSUMO, PCT_TIPO):
         tabla[col] = pd.to_numeric(tabla[col])
@@ -581,7 +651,8 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     comun = consideraciones_comunes_gas() if gas else consideraciones_comunes()
     st.caption("Consideraciones de cada suministro: salen con lo elegido arriba. Si después "
                "cambias algo de arriba, esta tabla vuelve a empezar con ello.")
-    columnas = {c: st.column_config.DateColumn(format="DD/MM/YYYY") for c in COLUMNAS_FECHA}
+    columnas = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
+                for c in [INICIO] + columnas_plazo(comun)}
     columnas.update({c: st.column_config.NumberColumn(min_value=0, max_value=100, format="%.2f")
                      for c in ((PCT_IEH,) if gas else (PCT_CONSUMO, PCT_TIPO))})
     columnas.update({c: st.column_config.CheckboxColumn()
@@ -625,13 +696,13 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     if avisos:
         st.warning("Revisa:\n" + "\n".join(f"- {a}" for a in avisos))
     plazos = [s["cups"] for s in suministros if s["consideraciones"]["inicio"] and any(
-        s["consideraciones"][d] and _fecha(s["consideraciones"][d]) <= _fecha(
-            s["consideraciones"]["inicio"]) for d in PLAZOS)]
+        _fecha(d) <= _fecha(s["consideraciones"]["inicio"])
+        for d in so.plazos(s["consideraciones"]))]
     if plazos:
         st.warning("La duración del contrato termina antes de la fecha de inicio en: "
                    + ", ".join(plazos))
     sin_plazo = [s["cups"] for s in suministros
-                 if not any(s["consideraciones"][d] for d in PLAZOS)]
+                 if not so.plazos(s["consideraciones"])]
     if sin_plazo:
         st.info("Falta al menos una fecha fin de duración del contrato en: "
                 + ", ".join(sin_plazo))

@@ -57,11 +57,18 @@ def _exencion(c: dict) -> str:
                                                          if datos else "")
 
 
+_NUMEROS = ["", "una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
+            "diez", "once", "doce"]
+
+
 def _duracion(c: dict) -> str:
-    plazos = [f"hasta el {fecha_larga(c[k])}" for k in ("duracion", "duracion2", "duracion3")
-              if c.get(k)]
+    plazos = []
+    for fin in so.plazos(c):
+        meses = so.meses_de_plazo(c.get("inicio"), fin)
+        plazos.append(f"hasta el {fecha_larga(fin)}" + (f" ({meses} meses)" if meses else ""))
     if len(plazos) > 1:
-        return f"{['', '', 'dos', 'tres'][len(plazos)]} alternativas, {_lista(plazos)}"
+        n = _NUMEROS[len(plazos)] if len(plazos) < len(_NUMEROS) else str(len(plazos))
+        return f"{n} alternativas, {_lista(plazos)}"
     return plazos[0] if plazos else ""
 
 

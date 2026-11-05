@@ -18,7 +18,7 @@ from tests.test_ofertas import CAB_GAS, suministro_gas
 
 CUPS1, CUPS2, NUEVO = "ES0000000000000001XX", "ES0000000000000002XX", "ES0000000000000009XX"
 CONSIDERACIONES = {"fijo": True, "indexado": ["PVPC"], "inicio": "01/01/2027",
-                   "duracion": "31/12/2027", "duracion2": "", "duracion3": "",
+                   "duraciones": ["31/12/2027"],
                    "temporada": False, "exencion": False, "gdo": False, "excedentes": False}
 CAB = {"ref": "R-1", "fecha": "01/01/2026", "gestor": "Persona de prueba",
        "telefono": so.TELEFONO_GEYPE, "email": "prueba@example.com",

@@ -17,6 +17,7 @@ Los datos salen de Gemweb (ofertas.paginas, con las funciones de gemweb_extracto
 aqui solo se da formato.
 """
 
+import calendar
 import io
 import re
 from datetime import date, datetime, timedelta
@@ -204,13 +205,44 @@ def ieh_valido(ieh: str, cogeneracion: bool) -> str:
     return IEH_EXENTO if cogeneracion and ieh == IEH_REDUCIDO else ieh
 
 
+def plazos(c: dict) -> list:
+    """Fechas fin (dd/mm/aaaa) de las alternativas de duracion del contrato, tantas como se
+    pidan. Las solicitudes guardadas antes de la duracion libre tenian tres claves fijas."""
+    if c.get("duraciones") is not None:
+        return [d for d in c["duraciones"] if d]
+    return [c[k] for k in ("duracion", "duracion2", "duracion3") if c.get(k)]
+
+
+def fin_por_meses(inicio: date, meses: int) -> date:
+    """Fecha fin de un contrato de `meses` meses que empieza en `inicio` (la vispera del mismo
+    dia del mes en que acaba: 01/01/2027 + 12 meses -> 31/12/2027)."""
+    año, mes = divmod(inicio.month - 1 + int(meses), 12)
+    año, mes = inicio.year + año, mes + 1
+    ultimo = calendar.monthrange(año, mes)[1]
+    if inicio.day > ultimo:                    # 31/01 + 1 mes -> 28/02 (no existe el 31/02)
+        return date(año, mes, ultimo)
+    return date(año, mes, inicio.day) - timedelta(days=1)
+
+
+def meses_de_plazo(inicio: str, fin: str):
+    """Meses de la duracion de inicio a fin (dd/mm/aaaa), o None si no son meses enteros."""
+    try:
+        ini = datetime.strptime(inicio, "%d/%m/%Y").date()
+        fin = datetime.strptime(fin, "%d/%m/%Y").date()
+    except (TypeError, ValueError):
+        return None
+    sig = fin + timedelta(days=1)
+    meses = (sig.year - ini.year) * 12 + sig.month - ini.month
+    return meses if meses > 0 and fin_por_meses(ini, meses) == fin else None
+
+
 def _plazo_corto(c: dict) -> bool:
     """Alguna duracion del contrato de menos de un año desde la fecha de inicio."""
     if not c.get("inicio"):
         return False
     ini = datetime.strptime(c["inicio"], "%d/%m/%Y").date()
-    return any((datetime.strptime(c[k], "%d/%m/%Y").date() - ini).days + 1 < 365
-               for k in ("duracion", "duracion2", "duracion3") if c.get(k))
+    return any((datetime.strptime(d, "%d/%m/%Y").date() - ini).days + 1 < 365
+               for d in plazos(c))
 
 
 def avisos_gas(s: dict) -> list:
@@ -394,13 +426,16 @@ def _consideraciones(ws, cab, s, fila):
                                         "the contract starts", True)
     _bloque(ws, f"E{fila}:E{fila + 1}", c.get("inicio", ""))
     fila += 3
-    plazos = [d for d in (c.get("duracion"), c.get("duracion2"), c.get("duracion3")) if d] or [""]
-    _bloque(ws, f"B{fila}:C{fila + max(len(plazos), 2) - 1}",
+    fines = plazos(c) or [""]
+    _bloque(ws, f"B{fila}:C{fila + max(len(fines), 2) - 1}",
             "Duración del contrato / contract duration", True)
-    for n in range(max(len(plazos), 2)):
+    for n in range(max(len(fines), 2)):
         _bloque(ws, f"D{fila + n}:E{fila + n}", "Hasta / Until", True)
-        _bloque(ws, f"F{fila + n}", plazos[n] if n < len(plazos) else "")
-    fila += max(len(plazos), 2) + 1
+        _bloque(ws, f"F{fila + n}", fines[n] if n < len(fines) else "")
+        meses = meses_de_plazo(c.get("inicio"), fines[n]) if n < len(fines) else None
+        if meses:
+            _bloque(ws, f"G{fila + n}", f"{meses} meses / months")
+    fila += max(len(fines), 2) + 1
     # particularidades: solo salen si se aplican al suministro (el impuesto de gas, siempre)
     if gas:
         fila = _ieh(ws, fila, c)
