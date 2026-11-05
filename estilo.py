@@ -30,7 +30,7 @@ COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
 MODULOS_MENU = {"Seguimiento y Control": "seguimiento", "Revisión de SSAA": "ssaa",
-                "API de Gemweb": "gemweb", "Solicitud de ofertas": "ofertas",
+                "API de Gemweb": "gemweb", "Ofertas": "ofertas",
                 "Estudio de potencia": "potencia",
                 "Supervisión": "supervision", "Administración": "admin"}
 LINEA_MENU = "#D9B8B8"        # granate muy claro: linea bajo cada modulo del menu
@@ -215,7 +215,10 @@ GRUPOS_MENU = [
     ["seguimiento-contactos", "seguimiento-claves", "seguimiento-smac", "seguimiento-telemedida",
      "seguimiento-bajas"],
     # Enviar Informes Sgto.
-    ["seguimiento-incidencias", "seguimiento-envios", "seguimiento-contactos-envio"]]
+    ["seguimiento-incidencias", "seguimiento-envios", "seguimiento-contactos-envio"],
+    # Ofertas: Crear nueva solicitud y Nuevo análisis
+    ["solicitudes-guardadas"],
+    ["analisis-guardados", "parametros-utilizados"]]
 
 
 def _css_grupos():

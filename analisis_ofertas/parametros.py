@@ -191,35 +191,39 @@ def tablas_vigentes(anios: list = None, calculados: list = None, hoy: dt.date = 
     return salida
 
 
+def hoja(wb, nombre: str, df: pd.DataFrame, titulo: str) -> None:
+    """Hoja con título y la tabla (cabecera granate)."""
+    ws = wb.create_sheet(nombre[:31])
+    ws["A1"] = f"{titulo} — {nombre}"
+    ws["A1"].font = Font(bold=True, size=12, color=GRANATE)
+    ws["A2"] = f"Generado el {dt.datetime.now():%d/%m/%Y %H:%M} con Herramientas GE&PE"
+    ws["A2"].font = Font(italic=True, size=9, color="7F7F7F")
+    if df is None or df.empty:
+        ws["A4"] = "Sin datos."
+        return
+    for c, col in enumerate(df.columns, start=1):
+        celda = ws.cell(4, c, col)
+        celda.font = Font(bold=True, color="FFFFFF")
+        celda.fill = PatternFill("solid", fgColor=GRANATE)
+        celda.alignment = Alignment(wrap_text=True, vertical="center")
+        ws.column_dimensions[get_column_letter(c)].width = max(10, min(45, len(str(col)) + 4))
+    for r, fila in enumerate(df.itertuples(index=False), start=5):
+        for c, v in enumerate(fila, start=1):
+            if isinstance(v, float) and pd.isna(v):
+                v = None
+            celda = ws.cell(r, c, v)
+            if isinstance(v, float):
+                celda.number_format = "0.000000" if abs(v) < 1 else "#,##0.00"
+    ws.freeze_panes = "A5"
+
+
 def excel(tablas: dict, titulo: str = "Parámetros utilizados") -> bytes:
     """Libro con una hoja por tabla (las claves que empiezan por _ no se exportan)."""
     wb = Workbook()
     wb.remove(wb.active)
     for nombre, df in tablas.items():
-        if nombre.startswith("_") or df is None:
-            continue
-        ws = wb.create_sheet(nombre[:31])
-        ws["A1"] = f"{titulo} — {nombre}"
-        ws["A1"].font = Font(bold=True, size=12, color=GRANATE)
-        ws["A2"] = f"Generado el {dt.datetime.now():%d/%m/%Y %H:%M} con Herramientas GE&PE"
-        ws["A2"].font = Font(italic=True, size=9, color="7F7F7F")
-        if df.empty:
-            ws["A4"] = "Sin datos."
-            continue
-        for c, col in enumerate(df.columns, start=1):
-            celda = ws.cell(4, c, col)
-            celda.font = Font(bold=True, color="FFFFFF")
-            celda.fill = PatternFill("solid", fgColor=GRANATE)
-            celda.alignment = Alignment(wrap_text=True, vertical="center")
-            ws.column_dimensions[get_column_letter(c)].width = max(10, min(45, len(str(col)) + 4))
-        for r, fila in enumerate(df.itertuples(index=False), start=5):
-            for c, v in enumerate(fila, start=1):
-                if isinstance(v, float) and pd.isna(v):
-                    v = None
-                celda = ws.cell(r, c, v)
-                if isinstance(v, float):
-                    celda.number_format = "0.000000" if abs(v) < 1 else "#,##0.00"
-        ws.freeze_panes = "A5"
+        if not nombre.startswith("_"):
+            hoja(wb, nombre, df, titulo)
     salida = io.BytesIO()
     wb.save(salida)
     return salida.getvalue()

@@ -24,10 +24,12 @@ import almacen
 SSAA, FICHAS, OFERTAS, POTENCIA, GEMWEB = ("Revisión de SSAA", "Fichas de contrato",
                                            "Solicitud de ofertas", "Estudio de potencia",
                                            "Descarga datos API Gemweb")
-MODULOS = [SSAA, FICHAS, OFERTAS, POTENCIA, GEMWEB]
+ANALISIS = "Análisis de ofertas"
+MODULOS = [SSAA, FICHAS, OFERTAS, ANALISIS, POTENCIA, GEMWEB]
 SIN_USUARIO = "(sin usuario)"          # fichas importadas del JSON inicial
 INDICADORES = {SSAA: "Revisiones de SSAA", FICHAS: "Fichas de contrato",
-               OFERTAS: "Solicitudes de ofertas", POTENCIA: "Estudios de potencia",
+               OFERTAS: "Solicitudes de ofertas", ANALISIS: "Análisis de ofertas",
+               POTENCIA: "Estudios de potencia",
                GEMWEB: "Descargas API Gemweb"}
 CONSULTA, DESCARGA, ACCESO = "Consulta Gemweb", "Descarga", "Inicio de sesión"
 PERIODOS = ["Este mes", "Mes anterior", "Últimos 3 meses", "Este año", "Personalizado"]
@@ -100,6 +102,21 @@ def trabajo(desde, hasta, usuarios=None, modulos=None):
                 fecha=r["actualizado"], usuario=r["actualizado_por"], modulo=OFERTAS,
                 tipo="Seguimiento de solicitud", descripcion=descripcion, cups=r["cups"],
                 resultado=r["estado"], origen="solicitud", id=r["id"]))
+    for r in almacen.listar_analisis(limite=LIMITE):
+        descripcion = " · ".join(x for x in (r["ref"], r["cliente"]) if x)
+        resultado = "%s · %s oferta%s%s" % (
+            r["estado"], r["ofertas"] or 0, "" if r["ofertas"] == 1 else "s",
+            " · mejor: %s" % r["mejor"] if r["mejor"] else "")
+        if _dentro(r["fecha"], desde, hasta):
+            filas.append(dict(
+                fecha=r["fecha"], usuario=r["usuario"], modulo=ANALISIS,
+                tipo="Análisis de ofertas", descripcion=descripcion, cups=r["cups"],
+                resultado=resultado, origen="analisis", id=r["id"]))
+        if r["actualizado"] and _dentro(r["actualizado"], desde, hasta):
+            filas.append(dict(
+                fecha=r["actualizado"], usuario=r["actualizado_por"], modulo=ANALISIS,
+                tipo="Actualización del análisis", descripcion=descripcion, cups=r["cups"],
+                resultado=resultado, origen="analisis", id=r["id"]))
     for r in almacen.listar_estudios_potencia(limite=LIMITE):
         if _dentro(r["fecha"], desde, hasta):
             filas.append(dict(

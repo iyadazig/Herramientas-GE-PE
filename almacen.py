@@ -15,6 +15,9 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
   estudios_potencia     cada estudio de potencia guardado: quien, cuando, titular, CUPS,
                         ahorro e inversion de la propuesta optima, datos del formulario, los
                         suministros con sus curvas ya leidas (comprimidos) y el PDF
+  analisis_ofertas      cada analisis de ofertas guardado: quien, cuando, solicitud de la que
+                        parte, cliente, CUPS, ofertas y rondas, mejor oferta, estado, el estudio
+                        completo con lo congelado (JSON), las curvas (comprimidas) y los informes
   datos_regulados       peajes, cargos, impuestos y parametros de mercado de cada año guardados
                         desde Administracion (prevalecen sobre regulados/regulados.json), con
                         su historial de cambios
@@ -79,6 +82,13 @@ CREATE TABLE IF NOT EXISTS estudios_potencia (
 CREATE INDEX IF NOT EXISTS ix_hist_cups ON contratos_historial(cups);
 CREATE TABLE IF NOT EXISTS datos_regulados (
     anio INTEGER PRIMARY KEY, datos TEXT NOT NULL, actualizado TEXT NOT NULL, usuario TEXT);
+CREATE TABLE IF NOT EXISTS analisis_ofertas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
+    id_solicitud INTEGER, ref TEXT, cliente TEXT, cups TEXT, suministros INTEGER,
+    consumo REAL, inicio TEXT, ofertas INTEGER, ronda INTEGER, comercializadoras TEXT,
+    mejor TEXT, ahorro REAL, estado TEXT NOT NULL, actualizado TEXT, actualizado_por TEXT,
+    datos TEXT NOT NULL, curvas BLOB, excel BLOB, pdf BLOB);
+CREATE INDEX IF NOT EXISTS ix_ao_solicitud ON analisis_ofertas(id_solicitud);
 CREATE TABLE IF NOT EXISTS apuntamientos_calculados (
     anio INTEGER NOT NULL, mes INTEGER NOT NULL, fuente TEXT NOT NULL, factores TEXT NOT NULL,
     calculado TEXT NOT NULL, PRIMARY KEY (anio, mes));
@@ -527,6 +537,99 @@ def estudio_potencia(id_estudio):
 
 def borrar_estudio_potencia(id_estudio, usuario):
     return _borrar_propio("estudios_potencia", id_estudio, usuario)
+
+
+# ------------------------------------------------------------------- analisis de ofertas
+_COLS_ANALISIS = ("id_solicitud", "ref", "cliente", "cups", "suministros", "consumo", "inicio",
+                  "ofertas", "ronda", "comercializadoras", "mejor", "ahorro", "estado")
+
+
+def _resumen_analisis(resumen):
+    r = dict(resumen)
+    if isinstance(r.get("cups"), (list, tuple)):
+        r["suministros"] = len(r["cups"])
+        r["cups"] = ", ".join(r["cups"])
+    if isinstance(r.get("comercializadoras"), (list, tuple)):
+        r["comercializadoras"] = ", ".join(dict.fromkeys(c for c in r["comercializadoras"] if c))
+    r.setdefault("estado", "En curso")
+    return [r.get(c) for c in _COLS_ANALISIS]
+
+
+def guardar_analisis(usuario, resumen, datos, curvas=None, excel=None, pdf=None):
+    """resumen: id_solicitud, ref, cliente, cups (lista), consumo, inicio, ofertas, ronda,
+    comercializadoras (lista), mejor, ahorro, estado. datos: el estudio (JSON). Devuelve el id."""
+    columnas = ", ".join(_COLS_ANALISIS)
+    marcas = ",".join(["?"] * (len(_COLS_ANALISIS) + 6))
+    with _con(escribir=True) as con:
+        cur = con.execute(
+            "INSERT INTO analisis_ofertas (fecha, usuario, " + columnas + ", datos, curvas, "
+            "excel, pdf) VALUES (" + marcas + ")",
+            [_ahora(), usuario] + _resumen_analisis(resumen)
+            + [json.dumps(datos, ensure_ascii=False, default=str), curvas, excel, pdf])
+        return cur.lastrowid
+
+
+def actualizar_analisis(id_analisis, usuario, resumen, datos, curvas=None, excel=None,
+                        pdf=None):
+    """Guarda los cambios de un analisis (lo puede actualizar cualquiera del equipo; queda
+    quien y cuando). Las curvas, el Excel y el PDF solo se cambian si se pasan."""
+    sets = ", ".join(c + "=?" for c in _COLS_ANALISIS)
+    extra, valores = "", []
+    for nombre, v in (("curvas", curvas), ("excel", excel), ("pdf", pdf)):
+        if v is not None:
+            extra += ", " + nombre + "=?"
+            valores.append(v)
+    with _con(escribir=True) as con:
+        con.execute("UPDATE analisis_ofertas SET " + sets + ", datos=?, actualizado=?, "
+                    "actualizado_por=?" + extra + " WHERE id=?",
+                    _resumen_analisis(resumen)
+                    + [json.dumps(datos, ensure_ascii=False, default=str), _ahora(), usuario]
+                    + valores + [id_analisis])
+
+
+def listar_analisis(limite=1000):
+    """Sin datos, curvas ni informes."""
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, fecha, usuario, " + ", ".join(_COLS_ANALISIS) + ", actualizado, "
+            "actualizado_por, excel IS NOT NULL AS hay_excel, pdf IS NOT NULL AS hay_pdf "
+            "FROM analisis_ofertas ORDER BY id DESC LIMIT ?", (limite,))]
+
+
+def analisis(id_analisis):
+    """Analisis completo (datos ya leidos del JSON, curvas e informes) o None."""
+    with _con() as con:
+        r = con.execute("SELECT * FROM analisis_ofertas WHERE id=?", (id_analisis,)).fetchone()
+    if not r:
+        return None
+    r = dict(r)
+    r["datos"] = json.loads(r["datos"])
+    return r
+
+
+def borrar_analisis(id_analisis, usuario):
+    return _borrar_propio("analisis_ofertas", id_analisis, usuario)
+
+
+def contactos_comercializadoras():
+    """{COMERCIALIZADORA: {"comercializadora", "gestor", "email", "fecha"}}: el ultimo gestor y
+    email usados con cada comercializadora en los analisis guardados (para proponerlos)."""
+    salida = {}
+    with _con() as con:
+        filas = con.execute("SELECT COALESCE(actualizado, fecha) AS f, datos FROM "
+                            "analisis_ofertas ORDER BY f").fetchall()
+    for f in filas:
+        try:
+            datos = json.loads(f["datos"])
+        except ValueError:
+            continue
+        estudio = datos.get("estudio", datos)
+        for o in (estudio.get("ofertas") or []) + [estudio.get("actual") or {}]:
+            com = (o.get("comercializadora") or "").strip()
+            if com and (o.get("gestor") or o.get("email_gestor")):
+                salida[com.upper()] = {"comercializadora": com, "gestor": o.get("gestor") or "",
+                                       "email": o.get("email_gestor") or "", "fecha": f["f"]}
+    return salida
 
 
 # ------------------------------------------------------------------- datos regulados

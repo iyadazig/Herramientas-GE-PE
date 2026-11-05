@@ -8,7 +8,8 @@ HERRAMIENTAS GE&PE — entrada unica de la plataforma
 Acceso con usuario y contrasena (paginas.acceso), imagen corporativa (estilo) y menu por
 secciones (st.navigation). Cada pagina es un fichero o una funcion; las de Gemweb estan
 en gemweb_extractor/paginas.py y las de la
-solicitud de ofertas en ofertas/paginas.py.
+solicitud de ofertas en ofertas/paginas.py y las del analisis de ofertas en
+analisis_ofertas/paginas.py.
 """
 
 import functools
@@ -19,6 +20,7 @@ import almacen
 import estilo
 import paginas
 from gemweb_extractor import paginas as gw
+from analisis_ofertas import paginas as analisis
 from analisis_ofertas import paginas_regulados as regulados
 from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
@@ -54,8 +56,11 @@ def _pagina(funcion, titulo, subtitulo, ruta, modulo, default=False):
 SUB_SSAA = "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)"
 SUB_GEMWEB = "Consultas a la API de Gemweb"
 SEGUIMIENTO, SSAA, GEMWEB, OFERTAS, POTENCIA, SUPERVISION, ADMIN = (
-    "Seguimiento y Control", "Revisión de SSAA", "API de Gemweb", "Solicitud de ofertas",
+    "Seguimiento y Control", "Revisión de SSAA", "API de Gemweb", "Ofertas",
     "Estudio de potencia", "Supervisión", "Administración")
+# modulos de la actividad (supervision) de las paginas de «Ofertas»
+SOLICITUD, ANALISIS = "Solicitud de ofertas", "Análisis de ofertas"
+SUB_ANALISIS = "Valoración de las ofertas recibidas frente al contrato actual"
 SUB_SGC = "Seguimiento de facturas e informes de los clientes"
 menu = {
     SEGUIMIENTO: [
@@ -110,10 +115,17 @@ menu = {
     OFERTAS: [
         _pagina(ofertas.pagina_solicitud_ofertas, "Crear nueva solicitud",
                 "Excel de solicitud de ofertas con los datos de Gemweb", "solicitud-ofertas",
-                OFERTAS),
+                SOLICITUD),
         _pagina(ofertas.pagina_solicitudes_guardadas, "Solicitudes guardadas",
                 "Solicitudes de ofertas guardadas por el equipo y su seguimiento",
-                "solicitudes-guardadas", OFERTAS),
+                "solicitudes-guardadas", SOLICITUD),
+        _pagina(analisis.pagina_nuevo_analisis, "Nuevo análisis", SUB_ANALISIS,
+                "analisis-ofertas", ANALISIS),
+        _pagina(analisis.pagina_analisis_guardados, "Análisis guardados",
+                "Análisis de ofertas guardados por el equipo", "analisis-guardados", ANALISIS),
+        _pagina(analisis.pagina_parametros, "Parámetros utilizados",
+                "Términos regulados, mercado y apuntamientos con su fuente y fecha",
+                "parametros-utilizados", ANALISIS),
     ],
     POTENCIA: [
         _pagina(potencia.pagina_nuevo_estudio, "Nuevo estudio",
@@ -125,6 +137,7 @@ menu = {
     ],
 }
 ofertas.PAGINA_FORMULARIO = menu[OFERTAS][0]   # para «Cargar en el formulario»
+analisis.PAGINA_FORMULARIO = menu[OFERTAS][2]  # para «Cargar en Nuevo análisis»
 potencia.PAGINA_FORMULARIO = menu[POTENCIA][0]
 if almacen.puede_supervisar(usuario):
     menu[SUPERVISION] = [

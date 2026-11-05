@@ -92,6 +92,18 @@ def _detalle(fila, nombres, modulo, propio):
             estilo.boton_descarga(modulo, st, "Descargar Excel", sol["excel"] or b"",
                                   "solicitud_ofertas_%d.xlsx" % sol["id"], XLSX,
                                   disabled=not sol["excel"])
+    elif fila["origen"] == "analisis":
+        an = almacen.analisis(fila["id"])
+        if an:
+            st.caption("Ref. %s · %s · %s" % (an["ref"] or "—", an["cliente"] or "—",
+                                              fila["resultado"]))
+            c1, c2 = st.columns(2)
+            estilo.boton_descarga(modulo, c1, "Descargar informe Excel", an["excel"] or b"",
+                                  "analisis_ofertas_%d.xlsx" % an["id"], XLSX,
+                                  disabled=not an["excel"])
+            estilo.boton_descarga(modulo, c2, "Descargar informe PDF", an["pdf"] or b"",
+                                  "analisis_ofertas_%d.pdf" % an["id"], "application/pdf",
+                                  disabled=not an["pdf"])
     elif fila["origen"] == "estudio":
         est = almacen.estudio_potencia(fila["id"])
         if est:

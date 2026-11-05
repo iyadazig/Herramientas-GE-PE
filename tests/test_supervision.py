@@ -143,6 +143,40 @@ class Datos(Base):
         self.assertEqual(len(sd.trabajo(HOY, HOY, modulos=[sd.OFERTAS])), 2)
         self.assertEqual(sd.trabajo("2000-01-01", "2000-01-31"), [])
 
+    def test_analisis_de_ofertas(self):
+        datos = {"estudio": {"ofertas": [
+            {"comercializadora": "Comercializadora A", "gestor": "Ana Gestora",
+             "email_gestor": "ana@example.com"},
+            {"comercializadora": "Comercializadora B", "gestor": "", "email_gestor": ""}],
+            "actual": {"comercializadora": "Actual SA", "gestor": "Pepe",
+                       "email_gestor": "pepe@example.com"}}}
+        resumen = {"ref": "R-1", "cliente": "CLIENTE DE PRUEBA",
+                   "cups": ["ES0000000000000000XX", "ES0000000000000001XX"], "ofertas": 2,
+                   "ronda": 1, "comercializadoras": ["Comercializadora A", "Comercializadora B"],
+                   "mejor": "Comercializadora A", "ahorro": 1500.0}
+        id_ = almacen.guardar_analisis("eva", resumen, datos, curvas=b"c", excel=b"x")
+        fila = almacen.listar_analisis()[0]
+        self.assertEqual((fila["suministros"], fila["estado"], fila["hay_excel"], fila["hay_pdf"]),
+                         (2, "En curso", 1, 0))
+        self.assertEqual(fila["comercializadoras"], "Comercializadora A, Comercializadora B")
+        datos["estudio"]["ofertas"][0]["gestor"] = "Ana Nueva"
+        almacen.actualizar_analisis(id_, "luis", dict(resumen, estado="Adjudicada"), datos,
+                                    pdf=b"%PDF")
+        a = almacen.analisis(id_)
+        self.assertEqual((a["estado"], a["actualizado_por"], a["curvas"], a["excel"], a["pdf"]),
+                         ("Adjudicada", "luis", b"c", b"x", b"%PDF"))
+        registros = sd.trabajo(HOY, HOY, modulos=[sd.ANALISIS])
+        self.assertEqual(sorted(r["tipo"] for r in registros),
+                         ["Actualización del análisis", "Análisis de ofertas"])
+        self.assertIn("mejor: Comercializadora A", registros[0]["resultado"])
+        contactos = almacen.contactos_comercializadoras()
+        self.assertEqual(contactos["COMERCIALIZADORA A"]["gestor"], "Ana Nueva")
+        self.assertEqual(contactos["ACTUAL SA"]["email"], "pepe@example.com")
+        self.assertNotIn("COMERCIALIZADORA B", contactos)
+        self.assertFalse(almacen.borrar_analisis(id_, "luis"))     # solo lo propio
+        self.assertTrue(almacen.borrar_analisis(id_, "eva"))
+        self.assertIsNone(almacen.analisis(id_))
+
     def test_resumen_por_usuario(self):
         self.poblar()
         almacen.registrar_actividad("eva", "API de Gemweb", sd.CONSULTA, "Inventario")
@@ -213,8 +247,9 @@ class Panel(Base):
         self.assertFalse(at.exception)
         self.assertFalse(at.warning)                             # cualquiera puede verla
         self.assertEqual([m.value for m in at.metric[:4]], ["0", "1", "1", "0"])
-        self.assertEqual(at.metric[4].label, "Descargas API Gemweb")
-        self.assertEqual(at.metric[5].label, "Días con actividad")
+        self.assertEqual(at.metric[3].label, "Análisis de ofertas")
+        self.assertEqual(at.metric[5].label, "Descargas API Gemweb")
+        self.assertEqual(at.metric[6].label, "Días con actividad")
         self.assertEqual([m.label for m in at.multiselect], ["Módulos"])   # sin filtro de usuarios
         trabajo = at.dataframe[1].value                          # 0: resumen, 1: trabajo
         self.assertNotIn("Usuario", trabajo.columns)
