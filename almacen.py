@@ -18,6 +18,8 @@ Un unico fichero `revisor_ssaa.db` en la carpeta de datos (config.CARPETA_DATOS)
   datos_regulados       peajes, cargos, impuestos y parametros de mercado de cada año guardados
                         desde Administracion (prevalecen sobre regulados/regulados.json), con
                         su historial de cambios
+  apuntamientos_calculados  apuntamientos («Profile») del mercado diario de cada mes por
+                        sistema y calendario, calculados por la app con ESIOS u OMIE
   actividad             lo que no se guarda en otra tabla: accesos, paginas abiertas, consultas
                         a Gemweb y descargas (quien, cuando, modulo, accion, detalle breve)
   sgc_*                 Seguimiento y Control: suministros del cuadro (datos en JSON), estados
@@ -77,6 +79,9 @@ CREATE TABLE IF NOT EXISTS estudios_potencia (
 CREATE INDEX IF NOT EXISTS ix_hist_cups ON contratos_historial(cups);
 CREATE TABLE IF NOT EXISTS datos_regulados (
     anio INTEGER PRIMARY KEY, datos TEXT NOT NULL, actualizado TEXT NOT NULL, usuario TEXT);
+CREATE TABLE IF NOT EXISTS apuntamientos_calculados (
+    anio INTEGER NOT NULL, mes INTEGER NOT NULL, fuente TEXT NOT NULL, factores TEXT NOT NULL,
+    calculado TEXT NOT NULL, PRIMARY KEY (anio, mes));
 CREATE TABLE IF NOT EXISTS datos_regulados_historial (
     id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER NOT NULL, datos TEXT NOT NULL,
     fecha TEXT NOT NULL, usuario TEXT);
@@ -563,6 +568,24 @@ def borrar_datos_regulados(anio):
     """Vuelve a los de la semilla (el historial se conserva)."""
     with _con(escribir=True) as con:
         con.execute("DELETE FROM datos_regulados WHERE anio=?", (int(anio),))
+
+
+# ------------------------------------------------------------------- apuntamientos
+def guardar_apuntamientos(calculo):
+    """calculo: {"anio", "mes", "fuente", "factores": {"Península|6P": [6 valores]...}}."""
+    with _con(escribir=True) as con:
+        con.execute("INSERT OR REPLACE INTO apuntamientos_calculados (anio, mes, fuente, "
+                    "factores, calculado) VALUES (?,?,?,?,?)",
+                    (int(calculo["anio"]), int(calculo["mes"]), calculo["fuente"],
+                     json.dumps(calculo["factores"], ensure_ascii=False), _ahora()))
+
+
+def listar_apuntamientos():
+    with _con() as con:
+        return [{"anio": r["anio"], "mes": r["mes"], "fuente": r["fuente"],
+                 "factores": json.loads(r["factores"]), "calculado": r["calculado"]}
+                for r in con.execute("SELECT * FROM apuntamientos_calculados "
+                                     "ORDER BY anio, mes")]
 
 
 # ------------------------------------------------------------------- seguimiento y control
