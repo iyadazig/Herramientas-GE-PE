@@ -390,9 +390,10 @@ def controles(e: mo.Estudio, res: dict = None) -> list:
             salida.append(("aviso", f"«{o.nombre}»: el email del gestor no es válido."))
         grupos = {g for s, g in calculo.incluidos(e, o)[0]}
         if o.modalidad == mo.FIJO:
+            tarifa_de = {g: t for g, (t, _) in calculo.grupos_de(e, o).items()}
             sin = [g for g in grupos if not any(
-                v is not None for p in (o.precios.get(g) or o.precios.get(g.split("-")[0]) or [])
-                for v in p.energia)]
+                v is not None for y in range(1, 2 + len(o.precios.get(g) or []))
+                for v in o.precios_grupo(g, y, tarifa_de.get(g)).energia)]
             if sin:
                 salida.append(("error", f"«{o.nombre}»: sin precio de energía para "
                                         + ", ".join(sorted(sin)) + "."))

@@ -184,14 +184,22 @@ class Oferta:
 
     def precios_grupo(self, grupo: str, anio_contrato: int, tarifa: str = None) -> PreciosAnio:
         """Precios del grupo en el año de contrato (1, 2...). Un año sin precios propios usa
-        los del anterior; un grupo territorial sin precios, los de su tarifa (como la
-        plantilla)."""
-        lista = self.precios.get(grupo)
-        if not lista and tarifa and grupo != tarifa:
-            lista = self.precios.get(tarifa)
-        if not lista:
-            return PreciosAnio()
-        return lista[min(anio_contrato, len(lista)) - 1]
+        los del anterior; en un grupo territorial («6.1TD-Canarias»), cada concepto que no
+        tenga ningún valor (energía, B, Ci, potencia) usa el de su tarifa, como la plantilla
+        (las filas territoriales copian la general salvo que se sobrescriban)."""
+        def del_anio(lista):
+            return lista[min(anio_contrato, len(lista)) - 1] if lista else None
+        propio = del_anio(self.precios.get(grupo))
+        general = del_anio(self.precios.get(tarifa)) if tarifa and grupo != tarifa else None
+        if propio is None or general is None:
+            return propio or general or PreciosAnio()
+        mezcla = {}
+        for campo in ("energia", "termino_b", "potencia", "ci"):
+            v = getattr(propio, campo)
+            vacio = all(x in (None, 1.0) for x in v) if campo == "ci" else \
+                all(x is None for x in v)
+            mezcla[campo] = list(getattr(general, campo) if vacio else v)
+        return PreciosAnio(**mezcla)
 
     def resumen_ssaa(self) -> str:
         return {SSAA_INCLUIDOS: "SSAA incluidos", SSAA_PERIODO: "SSAA index.",

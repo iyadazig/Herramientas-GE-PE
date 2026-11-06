@@ -193,6 +193,24 @@ class Indexado(unittest.TestCase):
         self.assertAlmostEqual(r.conceptos["energia"][0], 2000 * (100 + click) / 1000)
 
 
+class GrupoTerritorialVacio(unittest.TestCase):
+    def test_usa_los_precios_de_su_tarifa(self):
+        """Una fila «6.1TD-Canarias» guardada vacía desde la pantalla no anula los precios."""
+        e = estudio()
+        e.suministros[0].sistema = "Canarias"
+        o = fijo(0.1)
+        o.precios["6.1TD-Canarias"] = [mo.PreciosAnio()]
+        r = calculo.calcular_oferta(e, o)
+        self.assertAlmostEqual(r.conceptos["energia"].sum(), 2400.0)
+        o.precios["6.1TD-Canarias"] = [mo.PreciosAnio(energia=[0.2] * 6)]
+        r = calculo.calcular_oferta(e, o)
+        self.assertAlmostEqual(r.conceptos["energia"].sum(), 4800.0)
+        e.ofertas = [fijo(0.1)]
+        e.ofertas[0].precios["6.1TD-Canarias"] = [mo.PreciosAnio()]
+        from analisis_ofertas import servicio
+        self.assertFalse(any("sin precio" in t for _, t in servicio.controles(e)))
+
+
 class PhCanarias(unittest.TestCase):
     """Indexados al Ph demanda de Canarias."""
 
