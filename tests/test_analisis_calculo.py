@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Motor del análisis de ofertas: un caso a mano por cada rama de fórmula (fijo con y sin
 peajes, Pass-Pool, Pass-Through, cierres por % y por MW, los 5 modos de SSAA, FNEE y fee en
-neto o barras, IEE con mínimo y reducción), duraciones libres, contrato actual en los mismos
+neto o barras, IEE con reducción), duraciones libres, contrato actual en los mismos
 meses, apuntamiento del cliente por CUPS, resultados y JSON. Datos ficticios."""
 
 import copy
@@ -84,15 +84,15 @@ class Fijo(unittest.TestCase):
         self.assertAlmostEqual(r.conceptos["energia"].sum(), 24000 * 0.1 * 0.9)
         self.assertAlmostEqual(r.conceptos["peajes"].sum(), 24000 * 0.03)
 
-    def test_iee_minimo_y_reduccion(self):
+    def test_iee_sin_minimo_y_reduccion(self):
         e = estudio()
         e.suministros[0].potencias = [0.0] * 6
         r = calculo.calcular_oferta(e, fijo(0.001), calculo.Contexto(e))
-        # base 24 € × 5 % = 1,2 € < 24 MWh × 1 €/MWh
-        self.assertAlmostEqual(r.conceptos["iee"].sum(), 24.0)
+        # base 24 € × 5 % = 1,2 € (ya no se aplica el mínimo de 1 €/MWh)
+        self.assertAlmostEqual(r.conceptos["iee"].sum(), 1.2)
         e.suministros[0].reduccion_iee = 0.85
         r = calculo.calcular_oferta(e, fijo(0.001), calculo.Contexto(e))
-        self.assertAlmostEqual(r.conceptos["iee"].sum(), 12.0)          # mínimo reducido
+        self.assertAlmostEqual(r.conceptos["iee"].sum(), 24 * 0.15 * 0.05)
         e.suministros[0].reduccion_iee = 1.0
         self.assertEqual(calculo.calcular_oferta(e, fijo(0.001)).conceptos["iee"].sum(), 0.0)
 

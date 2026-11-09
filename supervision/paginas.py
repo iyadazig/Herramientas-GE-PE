@@ -104,6 +104,9 @@ def _detalle(fila, nombres, modulo, propio):
             estilo.boton_descarga(modulo, c2, "Descargar informe PDF", an["pdf"] or b"",
                                   "analisis_ofertas_%d.pdf" % an["id"], "application/pdf",
                                   disabled=not an["pdf"])
+    elif fila["origen"] == "catalogo":
+        st.caption("%s · %s · (detalle en «Catálogo de ofertas»)" % (
+            fila["descripcion"] or "—", fila["resultado"] or "—"))
     elif fila["origen"] == "estudio":
         est = almacen.estudio_potencia(fila["id"])
         if est:

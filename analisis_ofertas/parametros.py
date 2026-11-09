@@ -143,16 +143,23 @@ def tabla_apuntamientos(ap_omie: dict, origen: dict = None, ap_ssaa: dict = None
     return pd.DataFrame(filas)
 
 
-def tabla_ph_pico(ph_dif: dict, ph_origen: dict = None, pico: dict = None) -> pd.DataFrame:
-    """Por mes natural: lo que el Ph demanda de Canarias lleva encima del mercado diario y el
-    apuntamiento de la carga pico (8-20 h de lunes a viernes) del mercado diario."""
-    filas = [{"Mes": ap.MESES[m - 1],
-              "Ph Canarias − diario (€/MWh)": (ph_dif or {}).get(m),
-              "Dato de": (ph_origen or {}).get(m, ""),
-              "Pico 8-20 h L-V / media del mes": (pico or {}).get(m)}
-             for m in range(1, 13)]
-    if not any(f["Ph Canarias − diario (€/MWh)"] is not None
-               or f["Pico 8-20 h L-V / media del mes"] is not None for f in filas):
+PICO = "Factor de carga pico"
+EXPLICACION_PICO = (
+    "Factor de carga pico = precio medio del mercado diario (OMIE) en las horas de 8 a 20 h de "
+    "lunes a viernes ÷ precio medio de todas las horas del mes, con los 12 últimos meses "
+    "publicados. 1 = esas horas cuestan lo mismo que la media del mes; por encima de 1 son más "
+    "caras (invierno: más demanda y poca solar); por debajo, más baratas (primavera y verano: la "
+    "solar hunde el precio de las horas centrales). Solo se usa en las ofertas que permiten "
+    "cerrar precio en el producto de carga pico (8-20 h L-V): el precio previsto del pico de un "
+    "mes es el previsto del mes × este factor, y los MW de pico cerrados se liquidan contra él. "
+    "Si una oferta no tiene cierres en pico, no interviene en el cálculo.")
+
+
+def tabla_pico(pico: dict, origen: dict = None) -> pd.DataFrame:
+    """Factor de la carga pico (8-20 h de lunes a viernes) del mercado diario por mes natural."""
+    filas = [{"Mes": ap.MESES[m - 1], PICO: (pico or {}).get(m),
+              "Dato de": (origen or {}).get(m, "")} for m in range(1, 13)]
+    if not any(f[PICO] is not None for f in filas):
         return pd.DataFrame()
     return pd.DataFrame(filas)
 
@@ -175,9 +182,9 @@ def tablas_estudio(e: mo.Estudio) -> dict:
               "Generales": tabla_generales(regs),
               "Mercado y SSAA": tabla_mercado(e),
               "Apuntamientos": tabla_apuntamientos(e.ap_omie, e.ap_origen, e.ap_ssaa)}
-    ph = tabla_ph_pico(e.ph_dif, e.ph_origen, e.pico)
-    if not ph.empty:
-        salida["Ph Canarias y pico"] = ph
+    pico = tabla_pico(e.pico)
+    if not pico.empty:
+        salida["Carga pico"] = pico
     salida["Fuentes"] = tabla_fuentes(regs)
     return salida
 
@@ -211,11 +218,10 @@ def tablas_vigentes(anios: list = None, calculados: list = None, hoy: dt.date = 
             calculados = []
     ap_omie, origen = apuntamientos_vigentes(calculados, hoy)
     salida["Apuntamientos"] = tabla_apuntamientos(ap_omie, origen)
-    dif = {m: v[0] for m, v in (ap_omie.get(ap.CLAVE_DIF_PH) or {}).items()}
-    pico = {m: v[0] for m, v in (ap_omie.get(ap.CLAVE_PICO) or {}).items()}
-    ph = tabla_ph_pico(dif, origen.get(ap.CLAVE_DIF_PH), pico)
-    if not ph.empty:
-        salida["Ph Canarias y pico"] = ph
+    pico = tabla_pico({m: v[0] for m, v in (ap_omie.get(ap.CLAVE_PICO) or {}).items()},
+                      origen.get(ap.CLAVE_PICO))
+    if not pico.empty:
+        salida["Carga pico"] = pico
     salida["Fuentes"] = tabla_fuentes(regs)
     salida["_avisos"] = avisos
     return salida

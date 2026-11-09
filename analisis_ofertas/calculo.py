@@ -25,7 +25,7 @@ Para cada CUPS incluido, con el grupo de precios de su tarifa y sistema (o un gr
     otros          FNEE (incluido, neto o barras) + GdO + fee (neto o barras)
     potencia       kW × peaje+cargo del año natural del mes / 12 (o la potencia propia)
     K / IM         K × (energía + otros [+ SSAA])
-    IEE            por año de contrato: máx(base × (1 − reducción) × tipo, MWh × mínimo)
+    IEE            base × (1 − reducción) × tipo del año de contrato (sin mínimo por MWh)
     servicios      otros costes fijos + alquiler, por mes
 
 El apuntamiento de cada CUPS: el propio de la oferta si lo tiene; si no, el del cliente (si
@@ -410,19 +410,15 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
         k_im = o.k * (energia + otros + (s_ss if o.k_ssaa else 0))
         servicios = np.full(D, o.otros_fijos + float(s.alquiler or 0))
         kwh = c.sum(axis=1)
-        # IEE por año de contrato (base sin servicios ni alquiler), repartido por meses
+        # IEE: tipo del año de contrato sobre la base (sin servicios ni alquiler); ya no se
+        # aplica el importe mínimo por MWh
         base = potencia + energia + peajes + s_ss + otros + k_im
         iee = np.zeros(D)
         red = float(s.reduccion_iee or 0)
         for i in range(0, D, 12):
             sl = slice(i, min(D, i + 12))
-            if red >= 1:
-                continue
-            g = regs[i]["generales"]
-            minimo = g["iee_minimo_reducido"] if red > 0 else g["iee_minimo_general"]
-            total = max(base[sl].sum() * (1 - red) * g["iee"], kwh[sl].sum() / 1000 * minimo)
-            b = base[sl].sum()
-            iee[sl] = total * base[sl] / b if b else total / (sl.stop - sl.start)
+            if red < 1:
+                iee[sl] = base[sl] * (1 - red) * regs[i]["generales"]["iee"]
         filas = {"potencia": potencia, "energia": energia, "peajes": peajes, "ssaa": s_ss,
                  "otros": otros, "k": k_im, "iee": iee, "servicios": servicios}
         for cpt, v in filas.items():

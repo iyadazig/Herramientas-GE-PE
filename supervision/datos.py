@@ -117,6 +117,20 @@ def trabajo(desde, hasta, usuarios=None, modulos=None):
                 fecha=r["actualizado"], usuario=r["actualizado_por"], modulo=ANALISIS,
                 tipo="Actualización del análisis", descripcion=descripcion, cups=r["cups"],
                 resultado=resultado, origen="analisis", id=r["id"]))
+    for r in almacen.listar_catalogo(incluir_bajas=True):
+        descripcion = " · ".join(x for x in (r["comercializadora"], r["nombre"]) if x)
+        resultado = "%s · %s meses · versión %s · %s" % (r["modalidad"], r["duracion"],
+                                                         r["version"], r["estado"])
+        if _dentro(r["fecha"], desde, hasta):
+            filas.append(dict(
+                fecha=r["fecha"], usuario=r["usuario"], modulo=ANALISIS,
+                tipo="Alta en el catálogo de ofertas", descripcion=descripcion, cups="",
+                resultado=resultado, origen="catalogo", id=r["id"]))
+        if r["actualizado"] and _dentro(r["actualizado"], desde, hasta):
+            filas.append(dict(
+                fecha=r["actualizado"], usuario=r["actualizado_por"], modulo=ANALISIS,
+                tipo="Cambio en el catálogo de ofertas", descripcion=descripcion, cups="",
+                resultado=resultado, origen="catalogo", id=r["id"]))
     for r in almacen.listar_estudios_potencia(limite=LIMITE):
         if _dentro(r["fecha"], desde, hasta):
             filas.append(dict(

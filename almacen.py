@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS analisis_ofertas (
     mejor TEXT, ahorro REAL, estado TEXT NOT NULL, actualizado TEXT, actualizado_por TEXT,
     datos TEXT NOT NULL, curvas BLOB, excel BLOB, pdf BLOB);
 CREATE INDEX IF NOT EXISTS ix_ao_solicitud ON analisis_ofertas(id_solicitud);
+CREATE TABLE IF NOT EXISTS catalogo_ofertas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
+    comercializadora TEXT NOT NULL, nombre TEXT NOT NULL, modalidad TEXT, duracion INTEGER,
+    vigencia_desde TEXT, vigencia_hasta TEXT, inicio_desde TEXT, inicio_hasta TEXT,
+    tarifas TEXT, estado TEXT NOT NULL DEFAULT 'Activa', version INTEGER NOT NULL DEFAULT 1,
+    actualizado TEXT, actualizado_por TEXT, id_analisis_origen INTEGER, datos TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_cat_com ON catalogo_ofertas(comercializadora);
+CREATE INDEX IF NOT EXISTS ix_cat_vig ON catalogo_ofertas(vigencia_hasta);
 CREATE TABLE IF NOT EXISTS apuntamientos_calculados (
     anio INTEGER NOT NULL, mes INTEGER NOT NULL, fuente TEXT NOT NULL, factores TEXT NOT NULL,
     calculado TEXT NOT NULL, PRIMARY KEY (anio, mes));
@@ -633,6 +641,132 @@ def contactos_comercializadoras():
                 salida[com.upper()] = {"comercializadora": com, "gestor": o.get("gestor") or "",
                                        "email": o.get("email_gestor") or "", "fecha": f["f"]}
     return salida
+
+
+# ------------------------------------------------------------------- catálogo de ofertas
+_COLS_CATALOGO = ("comercializadora", "nombre", "modalidad", "duracion", "vigencia_desde",
+                  "vigencia_hasta", "inicio_desde", "inicio_hasta", "tarifas",
+                  "id_analisis_origen")
+
+
+def _ficha_catalogo(ficha):
+    f = dict(ficha)
+    for c in ("vigencia_desde", "vigencia_hasta", "inicio_desde", "inicio_hasta"):
+        if f.get(c) is not None:
+            f[c] = str(f[c])[:10]
+    if isinstance(f.get("tarifas"), (list, tuple)):
+        f["tarifas"] = ", ".join(f["tarifas"])
+    return [f.get(c) for c in _COLS_CATALOGO]
+
+
+def _fila_catalogo(r):
+    r = dict(r)
+    r["tarifas"] = [t.strip() for t in (r.get("tarifas") or "").split(",") if t.strip()]
+    if "datos" in r and isinstance(r["datos"], str):
+        r["datos"] = json.loads(r["datos"])
+    return r
+
+
+def es_autor_o_admin(tabla, id_, usuario):
+    """True si `usuario` creó el registro `id_` de `tabla` o es administrador."""
+    with _con() as con:
+        r = con.execute("SELECT usuario FROM %s WHERE id=?" % tabla, (id_,)).fetchone()
+        if not r:
+            return False
+        if r["usuario"] == usuario:
+            return True
+        u = con.execute("SELECT admin FROM usuarios WHERE usuario=?", (usuario,)).fetchone()
+    return bool(u and u["admin"])
+
+
+def guardar_catalogo(usuario, ficha, datos):
+    """ficha: comercializadora, nombre, modalidad, duracion, vigencia_desde/hasta,
+    inicio_desde/hasta, tarifas (lista), id_analisis_origen. datos: la oferta genérica (JSON).
+    Devuelve el id."""
+    with _con(escribir=True) as con:
+        cur = con.execute(
+            "INSERT INTO catalogo_ofertas (fecha, usuario, " + ", ".join(_COLS_CATALOGO)
+            + ", estado, version, datos) VALUES (" + ",".join(["?"] * (len(_COLS_CATALOGO) + 5))
+            + ")",
+            [_ahora(), usuario] + _ficha_catalogo(ficha)
+            + ["Activa", 1, json.dumps(datos, ensure_ascii=False, default=str)])
+        return cur.lastrowid
+
+
+def actualizar_catalogo(id_, usuario, ficha, datos=None):
+    """Cambia una entrada (solo su autor o un administrador). Con datos (la oferta) es una
+    versión nueva; sin datos cambia solo la cabecera (nombre, fechas...) y no sube la versión.
+    True si se ha guardado."""
+    if not es_autor_o_admin("catalogo_ofertas", id_, usuario):
+        return False
+    columnas = [c for c in _COLS_CATALOGO if c != "id_analisis_origen"]
+    valores = [v for c, v in zip(_COLS_CATALOGO, _ficha_catalogo(ficha))
+               if c != "id_analisis_origen"]
+    sets = [c + "=?" for c in columnas] + ["actualizado=?", "actualizado_por=?"]
+    valores += [_ahora(), usuario]
+    if datos is not None:
+        sets += ["datos=?", "version=version+1"]
+        valores.append(json.dumps(datos, ensure_ascii=False, default=str))
+    with _con(escribir=True) as con:
+        con.execute("UPDATE catalogo_ofertas SET " + ", ".join(sets) + " WHERE id=?",
+                    valores + [id_])
+    return True
+
+
+def estado_catalogo(id_, usuario, estado):
+    """«Activa» o «De baja» (solo su autor o un administrador). True si se ha cambiado."""
+    if not es_autor_o_admin("catalogo_ofertas", id_, usuario):
+        return False
+    with _con(escribir=True) as con:
+        con.execute("UPDATE catalogo_ofertas SET estado=?, actualizado=?, actualizado_por=? "
+                    "WHERE id=?", (estado, _ahora(), usuario, id_))
+    return True
+
+
+def borrar_catalogo(id_, usuario):
+    """Borra la entrada (solo su autor o un administrador). True si se ha borrado."""
+    if not es_autor_o_admin("catalogo_ofertas", id_, usuario):
+        return False
+    with _con(escribir=True) as con:
+        return con.execute("DELETE FROM catalogo_ofertas WHERE id=?", (id_,)).rowcount > 0
+
+
+def listar_catalogo(vigentes_en=None, comercializadora=None, incluir_bajas=False):
+    """Entradas del catálogo sin los datos de la oferta. vigentes_en: fecha en la que se
+    pueden contratar."""
+    sql, args = ("SELECT id, fecha, usuario, " + ", ".join(_COLS_CATALOGO) + ", estado, "
+                 "version, actualizado, actualizado_por FROM catalogo_ofertas WHERE 1=1"), []
+    if not incluir_bajas:
+        sql += " AND estado<>'De baja'"
+    if vigentes_en:
+        sql += " AND vigencia_desde<=? AND vigencia_hasta>=?"
+        args += [str(vigentes_en)[:10]] * 2
+    sql += " ORDER BY comercializadora, vigencia_hasta DESC, duracion"
+    with _con() as con:
+        filas = [_fila_catalogo(r) for r in con.execute(sql, args)]
+    if comercializadora:
+        # en Python: UPPER de SQLite no pasa a mayúsculas las letras con tilde
+        filas = [r for r in filas if (r["comercializadora"] or "").casefold()
+                 == comercializadora.strip().casefold()]
+    return filas
+
+
+def catalogo(id_):
+    """Entrada completa (datos ya leídos del JSON) o None."""
+    with _con() as con:
+        r = con.execute("SELECT * FROM catalogo_ofertas WHERE id=?", (id_,)).fetchone()
+    return _fila_catalogo(r) if r else None
+
+
+def versiones_catalogo(ids):
+    """{id: versión actual} de esas entradas."""
+    ids = [i for i in ids if i]
+    if not ids:
+        return {}
+    with _con() as con:
+        return {r["id"]: r["version"] for r in con.execute(
+            "SELECT id, version FROM catalogo_ofertas WHERE id IN (%s)" % ",".join("?" * len(ids)),
+            ids)}
 
 
 # ------------------------------------------------------------------- datos regulados

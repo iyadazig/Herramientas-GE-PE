@@ -151,12 +151,29 @@ pago. La factura y la curva no salen del PC.
   - Datos regulados: desvíos de referencia (`desvios_coste_ref`, `desvios_saldo_ref`, C2; solo
     informativos, ayuda del campo «Desvíos» de la oferta).
   - `resultados.py` (comparativa, oferta mínima, cuadro de mercado, escenarios OMIP ±X %,
-    estimado frente a cliente, rondas), `informes.py` (Excel y PDF para el cliente, relación de
-    suministros, coste por CUPS y parámetros), `correo.py` (borrador con plantillas y reglas,
+    estimado frente a cliente, rondas), `informes.py` (formatos, notas, relación de
+    suministros y coste por CUPS para la app), `informe_pdf.py` (PDF para el cliente con el
+    formato de la hoja «Informe» de la plantilla: resumen, relación de suministros —o ficha del
+    suministro con gráficas de consumo mensual y por periodo en monopunto—, quién lo ha hecho
+    con su email del perfil de usuario y condiciones de las ofertas; A4 apaisado y A3 si no
+    caben las columnas con letra legible), `informe_excel.py` (Excel de cálculo con fórmulas
+    vivas como la plantilla original: Resumen con formato «Informe», Info suministro,
+    Parámetros utilizados, contrato actual y una hoja por oferta con su resultado, el total de
+    la cartera y por tarifa, los precios unitarios de cada mes y periodo y el cálculo de cada
+    CUPS; mismo resultado que el motor, comprobado con Excel), `correo.py` (borrador con plantillas y reglas,
     sin IA), `parametros.py` («Parámetros utilizados»), `servicio.py` (crear desde una
     solicitud o la plantilla de suministros, congelar regulados/mercado/apuntamientos,
     controles, adjudicar) y `paginas.py` («Nuevo análisis», «Análisis guardados»,
-    «Parámetros utilizados»).
+    «Catálogo de ofertas», «Parámetros utilizados»).
+  - `catalogo.py` + tabla `catalogo_ofertas`: ofertas de catálogo (solo lo genérico: sin gestor,
+    CUPS, grupos propios, cierres ni inicio), con ventanas de vigencia y de inicio de suministro,
+    una entrada por duración y versiones. Se cargan como copia que recuerda su origen; solo el
+    autor o un administrador las cambia, da de baja o borra.
+  - `ayudas.py`: textos del «?» de cada campo, guías (grupos propios, cierres OMIP), avisos de
+    coherencia y la fórmula de la oferta en LaTeX.
+  - El PDF va sobre el papel de GE&PE con marca de agua (`assets/papel_<vertical|horizontal>_<n>.pdf`,
+    sin datos de clientes): los datos quedan entre el logo y el pie (pueden ir sobre el «GE&PE»
+    gris) y todas las hojas salen del mismo tamaño.
   - Cada análisis guarda **congelados** los datos regulados, el mercado y los apuntamientos que
     usó (tabla `analisis_ofertas` de `almacen`, con curvas e informes). Al adjudicar, la
     solicitud de origen pasa a «Adjudicada» con la comercializadora añadida.

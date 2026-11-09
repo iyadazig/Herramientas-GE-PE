@@ -26,9 +26,11 @@ import estilo
 from analisis_ofertas import apuntamientos as ap
 from analisis_ofertas import calculo, correo, informes, parametros, resultados, servicio
 from analisis_ofertas import comercializadoras as coms
+from analisis_ofertas import ayudas, catalogo
 from analisis_ofertas import modelo as mo
 
 MODULO = "Análisis de ofertas"
+AY = ayudas.AYUDA
 REINTENTO_APUNTAMIENTOS = 3600          # s entre intentos de calcular un mes aún sin publicar
 _ultimo_intento = [0.0]
 PAGINA_FORMULARIO = None            # la fija inicio.py («Nuevo análisis»)
@@ -282,6 +284,9 @@ def aplicar_cierres(o: mo.Oferta, df: pd.DataFrame) -> None:
                  for _, f in df.iterrows() if any(v(f, c) is not None for c in columnas)]
 
 
+MOSTRAR_PH = False          # Ph demanda de Canarias: de momento no se usa (no se muestra)
+
+
 def tabla_ph(e: mo.Estudio) -> pd.DataFrame:
     """Lo que el Ph demanda de Canarias lleva encima del mercado diario, por mes natural."""
     return pd.DataFrame([{"Mes": MESES[m - 1], "Ph − diario (€/MWh)": e.ph_dif.get(m),
@@ -472,7 +477,7 @@ def _origen():
     estilo.seccion(1, "Origen", "Solicitud de ofertas guardada o plantilla de suministros")
     modo = st.radio("Partir de", ["Una solicitud de ofertas guardada",
                                   "Suministros de la plantilla Excel"], horizontal=True,
-                    key="ao_modo_origen")
+                    key="ao_modo_origen", help=AY["origen"])
     if modo.startswith("Una solicitud"):
         sols = [s for s in almacen.listar_solicitudes() if s.get("producto") != "gas"]
         if not sols:
@@ -537,8 +542,8 @@ def _suministros(e: mo.Estudio):
     crec = c2.text_input("Crecimiento del consumo por año (%)",
                          value=", ".join(f"{g * 100:g}" for g in e.crecimiento),
                          key=f"ao_crec_{_v()}",
-                         help=f"Año 2, año 3… separados por comas (el horizonte tiene {n_anios} "
-                              "años). Vacío = mismo consumo todos los años.")
+                         help=AY["crecimiento"] + f" Separados por comas (el horizonte tiene "
+                              f"{n_anios} años). Vacío = mismo consumo todos los años.")
     try:
         e.crecimiento = [float(x.replace(",", ".")) / 100
                          for x in re.split(r"[;\s]+|,\s+", crec.strip()) if x]
@@ -576,8 +581,7 @@ def _mercado(e: mo.Estudio):
                f"hasta {MESES[estado['omie']['ultimo_mes'][1] - 1] + ' ' + str(estado['omie']['ultimo_mes'][0]) if estado['omie']['ultimo_mes'] else '—'}. "
                "El estudio usa los datos congelados al crearlo; los OMIP cambiados a mano se "
                "conservan al actualizar.")
-    if c2.button("Actualizar mercado", help="Vuelve a leer la última sesión de OMIP y las medias "
-                                           "de OMIE para todos los meses del horizonte."):
+    if c2.button("Actualizar mercado", help=AY["actualizar_mercado"]):
         st.session_state.ao_avisos = servicio.congelar_mercado(e)
         _subir_version()
         st.rerun()
@@ -604,7 +608,7 @@ def _mercado(e: mo.Estudio):
         st.caption("Se pueden pegar los 12 valores copiados de Excel (con coma decimal).")
         aplicar_ssaa(e, editor(tabla_ssaa(e), f"ao_ssaa_{_v()}", ["SSAA (€/MWh)"],
                                {"SSAA (€/MWh)": 4}, hide_index=True, disabled=["Mes"]))
-        if any(s.activo and s.sistema == "Canarias" for s in e.suministros):
+        if MOSTRAR_PH and any(s.activo and s.sistema == "Canarias" for s in e.suministros):
             st.markdown("**Ph demanda de Canarias**")
             st.caption("Lo que el Ph demanda (ESIOS, indicador 573) lleva encima del mercado "
                        "diario: costes de ajuste, capacidad... Media del mes de los 12 últimos "
@@ -630,6 +634,7 @@ def _apuntamientos(e: mo.Estudio):
                "«Canarias Ph»: forma del Ph demanda de Canarias (ESIOS, indicador 573), para "
                "las ofertas indexadas al Ph.")
     clave = st.selectbox("Sistema y calendario", usados, key="ao_ap_clave",
+                         help=AY["apuntamiento"],
                          format_func=lambda c: c.replace("|3P", " · 2.0TD").replace(
                              "|6P", " · 6 periodos"))
     tabla = tabla_ap(e, clave)
@@ -782,8 +787,40 @@ def _contactos() -> dict:
 
 
 def _sel(contenedor, etiqueta, opciones, valor, clave, **kw):
-    return contenedor.selectbox(etiqueta, opciones, key=clave, index=opciones.index(valor)
-                                if valor in opciones else 0, **kw)
+    """Desplegable que cambia a la primera: el valor inicial va al estado de la sesión y no
+    se pasa «index» (si «index» cambia entre ejecuciones, Streamlit rehace el control y hay
+    que elegir dos veces)."""
+    if clave not in st.session_state or st.session_state[clave] not in opciones:
+        st.session_state[clave] = valor if valor in opciones else opciones[0]
+    return contenedor.selectbox(etiqueta, opciones, key=clave, **kw)
+
+
+def _chk(contenedor, etiqueta, valor, clave, **kw) -> bool:
+    """Casilla con el mismo arreglo que _sel."""
+    if clave not in st.session_state:
+        st.session_state[clave] = bool(valor)
+    return contenedor.checkbox(etiqueta, key=clave, **kw)
+
+
+def _importe(contenedor, etiqueta, o: mo.Oferta, attr: str, clave: str, escala: float = 1.0,
+             **kw):
+    """Importe escrito como texto (coma decimal): se guarda tal y como se escribe, con sus
+    decimales (0,394 sigue siendo 0,394; 1,5228 sigue siendo 1,5228). escala: 100 para %."""
+    valor = float(getattr(o, attr) or 0) * escala
+    texto = (o.textos or {}).get(attr)
+    if texto is None or numero_es(texto) is None or abs(numero_es(texto) - valor) > 1e-9:
+        texto = texto_es(valor)
+    if clave not in st.session_state:
+        st.session_state[clave] = texto
+    escrito = contenedor.text_input(etiqueta, key=clave, **kw).strip()
+    numero = 0.0 if escrito == "" else numero_es(escrito)
+    if numero is None:
+        contenedor.caption(":red[No es un número: se mantiene el anterior]")
+        return
+    setattr(o, attr, numero / escala)
+    if o.textos is None:
+        o.textos = {}
+    o.textos[attr] = escrito
 
 
 def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
@@ -794,10 +831,9 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
     with t_conf:
         c1, c2, c3 = st.columns(3)
         opciones = coms.opciones(o.comercializadora)
-        o.comercializadora = c1.selectbox(
-            "Comercializadora", opciones, key=k + "com",
-            index=opciones.index(o.comercializadora) if o.comercializadora in opciones else 0,
-            format_func=lambda c: c or "— Elige —", help="Escribe para buscar en la lista.")
+        o.comercializadora = _sel(c1, "Comercializadora", opciones, o.comercializadora,
+                                  k + "com", format_func=lambda c: c or "— Elige —",
+                                  help="Escribe para buscar en la lista.")
         contacto = _contactos().get(o.comercializadora.upper()) if o.comercializadora else None
         if contacto and not (o.gestor or o.email_gestor):
             o.gestor, o.email_gestor = contacto["gestor"], contacto["email"]
@@ -807,98 +843,116 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             c3.caption(":red[Email no válido]")
         c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
         o.producto = c1.text_input("Producto / descripción", o.producto, key=k + "prod")
-        o.modalidad = _sel(c2, "Modalidad", mo.MODALIDADES, o.modalidad, k + "mod")
+        o.modalidad = _sel(c2, "Modalidad", mo.MODALIDADES, o.modalidad, k + "mod",
+                           help=AY["modalidad"])
         o.duracion = int(c3.number_input("Duración (meses)", 1, 240, int(o.duracion or 12),
-                                         key=k + "dur"))
+                                         key=k + "dur", help=AY["duracion"]))
         if not o.es_actual:
-            o.ronda = int(c4.number_input("Ronda", 1, 20, int(o.ronda or 1), key=k + "ronda"))
+            o.ronda = int(c4.number_input("Ronda", 1, 20, int(o.ronda or 1), key=k + "ronda",
+                                          help=AY["ronda"]))
         c1, c2, c3, c4 = st.columns(4)
-        propio = c1.checkbox("Inicio distinto al del estudio", bool(o.inicio), key=k + "inip")
+        propio = _chk(c1, "Inicio distinto al del estudio", bool(o.inicio), k + "inip",
+                      help=AY["inicio"])
         if propio:
             ini = c1.date_input("Inicio", o.inicio or e.inicio, format="DD/MM/YYYY",
                                 key=k + "ini")
             o.inicio = ini.replace(day=1) if ini else None
         else:
             o.inicio = None
+        # la unidad y el descuento solo en fijo; la potencia siempre en la segunda columna
         if o.modalidad == mo.FIJO:
-            o.unidad = _sel(c2, "Unidad de la energía", list(mo.UNIDADES), o.unidad, k + "uni")
-            o.descuento = c3.number_input("Descuento sobre energía (%)", 0.0, 100.0,
-                                          float(o.descuento * 100), key=k + "desc") / 100
-        o.atr_incluido = c4.checkbox("El precio incluye peajes y cargos", o.atr_incluido,
-                                     key=k + "atr")
-        o.potencia = _sel(c2 if o.modalidad != mo.FIJO else c1, "Término de potencia",
-                          [mo.POT_REGULADA, mo.POT_PROPIA], o.potencia, k + "pot")
-        if o.modalidad != mo.FIJO:
-            st.markdown("**Componentes de mercado (indexados)**")
+            o.unidad = _sel(c3, "Unidad de la energía", list(mo.UNIDADES), o.unidad, k + "uni",
+                            help=AY["unidad"])
+            _importe(c4, "Descuento sobre energía (%)", o, "descuento", k + "desc", 100,
+                     help=AY["descuento"])
+        o.potencia = _sel(c2, "Término de potencia", [mo.POT_REGULADA, mo.POT_PROPIA],
+                          o.potencia, k + "pot", help=AY["potencia"])
+        o.atr_incluido = _chk(c1, "El precio incluye peajes y cargos", o.atr_incluido,
+                              k + "atr", help=AY["atr"])
+        # Ph de Canarias: de momento no se usa
+        if not MOSTRAR_PH:
+            o.indice_ph = False
+        if o.modalidad == mo.PASS_THROUGH:
+            st.markdown("**Componentes de mercado que suma la oferta**")
             c1, c2, c3, c4, c5 = st.columns(5)
-            o.pagos_capacidad = c1.checkbox("Pagos por capacidad", o.pagos_capacidad,
-                                            key=k + "pc")
-            o.os = c2.checkbox("Pago OS", o.os, key=k + "os")
-            o.om = c3.checkbox("Pago OM", o.om, key=k + "om")
-            o.srad = c4.checkbox("SRAD", o.srad, key=k + "srad")
-            o.base_b = _sel(c5, "Base del término B", mo.BASES, o.base_b, k + "bb")
+            o.pagos_capacidad = _chk(c1, "Pagos por capacidad", o.pagos_capacidad, k + "pc",
+                                     help=AY["pc"])
+            o.os = _chk(c2, "Pago OS", o.os, k + "os", help=AY["os"])
+            o.om = _chk(c3, "Pago OM", o.om, k + "om", help=AY["om"])
+            o.srad = _chk(c4, "SRAD", o.srad, k + "srad", help=AY["srad"])
+            ref = referencia_desvios(e)
+            _importe(c5, "Desvíos (€/MWh, en barras)", o, "desvios", k + "desv",
+                     help=AY["desvios"] + ("  \n" + ref if ref else ""))
             c1, c2 = st.columns(2)
-            o.desvios = c1.number_input("Desvíos (€/MWh, en barras)", value=float(o.desvios),
-                                        key=k + "desv", help=referencia_desvios(e) or None)
-            o.indice_ph = c2.checkbox(
-                "Canarias indexado al Ph demanda", o.indice_ph, key=k + "ph",
-                help="Precio horario de adquisición de la demanda en Canarias (Orden "
-                     "TEC/1172/2018, ESIOS). Ya incluye los costes de ajuste: en los CUPS de "
-                     "Canarias el mercado es (previsto + Ph − diario) × apuntamiento del Ph. "
-                     "No añadas SSAA si la oferta no los cobra aparte.")
-            if o.modalidad == mo.PASS_POOL:
-                o.ci_media_mensual = c2.checkbox(
-                    "El Ci se aplica a la media mensual de OMIE", o.ci_media_mensual,
-                    key=k + "cimm",
-                    help="Precio de mercado mensual × Ci, con el Ci que ya incluye el perfil "
-                         "(y las pérdidas): no se aplica el apuntamiento. Desmárcalo si la "
-                         "oferta aplica el Ci sobre el precio apuntado.")
+            o.base_b = _sel(c1, "Base del término B (si lo hay)", mo.BASES, o.base_b, k + "bb",
+                            help=AY["base_b"])
+        elif o.modalidad == mo.PASS_POOL:
+            # Pass-Pool: Ci × OMIE + término B (que ya lleva capacidad, OS, OM, SRAD y desvíos)
+            o.pagos_capacidad = o.os = o.om = o.srad = False
+            o.desvios = 0.0
+            st.markdown("**Precio Pass-Pool: Ci × OMIE + término B** (capacidad, OS, OM, SRAD y "
+                        "desvíos van dentro del término B)")
+            c1, c2 = st.columns(2)
+            o.base_b = _sel(c1, "Base del término B", mo.BASES, o.base_b, k + "bb",
+                            help=AY["base_b"])
+            o.ci_media_mensual = _chk(c2, "El Ci se aplica a la media mensual de OMIE",
+                                      o.ci_media_mensual, k + "cimm", help=AY["cimm"])
+        if MOSTRAR_PH and o.modalidad != mo.FIJO:
+            o.indice_ph = _chk(st, "Canarias indexado al Ph demanda", o.indice_ph, k + "ph",
+                               help=AY["ph"])
         st.markdown("**Otros conceptos**")
         c1, c2, c3, c4 = st.columns(4)
-        o.fee = c1.number_input("Fee / gestión (€/MWh)", value=float(o.fee), key=k + "fee")
-        o.base_fee = _sel(c2, "Base del fee", mo.BASES, o.base_fee, k + "bfee")
-        o.gdo = c3.number_input("Garantías de origen (€/MWh)", value=float(o.gdo), key=k + "gdo")
-        o.fnee = _sel(c4, "FNEE", mo.MODOS_FNEE, o.fnee, k + "fnee")
+        _importe(c1, "Fee / gestión (€/MWh)", o, "fee", k + "fee", help=AY["fee"])
+        o.base_fee = _sel(c2, "Base del fee", mo.BASES, o.base_fee, k + "bfee",
+                          help=AY["base_fee"])
+        _importe(c3, "Garantías de origen (€/MWh)", o, "gdo", k + "gdo", help=AY["gdo"])
+        o.fnee = _sel(c4, "FNEE", mo.MODOS_FNEE, o.fnee, k + "fnee", help=AY["fnee"])
         c1, c2, c3 = st.columns(3)
-        o.k = c1.number_input("K / impuesto municipal (%)", value=float(o.k * 100),
-                              key=k + "k") / 100
-        o.k_ssaa = c2.checkbox("La K se aplica a los SSAA", o.k_ssaa, key=k + "kss")
-        o.otros_fijos = c3.number_input("Otros costes fijos (€/CUPS·mes)",
-                                        value=float(o.otros_fijos), key=k + "otf")
+        _importe(c1, "K / impuesto municipal (%)", o, "k", k + "k", 100, help=AY["k"])
+        o.k_ssaa = _chk(c2, "La K se aplica a los SSAA", o.k_ssaa, k + "kss",
+                        help=AY["k_ssaa"])
+        _importe(c3, "Otros costes fijos (€/CUPS·mes)", o, "otros_fijos", k + "otf",
+                 help=AY["otros_fijos"])
         st.markdown("**Servicios de ajuste (SSAA)**")
         c1, c2, c3, c4 = st.columns(4)
-        o.ssaa_modo = _sel(c1, "Modo", mo.MODOS_SSAA, o.ssaa_modo, k + "ssm")
+        o.ssaa_modo = _sel(c1, "Modo", mo.MODOS_SSAA, o.ssaa_modo, k + "ssm",
+                           help=AY["ssaa_modo"])
         if o.ssaa_modo == mo.SSAA_BANDA:
-            o.banda_min = c2.number_input("Banda mínima (€/MWh)", value=float(o.banda_min),
-                                          key=k + "bmin")
-            o.banda_max = c3.number_input("Banda máxima (€/MWh)", value=float(o.banda_max),
-                                          key=k + "bmax")
+            _importe(c2, "Banda mínima (€/MWh)", o, "banda_min", k + "bmin", help=AY["banda_min"])
+            _importe(c3, "Banda máxima (€/MWh)", o, "banda_max", k + "bmax", help=AY["banda_max"])
         if o.ssaa_modo == mo.SSAA_TECHO:
-            o.techo = c2.number_input("Techo (€/MWh)", value=float(o.techo), key=k + "techo")
+            _importe(c2, "Techo (€/MWh)", o, "techo", k + "techo", help=AY["techo"])
         if o.ssaa_modo in (mo.SSAA_BANDA, mo.SSAA_TECHO):
-            o.ssaa_perfil = c4.checkbox("Aplicar perfil por periodo", o.ssaa_perfil,
-                                        key=k + "sperf")
+            o.ssaa_perfil = _chk(c4, "Aplicar perfil por periodo", o.ssaa_perfil, k + "sperf",
+                                 help=AY["ssaa_perfil"])
         if o.ssaa_modo != mo.SSAA_INCLUIDOS:
             c1, c2, c3, c4 = st.columns(4)
             o.ssaa_perdidas = _sel(c1, "Elevación a pérdidas", mo.PERDIDAS_SSAA,
-                                   o.ssaa_perdidas, k + "sloss")
+                                   o.ssaa_perdidas, k + "sloss", help=AY["ssaa_perdidas"])
             if o.ssaa_perdidas == mo.PERD_FIJO:
-                o.ssaa_pct_perdidas = c2.number_input("% de pérdidas", value=float(
-                    o.ssaa_pct_perdidas * 100), key=k + "slp") / 100
-            o.ssaa_f1 = c3.number_input("Factor 1", value=float(o.ssaa_f1), format="%.4f",
-                                        key=k + "sf1")
-            o.ssaa_f2 = c4.number_input("Factor 2", value=float(o.ssaa_f2), format="%.4f",
-                                        key=k + "sf2")
+                _importe(c2, "% de pérdidas", o, "ssaa_pct_perdidas", k + "slp", 100)
+            _importe(c3, "Factor 1", o, "ssaa_f1", k + "sf1", help=AY["ssaa_f"])
+            _importe(c4, "Factor 2", o, "ssaa_f2", k + "sf2", help=AY["ssaa_f"])
         if o.modalidad != mo.FIJO:
             st.markdown("**Cierres en OMIP**")
             c1, c2 = st.columns(2)
             o.cierres_tipo = _sel(c1, "Tipo de cierres", mo.TIPOS_CIERRE, o.cierres_tipo,
-                                  k + "cie")
+                                  k + "cie", help=AY["cierres"])
             if o.cierres_tipo != mo.SIN_CIERRES:
-                o.coste_click = c2.number_input("Coste por click (€/MWh cerrado)",
-                                                value=float(o.coste_click), key=k + "click")
+                _importe(c2, "Coste por click (€/MWh cerrado)", o, "coste_click", k + "click",
+                         help=AY["click"])
         else:
             o.cierres_tipo = mo.SIN_CIERRES
+        # fórmula resultante y avisos de coherencia (para compararla con la del PDF)
+        formula, leyenda = ayudas.formula_latex(o)
+        with st.container(border=True):
+            st.markdown("##### Fórmula de esta oferta")
+            st.caption("Precio de la energía de cada periodo, tal y como lo calcula la "
+                       "aplicación. Compárala con la fórmula del contrato de la comercializadora.")
+            st.latex(formula)
+            st.caption("  \n".join("· " + x for x in leyenda))
+        for aviso in ayudas.avisos_coherencia(o):
+            st.warning(aviso)
     with t_precios:
         unidad = o.unidad if o.modalidad == mo.FIJO else ""
         st.caption("Una fila por grupo (tarifa y sistema, o grupo propio) y año de contrato. "
@@ -913,14 +967,18 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
                              disabled=["Grupo", "Año"])
             aplicar_precios(o, concepto, editada)
     with t_grupos:
-        st.caption("Grupos propios: para dar a algunos CUPS un precio distinto del de su tarifa. "
-                   "Después asígnalos en la tabla de CUPS.")
+        st.caption("Cada CUPS va solo al grupo de su tarifa. Crea un grupo propio solo si la "
+                   "oferta da a algunos CUPS un precio distinto del resto de su tarifa.")
+        with st.expander("¿Cómo funcionan los grupos propios? (paso a paso y ejemplo)"):
+            st.markdown(ayudas.GUIA_GRUPOS)
+        st.markdown("**Grupos propios** (nombre, tarifa y sistema)")
         grupos = editor(tabla_grupos_propios(o), k + "gp", hide_index=True, num_rows="dynamic",
                         column_config={
                                     "Tarifa": st.column_config.SelectboxColumn(options=mo.TARIFAS),
                                     "Sistema": st.column_config.SelectboxColumn(
                                         options=mo.SISTEMAS)})
         aplicar_grupos_propios(o, grupos)
+        st.markdown("**CUPS de la oferta**: «Incluido» y grupo propio de cada uno")
         cups = editor(
             tabla_cups_oferta(e, o), f"{k}cups_{len(o.grupos_propios)}", hide_index=True,
             use_container_width=True, disabled=["CUPS", "Alias", "Tarifa", "Sistema"],
@@ -928,6 +986,9 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
                 options=[""] + [g.nombre for g in o.grupos_propios])})
         aplicar_cups_oferta(o, cups)
     with t_cierres:
+        with st.expander("¿Cómo funcionan los cierres en OMIP? (por % y por MW, con ejemplos)",
+                         expanded=o.cierres_tipo != mo.SIN_CIERRES and not o.cierres):
+            st.markdown(ayudas.GUIA_CIERRES)
         if o.cierres_tipo == mo.SIN_CIERRES:
             st.caption("Sin cierres (elige el tipo en Configuración, solo indexados).")
         else:
@@ -972,6 +1033,11 @@ def _contrato_actual(e: mo.Estudio):
 def _ofertas(e: mo.Estudio):
     estilo.seccion(5, "Ofertas", f"{len(e.ofertas)} oferta(s)")
     c1, c2, c3, c4 = st.columns(4)
+    with st.expander("Guía rápida: cómo meter una oferta"):
+        st.markdown(ayudas.GUIA)
+    _cargar_catalogo(e)
+    for aviso in st.session_state.pop("ao_avisos_catalogo", []):
+        st.warning(aviso)
     if c1.button("Añadir oferta", type="primary"):
         e.ofertas.append(mo.Oferta(nombre=f"Oferta {len(e.ofertas) + 1:02d}"))
         st.session_state.ao_oferta = len(e.ofertas) - 1
@@ -1005,8 +1071,320 @@ def _ofertas(e: mo.Estudio):
         st.session_state.ao_oferta = max(0, i - 1)
         _subir_version()
         st.rerun()
+    _origen_catalogo(e, o, f"ao_of{i}_{_v()}")
     o.nombre = st.text_input("Nombre de la oferta", o.nombre, key=f"ao_of{i}_{_v()}_nombre")
     formulario_oferta(e, o, f"of{i}")
+    _guardar_catalogo(e, o, i)
+
+
+# =================================================================== catálogo de ofertas
+NO_SE_GUARDA = ("el nombre de esta oferta en el análisis, el gestor y su email, la ronda, la "
+                "fecha de inicio, los grupos propios y sus CUPS, los CUPS excluidos, los cierres "
+                "de meses concretos y los apuntamientos propios")
+
+
+def _es_admin() -> bool:
+    return bool((st.session_state.get("usuario") or {}).get("admin"))
+
+
+def _f(v) -> str:
+    return dt.date.fromisoformat(str(v)[:10]).strftime("%d/%m/%Y") if v else ""
+
+
+def tabla_catalogo(filas: list, e: mo.Estudio = None, nombres: dict = None) -> pd.DataFrame:
+    """Tabla del buscador: una fila por entrada (con «Cubre» si se pasa el análisis)."""
+    nombres = nombres or {}
+    datos = []
+    for r in filas:
+        fila = {"Nº": r["id"], "Comercializadora": r["comercializadora"], "Nombre": r["nombre"],
+                "Modalidad": r["modalidad"], "Meses": r["duracion"],
+                "Vigencia": f"{_f(r['vigencia_desde'])} - {_f(r['vigencia_hasta'])}",
+                "Inicio de suministro": f"{_f(r['inicio_desde'])} - {_f(r['inicio_hasta'])}",
+                "Tarifas con precio": ", ".join(r.get("tarifas") or []) or "(sin precios por tarifa)"}
+        if e is not None:
+            faltan = catalogo.sin_precio(r, e)
+            fila["Cubre mis tarifas"] = "✔" if not faltan else "⚠ falta " + ", ".join(faltan)
+        fila.update({"Versión": r["version"], "Estado": r["estado"],
+                     "Autor": nombres.get(r["usuario"], r["usuario"])})
+        datos.append(fila)
+    return pd.DataFrame(datos)
+
+
+def guardar_en_catalogo(e: mo.Estudio, ofertas: list, nombre: str, fechas: dict, usuario: str,
+                        id_analisis=None, como_version: bool = False) -> tuple:
+    """Guarda las ofertas en el catálogo (una entrada por oferta; con varias, el nombre lleva
+    la duración). como_version: las que vienen del catálogo y el usuario puede tocar se guardan
+    como versión nueva de su entrada. Devuelve (mensajes, errores)."""
+    mensajes, errores = [], []
+    for o in ofertas:
+        nom = nombre if len(ofertas) == 1 else f"{nombre} · {o.duracion} M"
+        ficha = catalogo.ficha_de(o, nom, id_analisis=id_analisis, **fechas)
+        datos = catalogo.a_catalogo(o)
+        malos = catalogo.validar(ficha, datos)
+        if malos:
+            errores += [f"«{o.nombre}»: {x}" for x in malos]
+            continue
+        origen = (o.origen_catalogo or {}).get("id")
+        if como_version and origen and almacen.catalogo(origen) and \
+                almacen.actualizar_catalogo(origen, usuario, ficha, datos):
+            v = almacen.versiones_catalogo([origen]).get(origen, 1)
+            o.origen_catalogo = {"id": origen, "version": v, "nombre": nom}
+            almacen.registrar_actividad(usuario, MODULO, "Versión de catálogo", f"{nom} v{v}")
+            mensajes.append(f"«{nom}»: versión {v} del catálogo nº {origen}.")
+        else:
+            id_ = almacen.guardar_catalogo(usuario, ficha, datos)
+            o.origen_catalogo = {"id": id_, "version": 1, "nombre": nom}
+            almacen.registrar_actividad(usuario, MODULO, "Alta en catálogo", nom)
+            mensajes.append(f"«{nom}»: guardada en el catálogo (nº {id_}).")
+    return mensajes, errores
+
+
+def cargar_del_catalogo(e: mo.Estudio, ids: list, contactos: dict = None, hoy=None,
+                        usuario: str = None) -> list:
+    """Añade al análisis una copia de cada entrada. Devuelve los avisos."""
+    avisos = []
+    for id_ in ids:
+        r = almacen.catalogo(id_)
+        if not r:
+            continue
+        avisos += catalogo.avisos_carga(r, e, hoy)
+        e.ofertas.append(catalogo.desde_catalogo(r, contactos))
+        if usuario:
+            almacen.registrar_actividad(usuario, MODULO, "Carga desde catálogo", r["nombre"])
+    return avisos
+
+
+def _seleccion(df: pd.DataFrame, clave: str, multiple: bool = True) -> list:
+    """Filas elegidas en la tabla (índices)."""
+    ev = st.dataframe(df, hide_index=True, use_container_width=True, key=clave,
+                      on_select="rerun",
+                      selection_mode="multi-row" if multiple else "single-row")
+    return list(ev.selection.rows) if ev and ev.selection else []
+
+
+def _cargar_catalogo(e: mo.Estudio):
+    with st.expander("Cargar ofertas del catálogo"):
+        st.caption("Ofertas de catálogo guardadas por el equipo. Se añade una copia al análisis: "
+                   "puedes retocarla sin cambiar el catálogo. El gestor se propone del último "
+                   "usado con esa comercializadora.")
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+        todas = almacen.listar_catalogo()
+        coms_ = sorted({r["comercializadora"] for r in todas})
+        com = c1.selectbox("Comercializadora", ["Todas"] + coms_, key="ao_cat_com")
+        modal = c2.selectbox("Modalidad", ["Todas"] + mo.MODALIDADES, key="ao_cat_mod")
+        fecha = e.inicio or dt.date.today()
+        vigentes = c3.checkbox("Solo vigentes", True, key="ao_cat_vig",
+                               help=f"Que se puedan contratar hoy ({dt.date.today():%d/%m/%Y}) y "
+                                    f"cuya ventana de inicio incluya el inicio del análisis "
+                                    f"({fecha:%d/%m/%Y}).")
+        cubren = c4.checkbox("Solo las que cubren mis tarifas", False, key="ao_cat_cub")
+        filas = [r for r in todas
+                 if (com == "Todas" or r["comercializadora"] == com)
+                 and (modal == "Todas" or r["modalidad"] == modal)
+                 and (not vigentes or (catalogo.vigente_en(r, dt.date.today())
+                                       and (not e.inicio or not r["inicio_desde"]
+                                            or _fecha_iso(r["inicio_desde"]) <= e.inicio
+                                            <= _fecha_iso(r["inicio_hasta"]))))
+                 and (not cubren or catalogo.cubre(r, e))]
+        if not filas:
+            st.info("No hay ofertas de catálogo con esos filtros." if todas else
+                    "El catálogo está vacío. Guarda una oferta con «Guardar en el catálogo».")
+            return
+        nombres = {u["usuario"]: u["nombre"] for u in almacen.listar_usuarios()}
+        elegidas = _seleccion(tabla_catalogo(filas, e, nombres), f"ao_cat_tabla_{_v()}")
+        st.caption("Marca una o varias filas (por ejemplo, las de 12, 24 y 36 meses).")
+        if st.button("Cargar las elegidas", type="primary", disabled=not elegidas,
+                     key="ao_cat_cargar"):
+            avisos = cargar_del_catalogo(e, [filas[k]["id"] for k in elegidas], _contactos(),
+                                         usuario=_usuario())
+            st.session_state.ao_oferta = len(e.ofertas) - 1
+            st.session_state.ao_avisos_catalogo = avisos
+            _subir_version()
+            st.rerun()
+
+
+def _fecha_iso(v):
+    return dt.date.fromisoformat(str(v)[:10])
+
+
+def _origen_catalogo(e: mo.Estudio, o: mo.Oferta, k: str):
+    """Etiqueta de la oferta que viene del catálogo y aviso si hay una versión más nueva."""
+    origen = o.origen_catalogo or {}
+    if not origen.get("id"):
+        return
+    try:
+        v = almacen.versiones_catalogo([origen["id"]]).get(origen["id"])
+    except Exception:                                       # noqa: BLE001
+        v = None
+    texto = f"Del catálogo: «{origen.get('nombre')}» (nº {origen['id']}, versión " \
+            f"{origen.get('version') or 1})"
+    if v is None:
+        st.caption(texto + " · ya no está en el catálogo.")
+    elif v > int(origen.get("version") or 1):
+        c1, c2 = st.columns([3, 1])
+        c1.warning(texto + f". En el catálogo ya está la versión {v}.")
+        if c2.button("Actualizar desde catálogo", key=f"{k}_catup",
+                     help="Cambia la fórmula, los precios de las tarifas y las condiciones por "
+                          "los del catálogo. Conserva el nombre, el gestor, la ronda, el inicio, "
+                          "los grupos propios, los CUPS y los cierres de este análisis."):
+            catalogo.actualizar_desde(o, almacen.catalogo(origen["id"]))
+            _subir_version()
+            st.rerun()
+    else:
+        st.caption(texto + ".")
+
+
+def _guardar_catalogo(e: mo.Estudio, o: mo.Oferta, i: int):
+    with st.expander("Guardar en el catálogo de ofertas"):
+        st.caption("Para ofertas de catálogo (iguales para cualquier cliente). Se guarda la "
+                   f"fórmula, los precios por tarifa y las condiciones; no se guarda {NO_SE_GUARDA}.")
+        k = f"ao_catg_{i}_{_v()}"
+        misma = [n for n, x in enumerate(e.ofertas)
+                 if x.comercializadora == o.comercializadora and n != i]
+        otras = st.multiselect(
+            "Guardar también (una entrada por oferta)", misma, key=k + "otras",
+            format_func=lambda n: f"{e.ofertas[n].nombre} · {e.ofertas[n].duracion} M",
+            help="Por ejemplo, las de 24 y 36 meses del mismo catálogo. El nombre de cada entrada "
+                 "lleva su duración.")
+        ofertas = [o] + [e.ofertas[n] for n in otras]
+        hoy = dt.date.today()
+        corto = (o.comercializadora or "").split(" ")[0].replace(",", "").upper()
+        propuesto = (o.origen_catalogo or {}).get("nombre") or             f"{corto} {o.producto or o.modalidad} {hoy:%m/%Y}".strip()
+        nombre = st.text_input("Nombre del catálogo o producto", propuesto,
+                               key=k + "nombre", help=AY["cat_nombre"])
+        c1, c2, c3, c4 = st.columns(4)
+        fechas = {
+            "vigencia_desde": c1.date_input("Vigencia desde", hoy, format="DD/MM/YYYY",
+                                            key=k + "vd", help=AY["cat_vigencia"]),
+            "vigencia_hasta": c2.date_input("Vigencia hasta", hoy + dt.timedelta(days=30),
+                                            format="DD/MM/YYYY", key=k + "vh",
+                                            help=AY["cat_vigencia"]),
+            "inicio_desde": c3.date_input("Inicio de suministro desde", e.inicio or hoy,
+                                          format="DD/MM/YYYY", key=k + "id",
+                                          help=AY["cat_inicio"]),
+            "inicio_hasta": c4.date_input("Inicio de suministro hasta",
+                                          mo.sumar_meses((e.inicio or hoy).replace(day=1), 3),
+                                          format="DD/MM/YYYY", key=k + "ih",
+                                          help=AY["cat_inicio"])}
+        como_version = False
+        origenes = [x for x in ofertas if (x.origen_catalogo or {}).get("id")]
+        if origenes:
+            como_version = st.radio(
+                "Las que ya vienen del catálogo", ["Guardar como versión nueva de su entrada",
+                                                   "Guardar como entradas nuevas"],
+                key=k + "ver", help="Solo su autor o un administrador puede crear una versión "
+                                    "nueva; si no, se guarda como entrada nueva."
+            ).startswith("Guardar como versión")
+        if st.button("Guardar en el catálogo", type="primary", key=k + "btn"):
+            mensajes, errores = guardar_en_catalogo(
+                e, ofertas, nombre, fechas, _usuario(), st.session_state.get("ao_id"),
+                como_version)
+            for m in mensajes:
+                st.success(m)
+            for x in errores:
+                st.error(x)
+
+
+# =================================================================== página del catálogo
+def pagina_catalogo():
+    todas = almacen.listar_catalogo(incluir_bajas=True)
+    if not todas:
+        st.info("El catálogo está vacío. Las ofertas se guardan desde «Nuevo análisis» → "
+                "Ofertas → «Guardar en el catálogo de ofertas».")
+        return
+    nombres = {u["usuario"]: u["nombre"] for u in almacen.listar_usuarios()}
+    c1, c2, c3 = st.columns([2, 1, 1])
+    coms_ = sorted({r["comercializadora"] for r in todas})
+    com = c1.selectbox("Comercializadora", ["Todas"] + coms_, key="cat_com")
+    modal = c2.selectbox("Modalidad", ["Todas"] + mo.MODALIDADES, key="cat_mod")
+    caducadas = c3.checkbox("Ver ofertas caducadas", False, key="cat_caducadas",
+                            help="Por defecto solo salen las vigentes hoy. Marca para ver "
+                                 "también las caducadas y las dadas de baja.")
+    hoy = dt.date.today()
+    filas = [r for r in todas
+             if (com == "Todas" or r["comercializadora"] == com)
+             and (modal == "Todas" or r["modalidad"] == modal)
+             and (caducadas or catalogo.vigente_en(r, hoy))]
+    if not filas:
+        st.info("No hay ofertas de catálogo con esos filtros.")
+        return
+    elegidas = _seleccion(tabla_catalogo(filas, nombres=nombres), "cat_tabla", multiple=False)
+    if not elegidas:
+        st.caption("Elige una fila para ver su detalle.")
+        return
+    r = almacen.catalogo(filas[elegidas[0]]["id"])
+    o = catalogo.desde_catalogo(r)
+    st.subheader(f"{r['nombre']} · versión {r['version']}")
+    st.caption(f"{r['comercializadora']} · {r['modalidad']} · {r['duracion']} meses · alta "
+               f"{_fecha_hora(r['fecha'])} por {nombres.get(r['usuario'], r['usuario'])}"
+               + (f" · último cambio {_fecha_hora(r['actualizado'])} por "
+                  f"{nombres.get(r['actualizado_por'], r['actualizado_por'])}"
+                  if r.get("actualizado") else ""))
+    if not catalogo.vigente_en(r, hoy):
+        st.warning("No vigente hoy." if r["estado"] != catalogo.BAJA else "Dada de baja.")
+    formula, leyenda = ayudas.formula_latex(o)
+    with st.container(border=True):
+        st.latex(formula)
+        st.caption("  \n".join(leyenda))
+    precios = [{"Grupo": g, "Año": n, "Concepto": c,
+                **{p: v for p, v in zip(PER, getattr(pa, campo))}}
+               for g, anios in o.precios.items() for n, pa in enumerate(anios, 1)
+               for campo, c in (("energia", "Energía"), ("termino_b", "Término B"),
+                                ("ci", "Ci"), ("potencia", "Potencia"))
+               if any(v not in (None, 1.0) if campo == "ci" else v is not None
+                      for v in getattr(pa, campo))]
+    if precios:
+        st.markdown("**Precios**")
+        st.dataframe(pd.DataFrame(precios), hide_index=True, use_container_width=True)
+    condiciones = {k: v for k, v in (o.condiciones or {}).items() if v}
+    if condiciones or o.notas:
+        st.markdown("**Condiciones**")
+        for k, v in condiciones.items():
+            st.markdown(f"- {k.capitalize()}: {v}")
+        if o.notas:
+            st.markdown(f"- Notas: {o.notas}")
+    usuario = _usuario()
+    if not (usuario == r["usuario"] or _es_admin()):
+        st.caption("Solo su autor o un administrador puede cambiarla.")
+        return
+    with st.expander("Cambiar nombre, fechas o estado"):
+        k = f"cat_ed_{r['id']}_{r['version']}"
+        nombre = st.text_input("Nombre", r["nombre"], key=k + "n")
+        c1, c2, c3, c4 = st.columns(4)
+        ficha = dict(r, nombre=nombre,
+                     vigencia_desde=c1.date_input("Vigencia desde", _fecha_iso(r["vigencia_desde"]),
+                                                  format="DD/MM/YYYY", key=k + "vd"),
+                     vigencia_hasta=c2.date_input("Vigencia hasta", _fecha_iso(r["vigencia_hasta"]),
+                                                  format="DD/MM/YYYY", key=k + "vh"),
+                     inicio_desde=c3.date_input("Inicio desde", _fecha_iso(r["inicio_desde"]),
+                                                format="DD/MM/YYYY", key=k + "id"),
+                     inicio_hasta=c4.date_input("Inicio hasta", _fecha_iso(r["inicio_hasta"]),
+                                                format="DD/MM/YYYY", key=k + "ih"))
+        b1, b2, b3 = st.columns(3)
+        if b1.button("Guardar cambios", type="primary", key=k + "g"):
+            errores = catalogo.validar(ficha, r["datos"])
+            if errores:
+                for x in errores:
+                    st.error(x)
+            elif almacen.actualizar_catalogo(r["id"], usuario, ficha):
+                almacen.registrar_actividad(usuario, MODULO, "Cambio en catálogo", nombre)
+                st.rerun()
+        baja = r["estado"] == catalogo.BAJA
+        if b2.button("Reactivar" if baja else "Dar de baja", key=k + "b",
+                     help="Una oferta de baja no sale en el buscador del análisis."):
+            almacen.estado_catalogo(r["id"], usuario, catalogo.ACTIVA if baja else catalogo.BAJA)
+            almacen.registrar_actividad(usuario, MODULO,
+                                        "Alta en catálogo" if baja else "Baja de catálogo",
+                                        r["nombre"])
+            st.rerun()
+        seguro = b3.checkbox("Confirmo que quiero borrarla", key=k + "s")
+        if b3.button("Borrar", disabled=not seguro, key=k + "x",
+                     help="Se borra del catálogo; las ofertas ya cargadas en análisis no cambian."):
+            almacen.borrar_catalogo(r["id"], usuario)
+            almacen.registrar_actividad(usuario, MODULO, "Borrado de catálogo", r["nombre"])
+            st.rerun()
+    st.caption("Para cambiar la fórmula o los precios, cárgala en un análisis, modifícala y "
+               "guárdala con «Guardar como versión nueva de su entrada».")
 
 
 # =================================================================== 6-7. controles y resultados
@@ -1038,6 +1416,7 @@ def _resultados(e: mo.Estudio, res: dict):
         c1.metric("Contrato actual (primer año)", f"{informes.eur(p['total'])} €/año")
         c2.metric("€/kWh", informes.ekwh(p["total"] / p["consumo"] if p["consumo"] else None))
         c3.metric("Consumo anual", f"{informes.eur(p['consumo'] / 1000)} MWh")
+    st.caption("€/año: coste medio anual en la duración de cada oferta. " + AY["mismo_periodo"])
     st.dataframe(tabla_comparativa(filas), hide_index=True, use_container_width=True,
                  column_config={c: st.column_config.NumberColumn(format="localized")
                                 for c in ("€/año", "Actual mismo periodo (€/año)",
@@ -1056,7 +1435,7 @@ def _resultados(e: mo.Estudio, res: dict):
                      hide_index=True)
     with t_esc:
         pasos = st.slider("Variación de OMIP (±%)", 5, 50, 20, 5, key="ao_esc")
-        if st.button("Calcular escenarios"):
+        if st.button("Calcular escenarios", help=AY["escenarios"]):
             esc = resultados.escenarios(e, (-pasos / 100, 0.0, pasos / 100))
             tabla = pd.DataFrame([{"Oferta": f["nombre"], "Comercializadora": f["comercializadora"],
                                    **{f"OMIP {x['variacion_omip'] * 100:+.0f} % (€/año)":
@@ -1090,12 +1469,14 @@ def _resultados(e: mo.Estudio, res: dict):
 def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
     st.markdown("#### Informes y correo")
     ref = st.text_input("Referencia del estudio", st.session_state.get("ao_ref", ""),
-                        key="ao_ref_txt")
+                        key="ao_ref_txt", help=AY["referencia"])
     st.session_state.ao_ref = ref
     if st.button("Preparar informes (Excel y PDF) y borrador del correo"):
         with st.spinner("Generando…"):
-            st.session_state.ao_excel = informes.excel(e, res, ref)
-            st.session_state.ao_pdf = informes.pdf(e, res, ref)
+            from analisis_ofertas import informe_pdf
+            tecnico = informe_pdf.tecnico_de(_usuario())
+            st.session_state.ao_excel = informes.excel(e, res, ref, tecnico)
+            st.session_state.ao_pdf = informes.pdf(e, res, ref, tecnico)
             st.session_state.ao_correo = correo.borrador(e, res, ref)
     nombre = re.sub(r"[^\w-]", "_", ref or e.cliente or "analisis")[:40]
     if st.session_state.get("ao_excel"):
@@ -1111,13 +1492,14 @@ def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
         st.text_area("Borrador del correo (edítalo antes de enviarlo)", b["texto"], height=360,
                      key="ao_texto_correo")
     st.markdown("#### Guardar")
-    estado = st.selectbox("Estado", servicio.ESTADOS, key="ao_estado_sel",
+    estado = st.selectbox("Estado", servicio.ESTADOS, key="ao_estado_sel", help=AY["estado"],
                           index=servicio.ESTADOS.index(st.session_state.get("ao_estado",
                                                                            "En curso")))
     adjudicada = None
     if estado == "Adjudicada" and filas:
         por_nombre = {f["nombre"]: f for f in filas}
         adjudicada = st.selectbox("Oferta adjudicada", list(por_nombre), key="ao_adjudicada",
+                                  help=AY["adjudicada"],
                                   format_func=lambda n: f"{por_nombre[n]['comercializadora']} "
                                                         f"{por_nombre[n]['duracion']} m ({n})")
     c1, c2 = st.columns(2)
@@ -1258,4 +1640,6 @@ def pagina_parametros():
                 anio = c1.selectbox("Año", sorted(df["Año"].unique()), key="pu_anio")
                 tarifa = c2.selectbox("Tarifa", mo.TARIFAS, key="pu_tarifa")
                 df = df[(df["Año"] == anio) & (df["Tarifa"] == tarifa)]
+            if nombre == "Carga pico":
+                st.caption(parametros.EXPLICACION_PICO)
             st.dataframe(df, hide_index=True, use_container_width=True)

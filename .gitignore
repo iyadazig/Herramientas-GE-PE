@@ -22,6 +22,8 @@ copias_seguridad/
 *.db.bak
 *.json.tmp
 *.pdf
+# papel de GE&PE con marca de agua para los informes (sin datos de clientes)
+!assets/papel_*.pdf
 *.xlsx
 *.xls
 *.xlsm

@@ -23,6 +23,7 @@ import streamlit as st
 import almacen
 import estilo
 from gemweb_extractor import paginas as gw
+from analisis_ofertas import ayudas
 from ofertas import correo
 from ofertas import plantilla as pl
 from ofertas import solicitud as so
@@ -424,26 +425,32 @@ def consideraciones_comunes() -> dict:
             clave = "sol_op_" + o
             comun[o] = st.checkbox(o, key=clave, **_valor(clave, o == so.PRECIO_FIJO),
                                    help=("Binómica en DH2 para la 2.0TD y en DH6 para la 3.0TD "
-                                         "y las 6.xTD." if o == so.PRECIO_FIJO else None))
+                                         "y las 6.xTD: un precio fijo de energía por periodo."
+                                         if o == so.PRECIO_FIJO else ayudas.TIPOLOGIAS.get(o)))
     with c_part:
         st.markdown("**Particularidades**")
         comun[TEMPORADA] = st.checkbox(TEMPORADA, key="sol_temporada",
                                        **_valor("sol_temporada", False),
                                        help="Sin marcar, el contrato es anual.")
         comun[GDO] = st.checkbox("Incluye garantías de origen (GdO)", key="sol_gdo",
-                                 **_valor("sol_gdo", False))
+                                 **_valor("sol_gdo", False), help=ayudas.AYUDA["sol_gdo"])
         comun[EXCEDENTES] = st.checkbox(EXCEDENTES, key="sol_excedentes",
                                         **_valor("sol_excedentes", False))
         comun[EXENCION] = st.checkbox(EXENCION, key="sol_exencion",
-                                      **_valor("sol_exencion", False))
+                                      **_valor("sol_exencion", False),
+                                      help=ayudas.AYUDA["sol_exencion"])
         p1, p2 = st.columns(2)
         comun[PCT_CONSUMO] = p1.number_input("Porcentaje de consumo sujeto a exención (%)",
                                              min_value=0.0, max_value=100.0,
                                              disabled=not comun[EXENCION], key="sol_pct_consumo",
+                                             help="Parte del consumo con derecho a la exención "
+                                                  "o reducción (100 % si es todo).",
                                              **_valor("sol_pct_consumo", None))
         comun[PCT_TIPO] = p2.number_input("Porcentaje tipo de exención (%)", min_value=0.0,
                                           max_value=100.0, disabled=not comun[EXENCION],
-                                          key="sol_pct_tipo", **_valor("sol_pct_tipo", None))
+                                          key="sol_pct_tipo", **_valor("sol_pct_tipo", None),
+                                          help="Porcentaje de la exención: 85 % (reducción "
+                                               "del art. 98.1) o 100 % (exención total).")
     return _fechas_comunes(comun)
 
 
@@ -509,7 +516,8 @@ def _fechas_comunes(comun: dict) -> dict:
     defecto = MODOS_PLAZO[1] if ("sol_duracion" in guardado
                                  and "sol_plazo_modo" not in guardado) else MODOS_PLAZO[0]
     modo = c_modo.radio("Indicar la duración en", MODOS_PLAZO, horizontal=True,
-                        key="sol_plazo_modo", **_indice("sol_plazo_modo", MODOS_PLAZO, defecto))
+                        key="sol_plazo_modo", **_indice("sol_plazo_modo", MODOS_PLAZO, defecto),
+                        help=ayudas.AYUDA["sol_duracion"])
     inicio = comun[INICIO]
     if modo == MODOS_PLAZO[0] and not inicio:
         st.info("Para indicar la duración en meses, elige antes la fecha prevista de inicio.")
@@ -610,7 +618,7 @@ def seccion_solicitud_ofertas(res: dict) -> None:
     desde = c1.date_input("Desde", format="DD/MM/YYYY", key="sol_rec_desde",
                           **_valor("sol_rec_desde", date.today()))
     hasta = c2.date_input("Hasta (fecha límite)", format="DD/MM/YYYY", key="sol_rec_hasta",
-                          **_valor("sol_rec_hasta", None))
+                          **_valor("sol_rec_hasta", None), help=ayudas.AYUDA["sol_recepcion"])
     hora = c3.time_input("Hora límite", key="sol_rec_hora", step=900,
                          **_valor("sol_rec_hora", time(12, 0)))
     if desde and hasta and hasta < desde:

@@ -216,9 +216,9 @@ GRUPOS_MENU = [
      "seguimiento-bajas"],
     # Enviar Informes Sgto.
     ["seguimiento-incidencias", "seguimiento-envios", "seguimiento-contactos-envio"],
-    # Ofertas: Crear nueva solicitud y Nuevo análisis
+    # Ofertas: Crear nueva solicitud y Nuevo análisis (Parámetros utilizados, al mismo nivel)
     ["solicitudes-guardadas"],
-    ["analisis-guardados", "parametros-utilizados"]]
+    ["analisis-guardados", "catalogo-ofertas"]]
 
 
 def _css_grupos():
@@ -272,13 +272,17 @@ def traducir():
     import json
     import streamlit.components.v1 as components
     components.html("""<script>
-    const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s;
+    const T = %s, EN = %s, ES = %s, OCULTAR = %s, MODULOS = %s, SESION = %s;
     const doc = window.parent.document;
-    // estado de cada modulo del menu en este navegador: {modulo: true si esta recogido}. Lo que
-    // no se ha tocado sale recogido, salvo el modulo de la pagina abierta
+    window.parent.__gpSesion = SESION;
+    // estado de cada modulo del menu: {modulo: true si esta recogido}, solo de esta sesion de la
+    // aplicacion. Al entrar (sesion nueva) todos salen recogidos; lo que se abre o se cierra
+    // se recuerda mientras dure la sesion
     function estado() {
-        try { return JSON.parse(window.parent.localStorage.getItem("gpMenuEstado")) || {}; }
-        catch (e) { return window.parent.__gpMenuEstado || {}; }
+        let g;
+        try { g = JSON.parse(window.parent.localStorage.getItem("gpMenuEstado")) || {}; }
+        catch (e) { g = window.parent.__gpMenuEstado || {}; }
+        return g.sesion === SESION ? (g.modulos || {}) : {};
     }
     // clic en el titulo de un modulo: lo recoge o despliega y se recuerda en este navegador.
     // Lo que registra este iframe deja de funcionar cuando Streamlit lo sustituye en la
@@ -290,13 +294,15 @@ def traducir():
         s.textContent = `document.addEventListener("click", e => {
             const h = e.target.closest("[data-gp-modulo]");
             if (!h) return;
-            let p;
-            try { p = JSON.parse(localStorage.getItem("gpMenuEstado")) || {}; }
-            catch (x) { p = window.__gpMenuEstado || {}; }
-            p[h.dataset.gpModulo] = !h.hasAttribute("data-gp-plegado");
-            try { localStorage.setItem("gpMenuEstado", JSON.stringify(p)); }
+            let g;
+            try { g = JSON.parse(localStorage.getItem("gpMenuEstado")) || {}; }
+            catch (x) { g = window.__gpMenuEstado || {}; }
+            if (g.sesion !== window.__gpSesion) g = {sesion: window.__gpSesion, modulos: {}};
+            g.modulos = g.modulos || {};
+            g.modulos[h.dataset.gpModulo] = !h.hasAttribute("data-gp-plegado");
+            try { localStorage.setItem("gpMenuEstado", JSON.stringify(g)); }
             catch (x) { /* sin almacenamiento: no se recuerda, pero se pliega igual */ }
-            window.__gpMenuEstado = p;
+            window.__gpMenuEstado = g;
             if (window.__gpMenu) window.__gpMenu();
         }, true);`;
         doc.head.appendChild(s);
@@ -323,7 +329,8 @@ def traducir():
             const abierta = enlaces.some(s => s.querySelector("[data-gp-activa]")
                                          && !s.querySelector('a[href$="/mi-trabajo"]'));
             const m = h.dataset.gpModulo;
-            const plegado = m in guardado ? guardado[m] : !abierta;
+            // al entrar todos recogidos (tambien el de la pagina abierta)
+            const plegado = m in guardado ? guardado[m] : true;
             if (plegado !== h.hasAttribute("data-gp-plegado"))
                 plegado ? h.setAttribute("data-gp-plegado", "") : h.removeAttribute("data-gp-plegado");
             enlaces.forEach(s => {
@@ -386,7 +393,21 @@ def traducir():
                                                    characterData: true});
     </script>""" % (json.dumps(TRADUCCIONES, ensure_ascii=False), json.dumps(MESES_EN),
                     json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR),
-                    json.dumps(MODULOS_MENU, ensure_ascii=False)), height=0)
+                    json.dumps(MODULOS_MENU, ensure_ascii=False),
+                    json.dumps(_sesion_menu())), height=0)
+
+
+def _sesion_menu():
+    """Identificador de esta entrada en la aplicacion para el estado del menu: cambia con cada
+    sesion nueva de Streamlit y cada vez que alguien inicia sesion (al entrar, el menu sale
+    con todos los modulos recogidos)."""
+    import secrets
+    import streamlit as st
+    usuario = st.session_state.get("usuario")
+    if "gp_menu_sesion" not in st.session_state or             st.session_state.get("gp_menu_usuario") is not usuario:
+        st.session_state.gp_menu_sesion = secrets.token_hex(8)
+        st.session_state.gp_menu_usuario = usuario
+    return st.session_state.gp_menu_sesion
 
 
 def _b64(ruta):

@@ -219,7 +219,7 @@ def estudio_de(ruta: Path):
             e.ap_omie[mo.clave_ap(mo.SISTEMA_PH, cal)] = {
                 m: [pa.cell(PHA0 + ci * 12 + m - 1, 11 + p).value for p in range(6)]
                 for m in range(1, 13)}
-    hojas = [rs.cell(r, 2).value for r in range(9, 30) if rs.cell(r, 2).value]
+    hojas = [rs.cell(r, 2).value for r in range(9, 40) if rs.cell(r, 2).value]
     guardados = {}
     for i, h in enumerate(hojas):
         if h not in wb.sheetnames:

@@ -171,12 +171,15 @@ class Oferta:
     coste_click: float = 0.0               # €/MWh cerrado
     cierres: list = field(default_factory=list)              # [Cierre]
     precios: dict = field(default_factory=dict)              # {grupo: [PreciosAnio por año]}
+    textos: dict = field(default_factory=dict)               # importes tal y como se escribieron
     grupos_propios: list = field(default_factory=list)       # [GrupoPropio]
     asignacion: dict = field(default_factory=dict)           # {cups: grupo propio}
     excluidos: list = field(default_factory=list)            # CUPS que no entran
     apuntamientos_propios: dict = field(default_factory=dict)   # {"Península|6P": {mes: [6]}}
     condiciones: dict = field(default_factory=dict)          # validez, pago, garantías...
     notas: str = ""
+    origen_catalogo: dict = field(default_factory=dict)      # {id, version, nombre} si viene
+                                                             # del catálogo de ofertas
 
     @property
     def indexada(self) -> bool:
