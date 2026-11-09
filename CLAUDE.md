@@ -15,8 +15,24 @@ pago. La factura y la curva no salen del PC.
 
 `inicio.py` es la entrada única: configuración de página, estilo, acceso
 (`paginas.acceso`), barra de usuario y menú `st.navigation` por grupos:
-- **Seguimiento y Control** (`seguimiento/`, primer grupo del menú; «Cuadro de seguimiento»
-  es la página por defecto). Sustituye al Excel combinado de cuadros de seguimiento, al Excel de
+- **Mi espacio** (`mi_espacio/`, primer grupo; «Mi panel» es la página de entrada). Vista
+  personal según el **rol** del usuario (`usuarios.rol`: Técnico, Auxiliar o ambos; sus
+  suministros, por la tabla del equipo de Seguimiento `sgc_equipo.usuario`). Paquete
+  `mi_espacio` (no `panel`: choca con la librería HoloViz Panel de Anaconda).
+  - `datos.py` (sin Streamlit): fecha clave de cada licitación (lanzamiento previsto > denuncia
+    > fin − margen), semáforo, licitación = cliente + fecha clave, estado cruzando CUPS con
+    solicitudes y análisis, carga por mes y técnico, informes por vencer y facturas pendientes
+    según la periodicidad (misma regla M+2 que `seguimiento/retraso.py`; un mes vacío solo
+    cuenta si el suministro tiene estados ese año), calendario, ficha de cliente, bloques del
+    panel y avisos.
+  - `paginas.py`: Mi panel (bloques personalizables por usuario: cuáles, orden, filas,
+    umbrales propios y qué suma el contador del menú), Próximas licitaciones (gráficas
+    Altair, acciones «Crear solicitud» / «Nuevo análisis» / «Estudio de potencia» con los
+    CUPS), Ficha de cliente, Calendario y los umbrales generales (Administración).
+  - Preferencias de cada usuario en la tabla `preferencias` (panel, umbrales, contador,
+    favoritos, filtros); umbrales generales en `sgc_ajustes["panel_umbrales"]`. Favoritos:
+    estrella ☆ en la cabecera de cada página y accesos en la barra lateral.
+- **Seguimiento y Control** (`seguimiento/`). Sustituye al Excel combinado de cuadros de seguimiento, al Excel de
   contactos de envío y a los programas de escritorio de envío de informes y de avisos de
   incidencias. **Todos sus datos son confidenciales**: solo en la base de datos local, nunca en
   el código ni en GitHub; las pruebas usan un Excel ficticio (`tests/test_seguimiento.py`).

@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS analisis_ofertas (
     mejor TEXT, ahorro REAL, estado TEXT NOT NULL, actualizado TEXT, actualizado_por TEXT,
     datos TEXT NOT NULL, curvas BLOB, excel BLOB, pdf BLOB);
 CREATE INDEX IF NOT EXISTS ix_ao_solicitud ON analisis_ofertas(id_solicitud);
+CREATE TABLE IF NOT EXISTS preferencias (
+    usuario TEXT NOT NULL, clave TEXT NOT NULL, valor TEXT, actualizado TEXT,
+    PRIMARY KEY (usuario, clave));
 CREATE TABLE IF NOT EXISTS catalogo_ofertas (
     id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, usuario TEXT,
     comercializadora TEXT NOT NULL, nombre TEXT NOT NULL, modalidad TEXT, duracion INTEGER,
@@ -173,6 +176,8 @@ def _migrar(con):
         con.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
     if "supervisor" not in columnas:
         con.execute("ALTER TABLE usuarios ADD COLUMN supervisor INTEGER NOT NULL DEFAULT 0")
+    if "rol" not in columnas:
+        con.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT")
     if "obs" not in {r["name"] for r in con.execute("PRAGMA table_info(sgc_cambios_gemweb)")}:
         con.execute("ALTER TABLE sgc_cambios_gemweb ADD COLUMN obs TEXT")
 
@@ -238,8 +243,22 @@ def validar_clave(clave):
     return None
 
 
+ROLES = ("Técnico", "Auxiliar", "Técnico y auxiliar")
+
+
+def _rol(rol):
+    """Rol válido (vacío o desconocido = Técnico)."""
+    return rol if rol in ROLES else ROLES[0]
+
+
+def roles_de(rol):
+    """{"Técnico", "Auxiliar"} que tiene ese rol."""
+    rol = _rol(rol)
+    return {r for r in ("Técnico", "Auxiliar") if r.lower() in rol.lower()}
+
+
 def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email=None,
-                  supervisor=False):
+                  supervisor=False, rol=None):
     usuario = usuario.strip().lower()
     if not usuario or not nombre.strip():
         raise ValueError("Usuario y nombre son obligatorios.")
@@ -251,9 +270,9 @@ def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email
         if con.execute("SELECT 1 FROM usuarios WHERE usuario=?", (usuario,)).fetchone():
             raise ValueError("Ya existe el usuario %s." % usuario)
         con.execute("INSERT INTO usuarios (usuario, nombre, sal, clave, admin, activo, "
-                    "cambiar_clave, creado, email, supervisor) VALUES (?,?,?,?,?,1,?,?,?,?)",
+                    "cambiar_clave, creado, email, supervisor, rol) VALUES (?,?,?,?,?,1,?,?,?,?,?)",
                     (usuario, nombre.strip(), sal, _hash(clave, sal), int(admin),
-                     int(cambiar_clave), _ahora(), _email(email), int(supervisor)))
+                     int(cambiar_clave), _ahora(), _email(email), int(supervisor), _rol(rol)))
 
 
 def comprobar(usuario, clave):
@@ -280,6 +299,7 @@ def comprobar(usuario, clave):
                         "ultimo_acceso=? WHERE usuario=?", (_ahora(), usuario))
             datos = {k: u[k] for k in ("usuario", "nombre", "admin", "supervisor",
                                        "cambiar_clave", "email")}
+            datos["rol"] = _rol(u["rol"])
     if error:                    # fuera del with: el contador de fallos ya esta guardado
         if u is None:            # usuario que no existe: no se anota a su nombre
             registrar_actividad(None, "Acceso", "Acceso fallido",
@@ -305,9 +325,8 @@ def cambiar_clave(usuario, nueva, obligar_cambio=False):
 def listar_usuarios():
     with _con() as con:
         return [dict(r) for r in con.execute(
-            "SELECT usuario, nombre, email, admin, supervisor, activo, creado, ultimo_acceso "
-            "FROM usuarios "
-            "ORDER BY nombre")]
+            "SELECT usuario, nombre, email, admin, supervisor, rol, activo, creado, "
+            "ultimo_acceso FROM usuarios ORDER BY nombre")]
 
 
 def _email(email):
@@ -321,7 +340,7 @@ def _email(email):
 
 
 def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None,
-                       supervisor=None):
+                       supervisor=None, rol=None):
     """Si el cambio dejara sin administradores activos, se deshace y da error. email="" lo
     borra; None lo deja como esta."""
     if nombre is not None and not nombre.strip():
@@ -333,6 +352,8 @@ def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None
             con.execute("UPDATE usuarios SET email=? WHERE usuario=?", (email or None, usuario))
         if nombre is not None:
             con.execute("UPDATE usuarios SET nombre=? WHERE usuario=?", (nombre.strip(), usuario))
+        if rol is not None:
+            con.execute("UPDATE usuarios SET rol=? WHERE usuario=?", (_rol(rol), usuario))
         if admin is not None:
             con.execute("UPDATE usuarios SET admin=? WHERE usuario=?", (int(admin), usuario))
         if supervisor is not None:
@@ -983,6 +1004,32 @@ def ajuste_sgc(clave, defecto=None):
 def guardar_ajuste_sgc(clave, valor):
     with _con(escribir=True) as con:
         con.execute("INSERT OR REPLACE INTO sgc_ajustes VALUES (?,?)", (clave, valor))
+
+
+# ------------------------------------------------------------------- preferencias de usuario
+def leer_preferencia(usuario, clave, defecto=None):
+    """Valor (JSON) que el usuario guardó para esa clave (panel, favoritos, filtros...)."""
+    with _con() as con:
+        r = con.execute("SELECT valor FROM preferencias WHERE usuario=? AND clave=?",
+                        (usuario, clave)).fetchone()
+    if not r or r["valor"] is None:
+        return defecto
+    try:
+        return json.loads(r["valor"])
+    except ValueError:
+        return defecto
+
+
+def guardar_preferencia(usuario, clave, valor):
+    with _con(escribir=True) as con:
+        con.execute("INSERT OR REPLACE INTO preferencias (usuario, clave, valor, actualizado) "
+                    "VALUES (?,?,?,?)",
+                    (usuario, clave, json.dumps(valor, ensure_ascii=False, default=str), _ahora()))
+
+
+def borrar_preferencia(usuario, clave):
+    with _con(escribir=True) as con:
+        con.execute("DELETE FROM preferencias WHERE usuario=? AND clave=?", (usuario, clave))
 
 
 def reemplazar_sgc(suministros, estados, filas, listas, equipo, usuario):

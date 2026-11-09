@@ -1172,6 +1172,7 @@ def pedir_cups() -> list:
             "Pega los CUPS (uno por línea, o separados por comas/espacios)",
             height=140,
             placeholder="ES0000000000000000XX\nES0000000000000001XX0F\n...",
+            key="gw_cups_texto",        # «Mi espacio» la rellena con los CUPS de una licitación
         )
         if texto_cups:
             # Acepta separadores: salto de línea, coma, punto y coma, espacio, tabulador

@@ -29,7 +29,7 @@ ICONO = config.RECURSOS / "assets" / "icono.ico"
 COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}
 
-MODULOS_MENU = {"Seguimiento y Control": "seguimiento", "Revisión de SSAA": "ssaa",
+MODULOS_MENU = {"Mi espacio": "miespacio", "Seguimiento y Control": "seguimiento", "Revisión de SSAA": "ssaa",
                 "API de Gemweb": "gemweb", "Ofertas": "ofertas",
                 "Estudio de potencia": "potencia",
                 "Supervisión": "supervision", "Administración": "admin"}
@@ -49,6 +49,8 @@ def _icono(trazos):
 # inicio.py con su clave (MODULOS_MENU) segun su texto, no su posicion: la estructura del
 # menu cambia entre versiones de Streamlit. Sin marca no hay icono (nunca un recuadro).
 ICONOS_MODULO = {
+    "miespacio": _icono("<path d='M3 11l9-7 9 7'/><path d='M5 10v10h14V10'/>"
+                        "<path d='M10 20v-6h4v6'/>"),
     "seguimiento": _icono("<rect x='3' y='5' width='18' height='16' rx='2'/>"
                           "<path d='M3 10h18M8 3v4M16 3v4M9 15l2 2 4-4'/>"),
     "ssaa": _icono("<path d='M5 21V3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5z'/>"
@@ -152,6 +154,7 @@ h3, .stMarkdown h3 {
     content: ""; flex: none; width: 18px; height: 18px;
     background: no-repeat center / contain;
 }
+[data-gp-modulo="miespacio"]::before { background-image: url("%(ico_miespacio)s"); }
 [data-gp-modulo="seguimiento"]::before { background-image: url("%(ico_seguimiento)s"); }
 [data-gp-modulo="ssaa"]::before { background-image: url("%(ico_ssaa)s"); }
 [data-gp-modulo="gemweb"]::before { background-image: url("%(ico_gemweb)s"); }

@@ -24,6 +24,7 @@ from analisis_ofertas import paginas as analisis
 from analisis_ofertas import paginas_regulados as regulados
 from estudio_potencia import paginas as potencia
 from ofertas import paginas as ofertas
+from mi_espacio import paginas as mi_espacio
 from seguimiento import envios
 from seguimiento import paginas as seguimiento
 from supervision import paginas as supervision
@@ -44,8 +45,11 @@ def _pagina(funcion, titulo, subtitulo, ruta, modulo, default=False):
 
     @functools.wraps(funcion)
     def mostrar():
-        estilo.cabecera(titulo, subtitulo)
-        estilo.registrar_pagina(titulo, modulo)
+        c1, c2 = st.columns([12, 1], vertical_alignment="center")
+        with c1:
+            estilo.cabecera(titulo.split(" · ")[0], subtitulo)
+        _estrella(c2, ruta)
+        estilo.registrar_pagina(titulo.split(" · ")[0], modulo)
         if aviso:
             st.warning("Fallo de la API de Gemweb: " + aviso, icon=":material/warning:")
         funcion()
@@ -53,8 +57,20 @@ def _pagina(funcion, titulo, subtitulo, ruta, modulo, default=False):
                    icon=":material/warning:" if aviso else None)
 
 
+def _estrella(contenedor, ruta):
+    """☆/★ para añadir o quitar la página de los favoritos del usuario."""
+    favs = almacen.leer_preferencia(usuario["usuario"], "favoritos", []) or []
+    es = ruta in favs
+    if contenedor.button("★" if es else "☆", key="fav_" + ruta,
+                         help="Quitar de mis favoritos" if es else "Añadir a mis favoritos"):
+        favs = [r for r in favs if r != ruta] if es else favs + [ruta]
+        almacen.guardar_preferencia(usuario["usuario"], "favoritos", favs)
+        st.rerun()
+
+
 SUB_SSAA = "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)"
 SUB_GEMWEB = "Consultas a la API de Gemweb"
+MI_ESPACIO = "Mi espacio"
 SEGUIMIENTO, SSAA, GEMWEB, OFERTAS, POTENCIA, SUPERVISION, ADMIN = (
     "Seguimiento y Control", "Revisión de SSAA", "API de Gemweb", "Ofertas",
     "Estudio de potencia", "Supervisión", "Administración")
@@ -62,10 +78,24 @@ SEGUIMIENTO, SSAA, GEMWEB, OFERTAS, POTENCIA, SUPERVISION, ADMIN = (
 SOLICITUD, ANALISIS = "Solicitud de ofertas", "Análisis de ofertas"
 SUB_ANALISIS = "Valoración de las ofertas recibidas frente al contrato actual"
 SUB_SGC = "Seguimiento de facturas e informes de los clientes"
+_avisos = mi_espacio.contador()
 menu = {
+    MI_ESPACIO: [
+        _pagina(mi_espacio.pagina_mi_panel, "Mi panel" + (f" · {_avisos}" if _avisos else ""),
+                "Lo tuyo de un vistazo: lo urgente, lo pendiente y tus atajos", "mi-panel",
+                MI_ESPACIO, default=True),
+        _pagina(mi_espacio.pagina_licitaciones, "Próximas licitaciones",
+                "Contratos por fecha de lanzamiento, denuncia o fin, con su estado y la carga "
+                "de trabajo por meses", "licitaciones", MI_ESPACIO),
+        _pagina(mi_espacio.pagina_ficha, "Ficha de cliente",
+                "Todo lo de un cliente o CUPS en la aplicación", "ficha-cliente", MI_ESPACIO),
+        _pagina(mi_espacio.pagina_calendario, "Calendario de vencimientos",
+                "Denuncias, fines de contrato, plazos de ofertas, catálogo e informes",
+                "calendario", MI_ESPACIO),
+    ],
     SEGUIMIENTO: [
         _pagina(seguimiento.pagina_cuadro, "Cuadro de seguimiento", SUB_SGC, "seguimiento",
-                SEGUIMIENTO, default=True),
+                SEGUIMIENTO),
     ] + [
         _pagina(funcion, titulo, subtitulo, ruta, SEGUIMIENTO)
         for funcion, titulo, subtitulo, ruta in (
@@ -158,6 +188,8 @@ if usuario["admin"]:
         _pagina(regulados.pagina_datos_regulados, "Datos regulados",
                 "Peajes, cargos, impuestos y parámetros de mercado de cada año",
                 "datos-regulados", ADMIN),
+        _pagina(mi_espacio.seccion_ajustes, "Ajustes de Mi espacio",
+                "Umbrales generales del semáforo y de los avisos", "admin-mi-espacio", ADMIN),
     ]
 # «Mi trabajo»: el panel con lo del propio usuario. Va sin titulo de modulo y su enlace se
 # oculta (estilo.CSS); se abre con el boton de la barra lateral
@@ -165,8 +197,17 @@ MI_TRABAJO = _pagina(supervision.pagina_mi_trabajo, "Mi trabajo",
                      "Tu trabajo guardado y tu actividad en la plataforma", "mi-trabajo",
                      supervision.MI_TRABAJO)
 menu[""] = [MI_TRABAJO]
+# páginas por ruta: para abrirlas desde «Mi espacio» y para los favoritos
+mi_espacio.PAGINAS.clear()
+mi_espacio.PAGINAS.update({p.url_path: p for paginas_ in menu.values() for p in paginas_})
 
 with st.sidebar:
+    _favs = [r for r in (almacen.leer_preferencia(usuario["usuario"], "favoritos", []) or [])
+             if r in mi_espacio.PAGINAS]
+    if _favs:
+        st.caption("Mis favoritos")
+        for _r in _favs:
+            st.page_link(mi_espacio.PAGINAS[_r], icon=":material/star:")
     if st.button("Mi trabajo", icon=":material/person:", use_container_width=True,
                  help="Todo lo que has hecho en la plataforma: trabajo guardado y actividad"):
         st.switch_page(MI_TRABAJO)

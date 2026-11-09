@@ -270,6 +270,13 @@ def _referencias(c):
 
 
 # ------------------------------------------------------------------- usuarios
+AYUDA_ROL = ("Decide qué sale por defecto en «Mi panel» (cada usuario puede cambiarlo).  \n"
+             "**Técnico**: licitaciones, solicitudes, análisis, catálogo y fechas de fin y "
+             "denuncia de los contratos.  \n**Auxiliar**: estados del mes, facturas, informes y "
+             "contactos de los clientes.  \nSus suministros salen de la tabla del equipo de "
+             "Seguimiento y Control (Administración → Seguimiento y Control → Equipo).")
+
+
 def pagina_usuarios():
     if not ss.usuario["admin"]:
         st.warning("Solo los administradores pueden gestionar usuarios.")
@@ -278,7 +285,8 @@ def pagina_usuarios():
     st.dataframe(pd.DataFrame([{
         "Usuario": u["usuario"], "Nombre": u["nombre"], "Email": u.get("email") or "",
         "Administrador": "Sí" if u["admin"] else "",
-        "Supervisor": "Sí" if u.get("supervisor") else "", "Activo": "Sí" if u["activo"] else "No",
+        "Supervisor": "Sí" if u.get("supervisor") else "",
+        "Rol": almacen._rol(u.get("rol")), "Activo": "Sí" if u["activo"] else "No",
         "Alta": pd.to_datetime(u["creado"]),
         "Último acceso": pd.to_datetime(u["ultimo_acceso"]) if u["ultimo_acceso"] else None}
         for u in usuarios]), hide_index=True, use_container_width=True,
@@ -308,11 +316,12 @@ def pagina_usuarios():
                                        "de ofertas).")
             admin = st.checkbox("Administrador (puede gestionar usuarios)")
             supervisor = st.checkbox("Supervisor (ve el panel del trabajo de todo el equipo)")
+            rol = st.selectbox("Rol", almacen.ROLES, help=AYUDA_ROL)
             if st.form_submit_button("Dar de alta", type="primary"):
                 clave = almacen.clave_temporal()
                 try:
                     almacen.crear_usuario(usuario, nombre, clave, admin=admin, cambiar_clave=True,
-                                          email=email, supervisor=supervisor)
+                                          email=email, supervisor=supervisor, rol=rol)
                 except ValueError as e:
                     st.error(str(e))
                 else:
@@ -328,13 +337,18 @@ def pagina_usuarios():
                                   key="nombre_%s" % elegido)
             nuevo_email = st.text_input("Email", value=u.get("email") or "", autocomplete="off",
                                         key="email_%s" % elegido)
-            if st.form_submit_button("Guardar nombre y email"):
+            nuevo_rol = st.selectbox("Rol", almacen.ROLES,
+                                     index=almacen.ROLES.index(almacen._rol(u.get("rol"))),
+                                     key="rol_%s" % elegido, help=AYUDA_ROL)
+            if st.form_submit_button("Guardar nombre, email y rol"):
                 try:
-                    almacen.actualizar_usuario(elegido, nombre=nuevo, email=nuevo_email)
+                    almacen.actualizar_usuario(elegido, nombre=nuevo, email=nuevo_email,
+                                               rol=nuevo_rol)
                 except ValueError as e:
                     st.error(str(e))
                 else:
                     if elegido == ss.usuario["usuario"]:
+                        ss.usuario["rol"] = nuevo_rol
                         ss.usuario["nombre"] = nuevo.strip()
                         ss.usuario["email"] = nuevo_email.strip().lower() or None
                     st.rerun()
