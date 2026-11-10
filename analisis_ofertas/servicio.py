@@ -412,7 +412,7 @@ def controles(e: mo.Estudio, res: dict = None) -> list:
 # ------------------------------------------------------------------- almacen
 def resumen(e: mo.Estudio, res: dict, estado: str = "En curso", ref: str = "") -> dict:
     filas = resultados.comparativa(res)
-    mejor = min((f for f in filas if f["media_anual"]), key=lambda f: f["media_anual"],
+    mejor = min((f for f in filas if f["media_anual"]), key=resultados.orden,
                 default=None)
     return {"id_solicitud": e.id_solicitud, "ref": ref, "cliente": e.cliente,
             "cups": [s.cups for s in e.suministros if s.activo],

@@ -371,6 +371,16 @@ class Duraciones(unittest.TestCase):
         self.assertEqual(sorted(f["ranking"] for f in filas), [1, 2])
         self.assertEqual(resultados.mejores(filas)["Fijo"]["nombre"], "A")
 
+    def test_ranking_por_variacion_y_no_por_coste_anual(self):
+        """Una oferta más larga puede tener menor coste anual (promedia años baratos) y ahorrar
+        menos frente al contrato actual en sus mismos meses: manda el ahorro."""
+        filas = [{"nombre": "24 m", "tipo": "Indexado", "media_anual": 522.0, "variacion": -0.0154},
+                 {"nombre": "36 m", "tipo": "Indexado", "media_anual": 489.0, "variacion": -0.0144},
+                 {"nombre": "sin actual", "tipo": "Indexado", "media_anual": 400.0, "variacion": None}]
+        self.assertEqual([f["nombre"] for f in sorted(filas, key=resultados.orden)],
+                         ["24 m", "36 m", "sin actual"])
+        self.assertEqual(resultados.mejores(filas)["Indexado"]["nombre"], "24 m")
+
 
 class Grupos(unittest.TestCase):
     def test_territoriales_propios_y_excluidos(self):

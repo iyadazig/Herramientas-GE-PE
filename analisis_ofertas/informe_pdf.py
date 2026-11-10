@@ -9,8 +9,8 @@ Páginas:
        tarifa y suministros de mayor consumo (multipunto). Con quién ha hecho el estudio y su
        email.
     2. «Resumen del estudio de ofertas de renovación»: igual que la hoja «Informe» de la plantilla
-       (tablas de precio fijo e indexado con el contrato actual, la oferta mínima, la variación y
-       el ranking; cuadro del precio de mercado por trimestre de cada año y notas).
+       (tablas de precio fijo e indexado con el contrato actual, la mejor oferta, la variación y
+       el ranking por la variación; cuadro del precio de mercado por trimestre de cada año y notas).
     3. «Condiciones de las ofertas».
 Cada página va sobre el papel de GE&PE con su marca de agua (assets/papel_<orientación>_<n>.pdf):
 los datos quedan entre el logo y el «GE&PE» gris, sin pisarlos. En cada orientación se usa el
@@ -151,22 +151,22 @@ def _realizado(tecnico: dict, fecha: dt.date, ancho: float) -> Table:
 
 # ------------------------------------------------------------------- resumen de ofertas
 def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: float) -> Table:
-    """Tabla como la de la hoja «Informe» (contrato actual · ofertas · oferta mínima)."""
+    """Tabla como la de la hoja «Informe» (contrato actual · ofertas · mejor oferta)."""
     s_cab = _st("cab", 7.5, True, alin=1)
     s_val = _st("val", 8)
     s_lbl = _st("lbl", 8, True)
     s_gris = _st("gris", 6.5, color=C["gris"], cursiva=True)
     filas = filas + [None] * (n_cols - len(filas))
     validas = [f for f in filas if f]
-    minimo = min(validas, key=lambda f: f["media_anual"]) if validas else None
-    orden = sorted(validas, key=lambda f: f["media_anual"])
-    rank = {f["nombre"]: i for i, f in enumerate(orden, 1)}
+    # ranking y mejor oferta: por la variación frente al contrato actual en los mismos meses
+    minimo = min(validas, key=resultados.orden) if validas else None
+    rank = {f["nombre"]: i for i, f in enumerate(sorted(validas, key=resultados.orden), 1)}
     variacion = lambda f: f["variacion"]
     actual_txt = f"Contrato actual<br/>{escape(act['nombre'])}"
     datos = [
         [Paragraph(actual_txt, _st("ac", 8, True, colors.white)),
          Paragraph(escape(titulo), _st("tt", 9, True, colors.white))] + [""] * (n_cols - 1)
-        + [Paragraph("Oferta mínima", _st("om", 9, True, colors.white))],
+        + [Paragraph("Mejor oferta", _st("om", 9, True, colors.white))],
         [""] + [Paragraph(cabecera_oferta(f), s_cab) if f else Paragraph("-", s_cab) for f in filas]
         + [""],
         [Paragraph(_eur(act["total"], " €/año"), s_val)]
@@ -279,8 +279,9 @@ def _notas(e: mo.Estudio, anios: list, medias: list) -> list:
         "€/año: coste medio anual durante la duración de cada oferta. La variación se calcula frente al "
         "coste del contrato actual en esos mismos meses (fila «Contrato actual en el mismo periodo»). "
         "La columna del contrato actual muestra su primer año.",
-        "Las ofertas con cabecera naranja tienen una duración superior a 12 meses. El ranking se "
-        "establece dentro de cada tabla."]
+        "Las ofertas con cabecera naranja tienen una duración superior a 12 meses. El ranking y la "
+        "mejor oferta de cada tabla se establecen por la variación frente al contrato actual en el "
+        "mismo periodo."]
 
 
 def _pagina_informe(e, res, ref, n_cols, ancho_of, ancho_util, con_logo=True) -> list:

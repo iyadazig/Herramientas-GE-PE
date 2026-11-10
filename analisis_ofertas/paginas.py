@@ -1546,7 +1546,7 @@ def _resultados(e: mo.Estudio, res: dict):
                  | {"€/kWh": st.column_config.NumberColumn(format="%.4f"),
                     "Variación": st.column_config.NumberColumn(format="%+.2f %%")})
     for t, f in resultados.mejores(filas).items():
-        st.markdown(f"**Oferta mínima ({t.lower()}):** {f['comercializadora']} "
+        st.markdown(f"**Mejor oferta ({t.lower()}):** {f['comercializadora']} "
                     f"{f['duracion']} meses · {informes.eur(f['media_anual'])} €/año "
                     f"({informes.pct(f['variacion'])} frente al contrato actual)")
     t_merc, t_esc, t_ap, t_rondas, t_cups = st.tabs(

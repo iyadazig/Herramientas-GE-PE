@@ -47,9 +47,9 @@ def conclusiones(filas: list) -> list:
                       "periodo.")
     mejores = resultados.mejores(filas)
     for t, f in mejores.items():
-        salida.append(f"La oferta {('a precio fijo' if t == 'Fijo' else 'indexada')} de menor "
-                      f"coste anual es {f['comercializadora']} a {f['duracion']} meses: "
-                      f"{informes.eur(f['media_anual'])} €/año.")
+        salida.append(f"La mejor oferta {('a precio fijo' if t == 'Fijo' else 'indexada')} frente "
+                      f"al contrato actual es {f['comercializadora']} a {f['duracion']} meses: "
+                      f"{informes.eur(f['media_anual'])} €/año ({informes.pct(f['variacion'])}).")
     cortas = [f for f in con_dato if f["tipo"] == "Fijo" and f["duracion"] <= 12]
     if cortas and all(f["variacion"] > 0 for f in cortas):
         lo, hi = min(f["variacion"] for f in cortas), max(f["variacion"] for f in cortas)

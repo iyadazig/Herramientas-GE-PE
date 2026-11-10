@@ -46,8 +46,7 @@ def comparativa(res: dict) -> list:
             "variacion": (r.media_anual / act - 1) if act else None,
             "incidencias": len(r.incidencias), "apuntamiento_cliente": len(r.apuntamiento_cliente),
             "inicio": r.meses[0] if r.meses else None})
-    con_variacion = sorted((f for f in filas if f["variacion"] is not None),
-                           key=lambda f: f["variacion"])
+    con_variacion = sorted((f for f in filas if f["variacion"] is not None), key=orden)
     for n, f in enumerate(con_variacion, start=1):
         f["ranking"] = n
     for f in filas:
@@ -55,13 +54,21 @@ def comparativa(res: dict) -> list:
     return filas
 
 
+def orden(f: dict):
+    """Criterio del ranking y de la mejor oferta: la variación frente al contrato actual en los
+    mismos meses. Con duraciones distintas el coste medio anual no es comparable (una oferta a 36
+    meses promedia años más baratos que una a 24). Sin contrato actual, el coste medio anual."""
+    v = f.get("variacion")
+    return (v is None, v if v is not None else 0.0, f.get("media_anual") or 0.0)
+
+
 def mejores(filas: list) -> dict:
-    """{"Fijo": fila, "Indexado": fila} de menor coste medio anual."""
+    """{"Fijo": fila, "Indexado": fila} con más ahorro frente al contrato actual (en %)."""
     salida = {}
     for t in ("Fijo", "Indexado"):
         de_tipo = [f for f in filas if f["tipo"] == t and f["media_anual"]]
         if de_tipo:
-            salida[t] = min(de_tipo, key=lambda f: f["media_anual"])
+            salida[t] = min(de_tipo, key=orden)
     return salida
 
 
