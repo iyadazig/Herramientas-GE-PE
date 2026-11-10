@@ -369,18 +369,61 @@ class Info:
 CONCEPTOS = ["Potencia", "Energía / mercado", "Peajes y cargos energía", "SSAA",
              "Otros (FNEE, GdO, fee)", "K / imp. municipal", "Impuesto eléctrico",
              "Servicios y alquiler"]
+# precio fijo: (título de la columna, clave, bloque de precios unitarios; None = se calcula aparte)
+COLS_FIJO = [("Potencia", "POT", "POTENCIA €/kW·mes"), ("Energía / mercado", "ENER", "ENERGÍA €/kWh"),
+             ("Peajes y cargos energía", "PEAJ", "PEAJES €/kWh"), ("SSAA", "SSAA", "SSAA €/kWh"),
+             ("Otros (FNEE, GdO, fee)", "OTROS", "OTROS €/kWh"), ("K / imp. municipal", "K", None),
+             ("Impuesto eléctrico", "IEE", None), ("Servicios y alquiler", "SERV", None)]
+# indexados: una columna por concepto de la fórmula (los términos de energía, ya elevados a
+# pérdidas en Pass-Through y multiplicados por el Ci en Pass-Pool)
+BLOQUES_IDX = [("TÉRMINO B €/kWh", "Energía fijo"), ("OMIE €/kWh", "Precio OMIE"),
+               ("CAPACIDAD €/kWh", "Pagos por capacidad"), ("OM €/kWh", "Pago O.M."),
+               ("OS €/kWh", "Pago O.S."), ("DESVÍOS €/kWh", "Desvíos / CC"), ("SRAD €/kWh", "SRAD")]
+BLOQUES_OTROS = [("FNEE €/kWh", "FNEE"), ("CG €/kWh", "CG (fee)"), ("GDO €/kWh", "GdO")]
+# claves de los conceptos sujetos al K / impuesto municipal (energía y otros; el SSAA si se elige)
+K_BASE = {"ENER", "OTROS", "OMIE", "TÉRMINO B", "CAPACIDAD", "OM", "OS", "DESVÍOS", "SRAD", "FNEE",
+          "CG", "GDO"}
+
+
+def columnas_oferta(o: mo.Oferta, hay_b: bool) -> list:
+    """Columnas de € por mes de la hoja de una oferta: (título, clave, bloque unitario)."""
+    if not o.indexada:
+        return COLS_FIJO
+    usa = {"TÉRMINO B": hay_b, "CAPACIDAD": o.pagos_capacidad, "OM": o.om, "OS": o.os,
+           "DESVÍOS": bool(o.desvios), "SRAD": o.srad, "FNEE": o.fnee != mo.FNEE_INCLUIDO,
+           "CG": bool(o.fee), "GDO": bool(o.gdo)}
+    clave = lambda bloque: bloque.split(" €")[0]
+    cols = [("ATR potencia", "POT", "POTENCIA €/kW·mes")]
+    if not o.atr_incluido:
+        cols.append(("ATR energía", "PEAJ", "PEAJES €/kWh"))
+    for bloque, titulo in BLOQUES_IDX:
+        k = clave(bloque)
+        if k == "OMIE":
+            cols.append(("Precio OMIE" + (" y cierres" if o.cierres_tipo != mo.SIN_CIERRES else ""),
+                         k, bloque))
+            if o.ssaa_modo != mo.SSAA_INCLUIDOS:
+                cols.append(("Costes de ajuste (SSAA)", "SSAA", "SSAA €/kWh"))
+        elif usa[k]:
+            cols.append((titulo, k, bloque))
+    for bloque, titulo in BLOQUES_OTROS:
+        if usa[clave(bloque)]:
+            cols.append((titulo, clave(bloque), bloque))
+    if o.k:
+        cols.append(("Impuesto municipal", "K", None))
+    return cols + [("IEE", "IEE", None), ("Servicios y alquiler", "SERV", None)]
 
 
 def _explicacion(o: mo.Oferta) -> str:
     if o.modalidad == mo.FIJO:
         return ("Energía = precio fijo del periodo / unidad × (1 − descuento)"
                 + ("" if o.atr_incluido else " + peajes y cargos de energía"))
-    regul = "regulados (pagos por capacidad, OS, OM, SRAD y desvíos que añada la oferta)"
+    regul = "pagos por capacidad + OM + OS + desvíos + SRAD (los que añada la oferta)"
     if o.modalidad == mo.PASS_POOL:
         ap = "media mensual (sin apuntamiento)" if o.ci_media_mensual else "precio previsto × apuntamiento"
-        return f"Energía = [Ci × ({ap} + {regul}) + término B] / 1000"
-    return (f"Energía = [(precio previsto × apuntamiento + {regul}) × (1 + pérdidas) + término B] "
-            f"/ 1000")
+        return (f"Energía = Ci × ({ap} + {regul}) + término B. Cada concepto va en su columna, "
+                f"ya multiplicado por el Ci")
+    return (f"Energía = (precio previsto × apuntamiento + {regul}) × (1 + pérdidas) + término B. "
+            f"Cada concepto va en su columna, ya elevado a pérdidas")
 
 
 class HojaOferta:
@@ -461,6 +504,9 @@ class HojaOferta:
                 f += 1
             self.precios[g] = (ini, f - 1)
         fila = f + 1
+        hay_b = any(v for g in self.precios for y in range(1, ny + 1)
+                    for v in mo.seis(o.precios_grupo(g, y, grupos[g][0]).termino_b) if v)
+        self.cols = columnas_oferta(o, hay_b)
         # --- tablas de precios unitarios por grupo (y por CUPS con apuntamiento propio)
         self.tablas = {}
         bloques = []
@@ -484,7 +530,7 @@ class HojaOferta:
         self._totales(grupos)
         ws.column_dimensions["A"].width = 13
         ws.column_dimensions["B"].width = 11
-        for col in range(3, 70):
+        for col in range(3, 130):
             ws.column_dimensions[CL(col)].width = 11.5
         ws.column_dimensions["C"].width = 21
         ws.freeze_panes = "C6"
@@ -507,14 +553,17 @@ class HojaOferta:
         formula_om = all(abs(a - b) < 1e-12 for fa, fb in zip(ap_om.tolist(), est_om) for a, b in zip(fa, fb))
         formula_ss = all(abs(a - b) < 1e-12 for fa, fb in zip(ap_ss.tolist(), est_ss) for a, b in zip(fa, fb))
         tit = f"PRECIOS UNITARIOS — grupo {g}" + (f" (CUPS {cups}, apuntamiento de su curva)" if cups else "")
-        _titulo(ws, fila, tit, 1, 66, "azul")
+        _titulo(ws, fila, tit, 1, 66 + (54 if o.indexada else 0), "azul")
+        idx = o.indexada
         grupos_cab = [("Mes", 1), ("Fecha", 1), ("Año natural", 1), ("Año contrato", 1),
                       ("Mes natural", 1), ("Previsto €/MWh", 1), ("Mercado €/MWh", 1),
                       ("Cierres €/MWh", 1),
                       ("SSAA €/MWh", 1), ("FNEE €/MWh", 1), ("Apuntamiento OMIE", 6),
-                      ("Apuntamiento SSAA", 6), ("Pérdidas", 6), ("Regulados €/MWh", 6),
-                      ("ENERGÍA €/kWh", 6), ("PEAJES €/kWh", 6), ("SSAA €/kWh", 6),
-                      ("OTROS €/kWh", 6), ("POTENCIA €/kW·mes", 6), ("Clave tarifa", 1),
+                      ("Apuntamiento SSAA", 6), ("Pérdidas", 6)] + \
+                     ([(b, 6) for b, _ in BLOQUES_IDX] if idx else [("Regulados €/MWh", 6)]) + \
+                     [("ENERGÍA €/kWh", 6), ("PEAJES €/kWh", 6), ("SSAA €/kWh", 6)] + \
+                     ([(b, 6) for b, _ in BLOQUES_OTROS] if idx else []) + \
+                     [("OTROS €/kWh", 6), ("POTENCIA €/kW·mes", 6), ("Clave tarifa", 1),
                       ("Clave pérdidas", 1), ("Clave apuntamiento", 1)]
         col, cols = 1, {}
         for nom, n in grupos_cab:
@@ -570,19 +619,22 @@ class HojaOferta:
             fila_pr = f"MIN({anio_c},{pr1 - pr0 + 1})"
             for p in range(6):
                 aom, ass, per = P("Apuntamiento OMIE", p), P("Apuntamiento SSAA", p), P("Pérdidas", p)
-                reg = P("Regulados €/MWh", p)
                 _put(ws, f"{aom}{f}", ("=" + par.apunt(ka, p)) if formula_om else float(ap_om[k - 1][p]),
                      "0.0000", borde=True, fill=None if formula_om else "in")
                 _put(ws, f"{ass}{f}", ("=" + par.apunt(ka_ss, p, True)) if formula_ss else float(ap_ss[k - 1][p]),
                      "0.0000", borde=True, fill=None if formula_ss else "in")
                 _put(ws, f"{per}{f}", "=" + par.perdida(kp, p), "0.0%", borde=True)
                 yr = f"{L['Año natural']}{f}"
-                _put(ws, f"{reg}{f}",
-                     f"={c('Añade pagos por capacidad')}*{par.termino(kt, 2, p)}*1000"
-                     f"+{c('Añade SRAD')}*{par.termino(kt, 3, p)}*1000"
-                     f"+{c('Añade pago OS')}*{par.general(yr, 'F')}"
-                     f"+{c('Añade pago OM')}*{par.general(yr, 'E')}+{c('Desvíos (€/MWh, en barras)')}",
-                     EUR2, borde=True)
+                # regulados de mercado (€/MWh): cada uno por separado en los indexados
+                regs = {"CAPACIDAD": f"{c('Añade pagos por capacidad')}*{par.termino(kt, 2, p)}*1000",
+                        "SRAD": f"{c('Añade SRAD')}*{par.termino(kt, 3, p)}*1000",
+                        "OS": f"{c('Añade pago OS')}*{par.general(yr, 'F')}",
+                        "OM": f"{c('Añade pago OM')}*{par.general(yr, 'E')}",
+                        "DESVÍOS": c('Desvíos (€/MWh, en barras)')}
+                if not idx:
+                    reg = P("Regulados €/MWh", p)
+                    _put(ws, f"{reg}{f}", "=" + "+".join(regs[k_] for k_ in ("CAPACIDAD", "SRAD", "OS", "OM",
+                                                                           "DESVÍOS")), EUR2, borde=True)
                 b_cel = f"INDEX(${CL(9 + p)}${pr0}:${CL(9 + p)}${pr1},{fila_pr})"
                 ci_cel = f"INDEX(${CL(15 + p)}${pr0}:${CL(15 + p)}${pr1},{fila_pr})"
                 en_cel = f"INDEX(${CL(3 + p)}${pr0}:${CL(3 + p)}${pr1},{fila_pr})"
@@ -591,11 +643,18 @@ class HojaOferta:
                 cie_c = f"{L['Cierres €/MWh']}{f}"
                 if o.modalidad == mo.FIJO:
                     ener = f"={en_cel}/{c('Divisor de unidad')}*(1-{c('Descuento (fijo)')})"
-                elif o.modalidad == mo.PASS_POOL:
-                    apm = f"IF({c('Ci sobre la media mensual (PP)')}=1,1,{aom}{f})"
-                    ener = f"=({ci_cel}*({merc_c}*{apm}+{cie_c}+{reg}{f})+{b_aj})/1000"
                 else:
-                    ener = f"=(({merc_c}*{aom}{f}+{cie_c}+{reg}{f})*(1+{per}{f})+{b_aj})/1000"
+                    # Pass-Pool: × Ci; Pass-Through: elevado a pérdidas
+                    if o.modalidad == mo.PASS_POOL:
+                        apm = f"IF({c('Ci sobre la media mensual (PP)')}=1,1,{aom}{f})"
+                        fac, omie = ci_cel, f"({merc_c}*{apm}+{cie_c})"
+                    else:
+                        fac, omie = f"(1+{per}{f})", f"({merc_c}*{aom}{f}+{cie_c})"
+                    partes = {"OMIE": f"{omie}*{fac}/1000", "TÉRMINO B": f"{b_aj}/1000"}
+                    partes.update({k_: f"{v}*{fac}/1000" for k_, v in regs.items()})
+                    for bloque, _ in BLOQUES_IDX:
+                        _put(ws, f"{P(bloque, p)}{f}", "=" + partes[bloque.split(' €')[0]], P6, borde=True)
+                    ener = "=" + "+".join(f"{P(b_, p)}{f}" for b_, _ in BLOQUES_IDX)
                 _put(ws, f"{P('ENERGÍA €/kWh', p)}{f}", ener, P6, b=True, borde=True)
                 _put(ws, f"{P('PEAJES €/kWh', p)}{f}",
                      f"=IF({c('¿Precio con peajes y cargos?')}=\"Sí\",0,{par.termino(kt, 1, p)})", P6, borde=True)
@@ -620,7 +679,13 @@ class HojaOferta:
                 fn = (f"IF({c('FNEE')}=\"{mo.FNEE_INCLUIDO}\",0,{L['FNEE €/MWh']}{f}"
                       f"*IF({c('FNEE')}=\"{mo.BARRAS}\",1+{per}{f},1))")
                 fee = f"{c('Fee / coste de gestión (€/MWh)')}*IF({c('Base del fee')}=\"{mo.BARRAS}\",1+{per}{f},1)"
-                _put(ws, f"{P('OTROS €/kWh', p)}{f}", f"=({fn}+{c('GdO (€/MWh)')}+{fee})/1000", P6, borde=True)
+                if idx:
+                    for bloque, v in zip([b_ for b_, _ in BLOQUES_OTROS], (fn, fee, c('GdO (€/MWh)'))):
+                        _put(ws, f"{P(bloque, p)}{f}", f"={v}/1000", P6, borde=True)
+                    otros = "=" + "+".join(f"{P(b_, p)}{f}" for b_, _ in BLOQUES_OTROS)
+                else:
+                    otros = f"=({fn}+{c('GdO (€/MWh)')}+{fee})/1000"
+                _put(ws, f"{P('OTROS €/kWh', p)}{f}", otros, P6, borde=True)
                 pot_prop = f"INDEX(${CL(21 + p)}${pr0}:${CL(21 + p)}${pr1},{fila_pr})"
                 _put(ws, f"{P('POTENCIA €/kW·mes', p)}{f}",
                      f"=IF({c('Término de potencia')}=\"{mo.POT_PROPIA}\",{pot_prop},{par.termino(kt, 0, p)})/12",
@@ -634,9 +699,14 @@ class HojaOferta:
         P = lambda nom, p: CL(t["cols"][nom] + p)
         tf0 = t["f0"]
         fi = info.fila[s.cups]
-        _titulo(ws, fila, f"CUPS {s.cups} · {s.alias or ''} · {s.tarifa} · {s.sistema}", 1, 24, "azul")
-        cab = ["Mes", "Fecha"] + [f"kWh P{p}" for p in range(1, 7)] + ["kWh total"] + CONCEPTOS + \
-              ["TOTAL €", "Base IEE €"]
+        cols = self.cols
+        ci = {k_: 10 + i for i, (_, k_, _b) in enumerate(cols)}          # columna de cada concepto
+        CT, CB = CL(10 + len(cols)), CL(11 + len(cols))                   # TOTAL € y base del IEE
+        X = lambda k_: CL(ci[k_])
+        _titulo(ws, fila, f"CUPS {s.cups} · {s.alias or ''} · {s.tarifa} · {s.sistema}", 1,
+                max(24, 12 + len(cols)), "azul")
+        cab = ["Mes", "Fecha"] + [f"kWh P{p}" for p in range(1, 7)] + ["kWh total"] + \
+              [t_ for t_, _, _b in cols] + ["TOTAL €", "Base IEE €"]
         for i, h in enumerate(cab):
             _hdr(ws, f"{CL(1 + i)}{fila + 1}", h)
         ws.row_dimensions[fila + 1].height = 32
@@ -656,16 +726,19 @@ class HojaOferta:
             _put(ws, f"I{f}", f"=SUM(C{f}:H{f})", KWH, b=True, borde=True)
             kwh = f"$C{f}:$H{f}"
             fila_p = lambda nom: f"${P(nom, 0)}${ft}:${P(nom, 5)}${ft}"
-            _put(ws, f"J{f}", f"=SUMPRODUCT({kw},{fila_p('POTENCIA €/kW·mes')})", EUR2, borde=True)
-            _put(ws, f"K{f}", f"=SUMPRODUCT({kwh},{fila_p('ENERGÍA €/kWh')})", EUR2, borde=True)
-            _put(ws, f"L{f}", f"=SUMPRODUCT({kwh},{fila_p('PEAJES €/kWh')})", EUR2, borde=True)
-            _put(ws, f"M{f}", f"=SUMPRODUCT({kwh},{fila_p('SSAA €/kWh')})", EUR2, borde=True)
-            _put(ws, f"N{f}", f"=SUMPRODUCT({kwh},{fila_p('OTROS €/kWh')})", EUR2, borde=True)
-            _put(ws, f"O{f}", f"={c('K / impuesto municipal')}*(K{f}+N{f}+IF({c('K también sobre SSAA')}=1,M{f},0))",
-                 EUR2, borde=True)
-            _put(ws, f"S{f}", f"=SUM(J{f}:O{f})", EUR2, borde=True, color="7F7F7F")
-            _put(ws, f"Q{f}", f"={c('Otros fijos (€/CUPS·mes)')}+{alq}", EUR2, borde=True)
-            _put(ws, f"R{f}", f"=SUM(J{f}:Q{f})", EUR2, b=True, borde=True)
+            for _t, k_, bloque in cols:
+                if bloque:
+                    _put(ws, f"{X(k_)}{f}", f"=SUMPRODUCT({kw if k_ == 'POT' else kwh},{fila_p(bloque)})",
+                         EUR2, borde=True)
+            if "K" in ci:
+                base_k = [f"{X(k_)}{f}" for _t, k_, _b in cols if k_ in K_BASE]
+                ss = f"+IF({c('K también sobre SSAA')}=1,{X('SSAA')}{f},0)" if "SSAA" in ci else ""
+                _put(ws, f"{X('K')}{f}", f"={c('K / impuesto municipal')}*({'+'.join(base_k) or '0'}{ss})",
+                     EUR2, borde=True)
+            # base del IEE: todos los conceptos salvo el propio IEE y los servicios
+            _put(ws, f"{CB}{f}", f"=SUM(J{f}:{CL(ci['IEE'] - 1)}{f})", EUR2, borde=True, color="7F7F7F")
+            _put(ws, f"{X('SERV')}{f}", f"={c('Otros fijos (€/CUPS·mes)')}+{alq}", EUR2, borde=True)
+            _put(ws, f"{CT}{f}", f"=SUM(J{f}:{X('SERV')}{f})", EUR2, b=True, borde=True)
         # IEE por año de contrato
         fy = f0 + D + 1
         _hdr(ws, f"A{fy}", "Año contrato")
@@ -678,27 +751,29 @@ class HojaOferta:
             a1, a2 = f0 + 12 * (y - 1), min(f0 + D - 1, f0 + 12 * y - 1)
             _put(ws, f"A{f}", y, al="center", borde=True)
             _put(ws, f"B{f}", f"={par.mes(12 * (y - 1) + 1, 'C')}", borde=True)
-            _put(ws, f"C{f}", f"=SUM(S{a1}:S{a2})", EUR2, borde=True)
+            _put(ws, f"C{f}", f"=SUM({CB}{a1}:{CB}{a2})", EUR2, borde=True)
             _put(ws, f"D{f}", f"=SUM(I{a1}:I{a2})/1000", "#,##0.000", borde=True)
             _put(ws, f"E{f}", "=" + par.general(f"B{f}", "B"), "0.0000000%", borde=True)
             _put(ws, f"F{f}", f"={red}", "0%", borde=True)
             _put(ws, f"G{f}", f"=C{f}*(1-F{f})*E{f}", EUR2, b=True, borde=True)
             for k in range(a1, a2 + 1):
-                _put(ws, f"P{k}", f"=IF($C${f}=0,G{f}/{a2 - a1 + 1},G{f}*S{k}/$C${f})", EUR2, borde=True)
-                ws[f"R{k}"].value = f"=SUM(J{k}:Q{k})"
+                _put(ws, f"{X('IEE')}{k}", f"=IF($C${f}=0,G{f}/{a2 - a1 + 1},G{f}*{CB}{k}/$C${f})", EUR2,
+                     borde=True)
         self.cups[s.cups] = (f0, s.tarifa)
         return fy + ny + 3
 
     def _totales(self, grupos):
         ws, D = self.ws, self.D
         fila = self.fila_tot
-        _titulo(ws, fila, "TOTAL DE LA CARTERA (€ por mes)", 1, 19, "navy")
-        cab = ["Mes", "Fecha", "kWh total"] + CONCEPTOS + ["TOTAL €", "€/MWh"]
+        nc = len(self.cols)
+        CT, CM = CL(4 + nc), CL(5 + nc)                  # TOTAL € y €/MWh de la cartera
+        _titulo(ws, fila, "TOTAL DE LA CARTERA (€ por mes)", 1, max(19, 6 + nc), "navy")
+        cab = ["Mes", "Fecha", "kWh total"] + [t_ for t_, _, _b in self.cols] + ["TOTAL €", "€/MWh"]
         for i, h in enumerate(cab):
             _hdr(ws, f"{CL(1 + i)}{fila + 1}", h)
         ws.row_dimensions[fila + 1].height = 32
         f0 = fila + 2
-        src = [8] + list(range(9, 17)) + [17]          # columnas I, J..Q, R de los bloques CUPS
+        src = [8] + list(range(9, 10 + nc))            # columnas I (kWh), conceptos y TOTAL de los CUPS
         for k in range(1, D + 1):
             f = f0 + k - 1
             _put(ws, f"A{f}", k, al="center", borde=True)
@@ -707,15 +782,15 @@ class HojaOferta:
                 ref = "+".join(f"{CL(cs + 1)}{b0 + k - 1}" for b0, _ in self.cups.values()) or "0"
                 _put(ws, f"{CL(3 + j)}{f}", "=" + ref, KWH if j == 0 else EUR2,
                      b=j == len(src) - 1, borde=True)
-            _put(ws, f"M{f}", f"=IF(C{f}=0,\"\",L{f}/C{f}*1000)", EUR2, borde=True)
+            _put(ws, f"{CM}{f}", f"=IF(C{f}=0,\"\",{CT}{f}/C{f}*1000)", EUR2, borde=True)
         ft = f0 + D
         _put(ws, f"B{ft}", "TOTAL", b=True, fill="tot", borde=True)
         for j in range(len(src)):
             col = CL(3 + j)
             _put(ws, f"{col}{ft}", f"=SUM({col}{f0}:{col}{ft - 1})", KWH if j == 0 else EUR,
                  b=True, fill="tot", borde=True)
-        _put(ws, f"M{ft}", f"=IF(C{ft}=0,\"\",L{ft}/C{ft}*1000)", EUR2, b=True, fill="tot", borde=True)
-        self.tot = {"f0": f0, "ft": ft}
+        _put(ws, f"{CM}{ft}", f"=IF(C{ft}=0,\"\",{CT}{ft}/C{ft}*1000)", EUR2, b=True, fill="tot", borde=True)
+        self.tot = {"f0": f0, "ft": ft, "total": CT}
         # total por tarifa
         if len(self.lista) > 1:
             fila = ft + 2
@@ -730,18 +805,18 @@ class HojaOferta:
                     f = g0 + k - 1
                     _put(ws, f"A{f}", k, al="center", borde=True)
                     _put(ws, f"B{f}", f"={self.par.mes(k, 'B')}", "mmm-yy", borde=True)
-                    for j, cs in enumerate([3, 4, 5, 6, 7, 8, 9, 18]):
+                    for j, cs in enumerate([3, 4, 5, 6, 7, 8, 9, 10 + nc]):
                         _put(ws, f"{CL(3 + j)}{f}", "=" + "+".join(f"{CL(cs)}{b0 + k - 1}" for b0 in bl),
                              KWH if j < 7 else EUR2, borde=True)
                     _put(ws, f"K{f}", f"=IF(I{f}=0,\"\",J{f}/I{f}*1000)", EUR2, borde=True)
                 fila = g0 + D + 2
         # resultado
         c0 = 5
-        filas = [("Meses del contrato", D, "0"), ("Coste total del contrato (€)", f"=L{ft}", EUR),
+        filas = [("Meses del contrato", D, "0"), ("Coste total del contrato (€)", f"={CT}{ft}", EUR),
                  ("Consumo del contrato (MWh)", f"=C{ft}/1000", "#,##0.0"),
-                 ("Coste medio anual (€/año)", f"=L{ft}*12/{D}", EUR),
-                 ("Coste unitario (€/MWh)", f"=IF(C{ft}=0,\"\",L{ft}/C{ft}*1000)", EUR2),
-                 ("Coste año 1 (€)", f"=SUM(L{f0}:L{f0 + min(12, D) - 1})", EUR)]
+                 ("Coste medio anual (€/año)", f"={CT}{ft}*12/{D}", EUR),
+                 ("Coste unitario (€/MWh)", f"=IF(C{ft}=0,\"\",{CT}{ft}/C{ft}*1000)", EUR2),
+                 ("Coste año 1 (€)", f"=SUM({CT}{f0}:{CT}{f0 + min(12, D) - 1})", EUR)]
         for i, (k, v, fmt) in enumerate(filas):
             f = 7 + i
             ws.merge_cells(start_row=f, start_column=c0, end_row=f, end_column=c0 + 2)
@@ -756,7 +831,7 @@ class HojaOferta:
         f = self.res_fila["_fila_libre"]
         a = actual
         rng_f = f"{_q(a.nombre)}$B${a.tot['f0']}:$B${a.tot['ft'] - 1}"
-        rng_t = f"{_q(a.nombre)}$L${a.tot['f0']}:$L${a.tot['ft'] - 1}"
+        rng_t = f"{_q(a.nombre)}${a.tot['total']}${a.tot['f0']}:${a.tot['total']}${a.tot['ft'] - 1}"
         ini = f"$B${self.tot['f0']}"
         fin = f"$B${self.tot['ft'] - 1}"
         filas = [("Contrato actual en los mismos meses (€/año)",
@@ -804,7 +879,7 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
         ws.merge_cells(start_row=t, start_column=3, end_row=t, end_column=2 + n)
         _put(ws, f"C{t}", titulo, b=True, color="FFFFFF", fill="teal", size=11, al="center")
         ws.merge_cells(start_row=t, start_column=3 + n, end_row=t + 1, end_column=3 + n)
-        _put(ws, f"{MC}{t}", "Oferta mínima", b=True, color="FFFFFF", fill="minh", size=11, al="center")
+        _put(ws, f"{MC}{t}", "Mejor oferta", b=True, color="FFFFFF", fill="minh", size=11, al="center")
         ws.row_dimensions[t].height = 24
         ws.row_dimensions[t + 1].height = 48
         rv, rk, rp, re_, rn, rf = t + 2, t + 3, t + 4, t + 5, t + 6, t + 7
@@ -826,14 +901,14 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
                 act_mp = h.res_fila["Contrato actual en los mismos meses (€/año)"]
                 _put(ws, f"{col}{rp}", f"={col}{rv}/{act_mp}-1", PCT, al="center", borde=True)
                 _put(ws, f"{col}{re_}", f"={col}{rv}-{act_mp}", EUR, al="center", borde=True)
-                _put(ws, f"{col}{rn}", f"=RANK({col}{rv},{rng(rv)},1)", "0", b=True, al="center", borde=True)
+                # ranking por la variación frente al contrato actual en los mismos meses
+                _put(ws, f"{col}{rn}", f"=RANK({col}{rp},{rng(rp)},1)", "0", b=True, al="center", borde=True)
                 _put(ws, f"{col}{rf}", f"={act_mp}", KWH, it=True, color="7F7F7F", size=8, al="center")
             else:
                 for r_ in (t + 1, rv, rk, rp, re_, rn):
                     _put(ws, f"{col}{r_}", "-", al="center", borde=True, fill="lteal" if r_ == t + 1 else None)
-        pos = f"MATCH({MC}{rv},{rng(rv)},0)"
-        _put(ws, f"{MC}{rv}", f"=MIN({rng(rv)})", '#,##0 "€/año"', b=True, fill="min", al="center", borde=True)
-        for r_, fmt in ((rk, '0.0000 "€/kWh"'), (rp, PCT), (re_, EUR), (rf, KWH)):
+        pos = f"MATCH(MIN({rng(rp)}),{rng(rp)},0)"           # la de mayor ahorro en %
+        for r_, fmt in ((rv, '#,##0 "€/año"'), (rk, '0.0000 "€/kWh"'), (rp, PCT), (re_, EUR), (rf, KWH)):
             _put(ws, f"{MC}{r_}", f"=INDEX({rng(r_)},{pos})", fmt, b=r_ != rf, fill="min", al="center", borde=True)
         _put(ws, f"{MC}{rn}", f"=SUBSTITUTE(INDEX({rng(t + 1)},{pos}),CHAR(10),\" \")", b=True, fill="min",
              al="center", wrap=True, borde=True, size=8)
@@ -848,7 +923,8 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
              "FNEE, garantías de origen, impuesto municipal e impuesto eléctrico) salvo IVA, excesos de "
              "potencia y energía reactiva.",
              "€/año: coste medio anual durante la duración de cada oferta, comparado con el contrato actual "
-             "en esos mismos meses. El detalle de cada cálculo está en la hoja de cada oferta."]
+             "en esos mismos meses. El ranking y la mejor oferta se establecen por esa variación. El "
+             "detalle de cada cálculo está en la hoja de cada oferta."]
     for i, nt in enumerate(notas):
         ws.merge_cells(f"B{fila + 1 + i}:{MC}{fila + 1 + i}")
         _put(ws, f"B{fila + 1 + i}", nt, it=True, size=9, wrap=True)

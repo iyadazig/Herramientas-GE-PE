@@ -154,6 +154,21 @@ class Excel(unittest.TestCase):
         self.assertTrue(any(t.startswith("TOTAL DE LA CARTERA") for t in textos))
         self.assertTrue(any(t.startswith("TOTAL TARIFA 6.1TD") for t in textos))
 
+    def test_indexado_una_columna_por_concepto(self):
+        """Pass-Through: cada concepto de la fórmula en su columna; Pass-Pool: término B aparte."""
+        pt = mo.Oferta(nombre="PT", modalidad=mo.PASS_THROUGH, atr_incluido=False,
+                       pagos_capacidad=True, om=True, os=True, srad=True, desvios=0.4, fee=0.9,
+                       k=0.015, fnee=mo.NETO, ssaa_modo=mo.SSAA_PERIODO)
+        titulos = [t for t, _, _ in informe_excel.columnas_oferta(pt, hay_b=False)]
+        self.assertEqual(titulos, ["ATR potencia", "ATR energía", "Precio OMIE",
+                                   "Costes de ajuste (SSAA)", "Pagos por capacidad", "Pago O.M.",
+                                   "Pago O.S.", "Desvíos / CC", "SRAD", "FNEE", "CG (fee)",
+                                   "Impuesto municipal", "IEE", "Servicios y alquiler"])
+        pp = mo.Oferta(nombre="PP", modalidad=mo.PASS_POOL, atr_incluido=True)
+        self.assertEqual([t for t, _, _ in informe_excel.columnas_oferta(pp, hay_b=True)],
+                         ["ATR potencia", "Energía fijo", "Precio OMIE", "IEE", "Servicios y alquiler"])
+        self.assertEqual(informe_excel.columnas_oferta(fijo(0.1), hay_b=False), informe_excel.COLS_FIJO)
+
     def test_nombres_de_hoja_unicos_y_validos(self):
         usados = set()
         a = informe_excel._nombre_hoja("Oferta: 12/24 [x]", usados)
