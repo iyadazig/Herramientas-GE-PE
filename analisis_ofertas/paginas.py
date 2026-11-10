@@ -877,14 +877,6 @@ def _comprobar_gemweb(e: mo.Estudio, curvas: dict):
 
 
 # =================================================================== 4-5. ofertas
-def _contactos() -> dict:
-    if "ao_contactos" not in st.session_state:
-        try:
-            st.session_state.ao_contactos = almacen.contactos_comercializadoras()
-        except Exception:                                   # noqa: BLE001
-            st.session_state.ao_contactos = {}
-    return st.session_state.ao_contactos
-
 
 def _sel(contenedor, etiqueta, opciones, valor, clave, **kw):
     """Desplegable que cambia a la primera: el valor inicial va al estado de la sesión y no
@@ -964,9 +956,8 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
         o.comercializadora = _sel(c1, "Comercializadora", opciones, o.comercializadora,
                                   k + "com", format_func=lambda c: c or "— Elige —",
                                   help="Escribe para buscar en la lista.")
-        contacto = _contactos().get(o.comercializadora.upper()) if o.comercializadora else None
-        if contacto and not (o.gestor or o.email_gestor):
-            o.gestor, o.email_gestor = contacto["gestor"], contacto["email"]
+        # el gestor y su email se escriben en cada oferta: no se copian de otras ofertas (un
+        # mismo gestor no lleva a todos los clientes de la comercializadora)
         o.gestor = c2.text_input("Gestor de la comercializadora", o.gestor, key=k + "gestor")
         o.email_gestor = c3.text_input("Email del gestor", o.email_gestor, key=k + "email").strip()
         if o.email_gestor and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", o.email_gestor):
@@ -1270,16 +1261,16 @@ def guardar_en_catalogo(e: mo.Estudio, ofertas: list, nombre: str, fechas: dict,
     return mensajes, errores
 
 
-def cargar_del_catalogo(e: mo.Estudio, ids: list, contactos: dict = None, hoy=None,
-                        usuario: str = None) -> list:
-    """Añade al análisis una copia de cada entrada. Devuelve los avisos."""
+def cargar_del_catalogo(e: mo.Estudio, ids: list, hoy=None, usuario: str = None) -> list:
+    """Añade al análisis una copia de cada entrada (con el gestor vacío). Devuelve los
+    avisos."""
     avisos = []
     for id_ in ids:
         r = almacen.catalogo(id_)
         if not r:
             continue
         avisos += catalogo.avisos_carga(r, e, hoy)
-        e.ofertas.append(catalogo.desde_catalogo(r, contactos))
+        e.ofertas.append(catalogo.desde_catalogo(r))
         if usuario:
             almacen.registrar_actividad(usuario, MODULO, "Carga desde catálogo", r["nombre"])
     return avisos
@@ -1296,8 +1287,8 @@ def _seleccion(df: pd.DataFrame, clave: str, multiple: bool = True) -> list:
 def _cargar_catalogo(e: mo.Estudio):
     with st.expander("Cargar ofertas del catálogo"):
         st.caption("Ofertas de catálogo guardadas por el equipo. Se añade una copia al análisis: "
-                   "puedes retocarla sin cambiar el catálogo. El gestor se propone del último "
-                   "usado con esa comercializadora.")
+                   "puedes retocarla sin cambiar el catálogo. El gestor y su email quedan "
+                   "vacíos: rellénalos en cada oferta.")
         c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
         todas = almacen.listar_catalogo()
         coms_ = sorted({r["comercializadora"] for r in todas})
@@ -1326,7 +1317,7 @@ def _cargar_catalogo(e: mo.Estudio):
         st.caption("Marca una o varias filas (por ejemplo, las de 12, 24 y 36 meses).")
         if st.button("Cargar las elegidas", type="primary", disabled=not elegidas,
                      key="ao_cat_cargar"):
-            avisos = cargar_del_catalogo(e, [filas[k]["id"] for k in elegidas], _contactos(),
+            avisos = cargar_del_catalogo(e, [filas[k]["id"] for k in elegidas],
                                          usuario=_usuario())
             st.session_state.ao_oferta = len(e.ofertas) - 1
             st.session_state.ao_avisos_catalogo = avisos

@@ -13,7 +13,7 @@ fecha de inicio, apuntamientos propios).
     a_catalogo(o)                    datos de la oferta que se guardan
     ficha_de(o, nombre, fechas...)   cabecera de la entrada (columnas de la tabla)
     validar(ficha, datos)            lo que falta o no cuadra (lista de textos)
-    desde_catalogo(entrada, contactos)   oferta lista para el análisis
+    desde_catalogo(entrada)          oferta lista para el análisis (gestor vacío)
     avisos_carga(entrada, e, hoy)    caducada, inicio fuera de ventana, tarifas sin precio, baja
     cubre(entrada, e)                ¿tiene precio para todas las tarifas y sistemas del análisis?
     desactualizadas(e, versiones)    ofertas del análisis con una versión más nueva en el catálogo
@@ -102,18 +102,15 @@ def _fecha(v):
     return dt.date.fromisoformat(str(v)[:10])
 
 
-def desde_catalogo(entrada: dict, contactos: dict = None) -> mo.Oferta:
+def desde_catalogo(entrada: dict) -> mo.Oferta:
     """Oferta para el análisis a partir de una entrada del catálogo (copia independiente que
-    recuerda de dónde viene). El gestor y su email se proponen de los contactos de la
-    comercializadora (los últimos usados en los análisis)."""
+    recuerda de dónde viene). El gestor y su email quedan vacíos: son de cada cliente."""
     o = mo.oferta_de_dict(entrada["datos"])
     o.comercializadora = entrada.get("comercializadora") or o.comercializadora
     o.nombre = entrada.get("nombre") or o.producto or o.comercializadora
     o.origen_catalogo = {"id": entrada.get("id"), "version": entrada.get("version") or 1,
                          "nombre": entrada.get("nombre") or ""}
-    c = (contactos or {}).get((o.comercializadora or "").upper())
-    if c:
-        o.gestor, o.email_gestor = c.get("gestor") or "", c.get("email") or ""
+    o.gestor, o.email_gestor = "", ""
     return o
 
 

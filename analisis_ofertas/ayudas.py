@@ -171,8 +171,8 @@ TIPOLOGIAS = {
 }
 
 GUIA = """\
-1. **Comercializadora, gestor y email**: al elegir la comercializadora se proponen el gestor y
-   el email de la última oferta suya.
+1. **Comercializadora, gestor y email**: elige la comercializadora y escribe el gestor y su
+   email de esta oferta (salen vacíos en cada oferta nueva).
 2. **Modalidad y duración**: «Precio fijo», «Indexado Pass-Through» o «Pass-Pool» suele estar
    en el título o en las condiciones económicas; la duración, en las fechas de inicio y fin.
 3. **¿Con o sin ATR?**: busca «peajes y cargos», «ATR» o «tarifa de acceso» junto a los

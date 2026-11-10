@@ -77,14 +77,14 @@ class Cargar(unittest.TestCase):
     def test_ida_y_vuelta_calcula_igual(self):
         e = estudio(n_cups=2)
         original = fijo(0.12, k=0.015, gdo=1.0, comercializadora="ENDESA")
-        cargada = catalogo.desde_catalogo(entrada(original), {
-            "ENDESA": {"gestor": "Otra Persona", "email": "otra@ejemplo.com"}})
+        original.gestor, original.email_gestor = "Gestor de otro cliente", "otro@ejemplo.com"
+        cargada = catalogo.desde_catalogo(entrada(original))
         ctx = calculo.Contexto(e)
         self.assertAlmostEqual(calculo.calcular_oferta(e, original, ctx).total,
                                calculo.calcular_oferta(e, cargada, ctx).total, places=6)
         self.assertEqual(cargada.origen_catalogo, {"id": 7, "version": 1,
                                                    "nombre": "Endesa Empresas nov-26"})
-        self.assertEqual(cargada.gestor, "Otra Persona")       # de los contactos, no del cliente
+        self.assertEqual((cargada.gestor, cargada.email_gestor), ("", ""))   # siempre vacío
         self.assertEqual(cargada.grupos_propios, [])
         self.assertIsNone(cargada.inicio)
 
@@ -209,7 +209,7 @@ class BaseDeDatos(unittest.TestCase):
         # otro usuario lo carga en su análisis
         otro = estudio(n_cups=2)
         otro.suministros[1].tarifa = "3.0TD"
-        avisos = paginas.cargar_del_catalogo(otro, [r["id"] for r in filas], {},
+        avisos = paginas.cargar_del_catalogo(otro, [r["id"] for r in filas],
                                              hoy=dt.date(2026, 11, 15), usuario="ana")
         self.assertEqual(len(otro.ofertas), 2)
         self.assertTrue(all(x.gestor == "" for x in otro.ofertas))
