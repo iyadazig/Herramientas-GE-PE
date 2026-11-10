@@ -211,6 +211,25 @@ class Formato(unittest.TestCase):
                          ["16,56", "20", "", "1234,57"])
         self.assertEqual(ap_.contrato_es("M Jan-27"), "M ene-27")
 
+    def test_doce_valores_pegados_en_fila_o_columna(self):
+        from analisis_ofertas import paginas as ap_
+        doce = [10.5 + i for i in range(12)]
+        textos = [f"{v:.1f}".replace(".", ",") for v in doce]
+        self.assertEqual(ap_.valores_pegados("\t".join(textos) + "\r\n"), doce)     # fila
+        self.assertEqual(ap_.valores_pegados("\r\n".join(textos) + "\r\n"), doce)   # columna
+        self.assertEqual(ap_.valores_pegados(" ; ".join(textos)), doce)
+        self.assertEqual(ap_.valores_pegados("1,5\t\t2,5"), [1.5, None, 2.5])     # hueco
+        self.assertEqual(ap_.valores_pegados(""), [])
+
+    def test_punto_decimal_se_ve_con_coma(self):
+        from analisis_ofertas import paginas as ap_
+        casos = {"0.394": "0,394", "-16.5": "-16,5", ".5": ",5", "1,5228": "1,5228",
+                 "1.234.567": "1.234.567", "16": "16", "abc": "abc", "": ""}
+        for texto, esperado in casos.items():
+            self.assertEqual(ap_.con_coma(texto), esperado, texto)
+        self.assertIsNone(ap_.con_coma(None))
+        self.assertEqual(ap_.numero_es(ap_.con_coma("0.394")), 0.394)
+
     def test_meses_en_espanol_en_el_mercado(self):
         from analisis_ofertas import paginas as ap_
         from tests.test_analisis_calculo import estudio

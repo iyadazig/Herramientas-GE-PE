@@ -69,6 +69,34 @@ def numero_es(v):
         return None
 
 
+def con_coma(texto):
+    """El número tal y como se escribió pero con coma decimal: «0.394» → «0,394»,
+    «-16.5» → «-16,5». Lo que ya lleva coma, los miles con varios puntos («1.234.567») y lo
+    que no es un número se dejan igual."""
+    if not isinstance(texto, str):
+        return texto
+    t = texto.strip()
+    if re.fullmatch(r"-?\d*\.\d+", t):
+        return t.replace(".", ",")
+    return texto
+
+
+def valores_pegados(texto: str) -> list:
+    """Números pegados de Excel, de una fila (separados por tabuladores) o de una columna (uno
+    por línea); si no hay ninguno de los dos, separados por «;» o espacios. Una celda vacía
+    en medio cuenta (None) para no correr los meses; los vacíos del final no."""
+    t = (texto or "").strip("\r\n ")
+    if not t:
+        return []
+    if "\t" in t or "\n" in t:
+        partes = re.split(r"\t|\r?\n", t)
+    else:
+        partes = re.split(r"[;\s]+", t)
+    while partes and not partes[-1].strip():
+        partes.pop()
+    return [numero_es(p) for p in partes]
+
+
 def texto_es(v, decimales: int = 6) -> str:
     """16.56 → «16,56» (sin ceros de más)."""
     if v is None or (isinstance(v, float) and math.isnan(v)):
@@ -418,7 +446,19 @@ def editor(df: pd.DataFrame, clave: str, numeros=(), decimales: dict = None, **k
     config = dict(kw.pop("column_config", None) or {})
     for c in numeros:
         config[c] = st.column_config.TextColumn(c)
-    editada = st.data_editor(bases[clave], key=clave, column_config=config, **kw).copy()
+    versiones = st.session_state.setdefault("ao_bases_v", {})
+    n = versiones.get(clave, 0)
+    editada = st.data_editor(bases[clave], key=f"{clave}~{n}" if n else clave,
+                             column_config=config, **kw).copy()
+    # lo escrito con punto decimal se ve con coma: la tabla se rehace con lo editado y la coma
+    # (el editor no deja cambiar lo escrito) y se vuelve a dibujar
+    if any(con_coma(v) != v for c in numeros for v in editada[c] if isinstance(v, str)):
+        base = editada.copy()
+        for c in numeros:
+            base[c] = [con_coma(v) for v in base[c]]
+        bases[clave] = base
+        versiones[clave] = n + 1
+        st.rerun()
     malos = []
     for c in numeros:
         valores = list(editada[c])
@@ -605,7 +645,26 @@ def _mercado(e: mo.Estudio):
             st.dataframe(previsto, hide_index=True, use_container_width=True)
     with t_ssaa:
         st.caption("SSAA medios de cada mes natural (€/MWh), a mano en cada estudio.")
-        st.caption("Se pueden pegar los 12 valores copiados de Excel (con coma decimal).")
+        c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+        pegado = c1.text_area(
+            "Pegar los 12 valores de una vez", key=f"ao_ssaa_pegar_{_v()}", height=68,
+            placeholder="Copia en Excel las 12 celdas de enero a diciembre (en fila o en "
+                        "columna) y pégalas aquí con Ctrl+V",
+            help="Vale una fila o una columna de Excel, con coma decimal. Los 12 valores van "
+                 "de enero a diciembre.")
+        if c2.button("Poner los 12 valores", key=f"ao_ssaa_poner_{_v()}",
+                     disabled=not (pegado or "").strip(), use_container_width=True):
+            valores = valores_pegados(pegado)
+            if len(valores) != 12:
+                st.error(f"Se han pegado {len(valores)} valores y hacen falta 12 (de enero a "
+                         "diciembre).")
+            elif any(v is None for v in valores):
+                st.error("Hay celdas vacías o que no son números: revisa lo copiado.")
+            else:
+                e.ssaa_mes = valores
+                _subir_version()
+                st.rerun()
+        st.caption("También puedes escribir o pegar en la tabla mes a mes.")
         aplicar_ssaa(e, editor(tabla_ssaa(e), f"ao_ssaa_{_v()}", ["SSAA (€/MWh)"],
                                {"SSAA (€/MWh)": 4}, hide_index=True, disabled=["Mes"]))
         if MOSTRAR_PH and any(s.activo and s.sistema == "Canarias" for s in e.suministros):
@@ -812,7 +871,11 @@ def _importe(contenedor, etiqueta, o: mo.Oferta, attr: str, clave: str, escala: 
         texto = texto_es(valor)
     if clave not in st.session_state:
         st.session_state[clave] = texto
-    escrito = contenedor.text_input(etiqueta, key=clave, **kw).strip()
+
+    def a_coma():                      # al escribir 0.394 se ve 0,394 (mismos decimales)
+        st.session_state[clave] = con_coma(st.session_state.get(clave))
+
+    escrito = contenedor.text_input(etiqueta, key=clave, on_change=a_coma, **kw).strip()
     numero = 0.0 if escrito == "" else numero_es(escrito)
     if numero is None:
         contenedor.caption(":red[No es un número: se mantiene el anterior]")
