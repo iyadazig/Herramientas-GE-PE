@@ -227,6 +227,24 @@ class Importacion(BaseDatos):
         self.assertIn("Persona Nueva", despues)
         self.assertTrue(despues[quitado]["tecnico"])          # lleva suministros activos: vuelve
 
+    def test_marca_de_version_al_importar(self):
+        """Cualquier usuario puede importar: queda quién, cuándo y qué fichero, y la marca
+        cambia en cada importación (los editores abiertos antes se descartan)."""
+        self.assertEqual(D.version_cuadro(), {})
+        D.importar(D.leer_cuadro(excel_ficticio()), None, "auxiliar1", "Cuadro_noviembre.xlsx")
+        v = D.version_cuadro()
+        self.assertEqual((v["usuario"], v["fichero"]), ("auxiliar1", "Cuadro_noviembre.xlsx"))
+        self.assertTrue(v["fecha"])
+        ids_antes = {s["id"] for s in almacen.listar_sgc_suministros()}
+        leido = D.leer_cuadro(excel_ficticio())
+        with mock.patch("seguimiento.datos.dt") as reloj:
+            reloj.datetime.now.return_value = __import__("datetime").datetime(2030, 1, 1, 9, 0)
+            D.importar(leido, None, "tecnico2", "Cuadro_dic.xlsx")
+        v2 = D.version_cuadro()
+        self.assertEqual((v2["usuario"], v2["fecha"]), ("tecnico2", "2030-01-01T09:00:00"))
+        # al importar los suministros cambian de id: por eso los editores van con la marca
+        self.assertFalse(ids_antes & {s["id"] for s in almacen.listar_sgc_suministros()})
+
 
 class Edicion(BaseDatos):
     def test_editar_anadir_y_borrar_en_el_cuadro(self):

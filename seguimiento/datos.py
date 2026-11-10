@@ -13,6 +13,7 @@ fecha de su cabecera. Lo que no encaja en ninguna columna se guarda en «Otros»
 
 import datetime as dt
 import io
+import json
 import math
 import re
 
@@ -300,9 +301,23 @@ def _completar_listas(leido):
             conocidos.add(e["estado"])
 
 
-def importar(leido, contactos, usuario):
+VERSION = "cuadro_version"
+
+
+def version_cuadro():
+    """{fecha, usuario, fichero} de la ultima importacion del Excel ({} si no hay). La fecha
+    sirve de marca: al importar, los suministros cambian de id y lo que alguien tuviera sin
+    guardar en un editor abierto antes ya no vale."""
+    try:
+        return json.loads(almacen.ajuste_sgc(VERSION) or "{}")
+    except ValueError:
+        return {}
+
+
+def importar(leido, contactos, usuario, fichero=None):
     """Sustituye el contenido de Seguimiento y Control por lo leido. contactos: lista de
-    contactos de envio o None para conservar los que ya hay."""
+    contactos de envio o None para conservar los que ya hay. Deja la marca de version (quien,
+    cuando y que fichero)."""
     if contactos is None:
         contactos = [f["datos"] for f in almacen.listar_sgc_filas("contactos_envio")]
     filas = dict(leido["filas"])
@@ -317,6 +332,9 @@ def importar(leido, contactos, usuario):
     # los suministros cambian de id: los cambios de Gemweb ya buscados no valen
     from seguimiento import estados_gemweb
     almacen.guardar_ajuste_sgc(estados_gemweb.PROPUESTA, "")
+    almacen.guardar_ajuste_sgc(VERSION, json.dumps(
+        {"fecha": dt.datetime.now().isoformat(timespec="seconds"), "usuario": usuario,
+         "fichero": fichero}, ensure_ascii=False))
     return resultado
 
 

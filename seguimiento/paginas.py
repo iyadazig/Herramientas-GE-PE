@@ -44,6 +44,52 @@ def _num(v, d=2):
     return ("{:,.%df}" % d).format(v or 0).replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _con_cambios(estado):
+    """El estado de un st.data_editor tiene algo editado, añadido o borrado sin guardar."""
+    return isinstance(estado, dict) and any(estado.get(k) for k in
+                                            ("edited_rows", "added_rows", "deleted_rows"))
+
+
+def _version():
+    """Marca de la última importación del Excel para la clave de los editores: si alguien
+    importa mientras otro tiene el cuadro abierto, lo que este no haya guardado se descarta
+    (los suministros cambian de id y se aplicaría a otras filas) y se le avisa."""
+    v = D.version_cuadro()
+    marca = v.get("fecha") or ""
+    anterior = ss.get("sgc_version_vista")
+    if anterior is not None and anterior != marca and any(
+            _con_cambios(ss[k]) for k in list(ss.keys())
+            if str(k).startswith(("sgc_editor_", "sgc_ed_"))):
+        quien = almacen_nombre(v.get("usuario"))
+        st.warning("Mientras tenías el cuadro abierto, %s ha importado una versión nueva del "
+                   "Excel (%s). Lo que no habías guardado no se ha aplicado, para no mezclarlo "
+                   "con otros suministros: vuelve a hacer esos cambios y guárdalos."
+                   % (quien, _cuando(v.get("fecha"))), icon=":material/warning:")
+    ss["sgc_version_vista"] = marca
+    return v, marca
+
+
+def almacen_nombre(usuario):
+    if not usuario:
+        return "alguien"
+    return next((u["nombre"] for u in almacen.listar_usuarios() if u["usuario"] == usuario),
+                usuario)
+
+
+def _cuando(iso):
+    try:
+        return dt.datetime.fromisoformat(iso).strftime("%d/%m/%Y a las %H:%M")
+    except (TypeError, ValueError):
+        return "fecha desconocida"
+
+
+def _ultima_importacion(v):
+    if v.get("fecha"):
+        st.caption("Última importación del Excel: %s%s, el %s." % (
+            "«%s» " % v["fichero"] if v.get("fichero") else "",
+            "por " + almacen_nombre(v.get("usuario")), _cuando(v["fecha"])))
+
+
 def _hay_datos():
     if almacen.listar_sgc_suministros(bajas=False) or almacen.listar_sgc_filas("contactos_envio"):
         return True
@@ -121,6 +167,8 @@ def _boton_excel(nombre_fichero, generar, clave):
 def pagina_cuadro():
     if not _hay_datos():
         return
+    version, marca = _version()
+    _ultima_importacion(version)
     listas, equipo = almacen.listar_sgc_listas(), almacen.listar_sgc_equipo()
     c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
     with c1:
@@ -181,7 +229,7 @@ def pagina_cuadro():
         editado = st.data_editor(vista, hide_index=True, use_container_width=True,
                                  num_rows="dynamic", column_config=cfg, height=600,
                                  key="sgc_editor_%d_%s" % (anio, _firma(
-                                     firma, columnas, tipo, cadencia, mes, estado)))
+                                     firma, columnas, tipo, cadencia, mes, estado, marca)))
         if st.button("Guardar cambios", type="primary", icon=":material/save:"):
             n, e, b = D.guardar_cuadro(vista, editado, anio, _usuario())
             almacen.registrar_actividad(_usuario(), MODULO, "Guardar cuadro",
@@ -556,6 +604,7 @@ def _pagina_tabla(tabla, ayuda=""):
     if not _hay_datos():
         return
     t = C.TABLAS[tabla]
+    _, marca = _version()           # al importar, las filas cambian de id
     listas, equipo = almacen.listar_sgc_listas(), almacen.listar_sgc_equipo()
     df = D.tabla_df(tabla)
     if ayuda:
@@ -565,7 +614,7 @@ def _pagina_tabla(tabla, ayuda=""):
     editado = st.data_editor(
         df, hide_index=True, use_container_width=True, num_rows="dynamic", height=600,
         column_config=_config_columnas(t["columnas"], df, listas, equipo),
-        key="sgc_ed_%s_%s" % (tabla, _firma(firma)))
+        key="sgc_ed_%s_%s" % (tabla, _firma(firma, marca)))
     if st.button("Guardar cambios", type="primary", icon=":material/save:",
                  key="sgc_guardar_" + tabla):
         n, b = D.guardar_tabla(tabla, df, editado, _usuario())
@@ -730,7 +779,7 @@ def _importar(clave):
     if st.button("Importar y sustituir", type="primary", icon=":material/upload:",
                  key=clave + "_boton"):
         copia = almacen.copia_seguridad(config.CARPETA_DATOS / "copias_seguridad")
-        D.importar(leido, lista_contactos, _usuario())
+        D.importar(leido, lista_contactos, _usuario(), cuadro.name)
         almacen.registrar_actividad(_usuario(), MODULO, "Importar Excel", cuadro.name)
         activos = leido["recuento"].get("CLIENTES", 0)
         ss[clave + "_hecho"] = ("Importado «%s»: %d suministros en el cuadro y %d bajas. Copia "
@@ -753,7 +802,8 @@ def _admin_equipo():
     df["tecnico"] = df["tecnico"].astype(bool)
     df["auxiliar"] = df["auxiliar"].astype(bool)
     editado = st.data_editor(df, hide_index=True, num_rows="dynamic", use_container_width=True,
-                             key="sgc_equipo", column_config={
+                             key="sgc_equipo_" + (D.version_cuadro().get("fecha") or ""),
+                             column_config={
                                  "nombre": st.column_config.TextColumn("Nombre", required=True),
                                  "tecnico": st.column_config.CheckboxColumn("Técnico"),
                                  "auxiliar": st.column_config.CheckboxColumn("Auxiliar"),
@@ -785,7 +835,8 @@ def _admin_listas():
         st.caption("Los estados «Sin fra», «Cadencia» y «Temporal» no esperan informe en el "
                    "cálculo del retraso; «Inf enviado» es el único que cuenta como enviado.")
     editado = st.data_editor(df, hide_index=True, num_rows="dynamic", use_container_width=True,
-                             column_config=cfg, key="sgc_lista_ed_" + lista)
+                             column_config=cfg, key="sgc_lista_ed_%s_%s" % (
+                                 lista, D.version_cuadro().get("fecha") or ""))
     if st.button("Guardar lista", type="primary", key="sgc_guardar_lista"):
         valores = [{k: (None if pd.isna(v) or v == "" else str(v).strip()) for k, v in r.items()}
                    for r in editado.to_dict("records")]
