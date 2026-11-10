@@ -97,6 +97,47 @@ def valores_pegados(texto: str) -> list:
     return [numero_es(p) for p in partes]
 
 
+def pegar_precios(tabla: pd.DataFrame, texto: str, desde: int = 0) -> tuple:
+    """Pone en la tabla de precios (filas Grupo/Año, columnas P1-P6) lo pegado de Excel a
+    partir de la fila `desde`. Devuelve (tabla nueva, error o None).
+    - Una fila de Excel (celdas separadas por tabuladores) = P1, P2… de una fila; con menos de
+      6 celdas, los periodos que faltan no se tocan.
+    - Varias filas = varias filas seguidas de la tabla.
+    - Una columna (una celda por línea, hasta 6) = P1, P2… de la fila elegida.
+    Una celda vacía en medio deja ese periodo vacío."""
+    t = (texto or "").strip("\r\n")
+    if not t.strip():
+        return tabla, "No hay nada pegado."
+    lineas = [l for l in re.split(r"\r?\n", t)]
+    while lineas and not lineas[-1].strip():
+        lineas.pop()
+    if any("\t" in l for l in lineas):
+        filas = [l.split("\t") for l in lineas]
+    elif len(lineas) > 1:
+        if len(lineas) > len(PER):
+            return tabla, (f"Se han pegado {len(lineas)} valores en columna y hay como mucho "
+                           f"{len(PER)} periodos.")
+        filas = [[l for l in lineas]]                       # columna = periodos de una fila
+    else:
+        filas = [re.split(r"[;\s]+", lineas[0].strip())]
+    nueva = tabla.copy()
+    if desde + len(filas) > len(nueva):
+        return tabla, (f"Se han pegado {len(filas)} filas y desde la fila elegida solo quedan "
+                       f"{len(nueva) - desde}.")
+    for i, celdas in enumerate(filas):
+        while celdas and not celdas[-1].strip():
+            celdas = celdas[:-1]
+        if len(celdas) > len(PER):
+            return tabla, (f"La fila {i + 1} tiene {len(celdas)} valores y hay como mucho "
+                           f"{len(PER)} periodos (P1-P6).")
+        for p, celda in zip(PER, celdas):
+            v = numero_es(celda)
+            if v is None and celda.strip():
+                return tabla, f"«{celda.strip()}» no es un número."
+            nueva.iloc[desde + i, nueva.columns.get_loc(p)] = v
+    return nueva, None
+
+
 def texto_es(v, decimales: int = 6) -> str:
     """16.56 → «16,56» (sin ceros de más)."""
     if v is None or (isinstance(v, float) and math.isnan(v)):
@@ -861,6 +902,32 @@ def _chk(contenedor, etiqueta, valor, clave, **kw) -> bool:
     return contenedor.checkbox(etiqueta, key=clave, **kw)
 
 
+def _pegar_precios(o: mo.Oferta, concepto: str, tabla: pd.DataFrame, clave: str):
+    """Cuadro para pegar los precios copiados de Excel (una fila con P1…P6, varias filas o
+    una columna). Funciona aunque el navegador no deje pegar en la tabla (sin https)."""
+    with st.expander("Pegar precios de Excel", icon=":material/content_paste:"):
+        filas = [f"{g} · año {a}" for g, a in zip(tabla["Grupo"], tabla["Año"])]
+        c1, c2 = st.columns([3, 2])
+        texto = c1.text_area(
+            "Celdas copiadas de Excel", key=clave + "_txt", height=68,
+            placeholder="Copia en Excel la fila con los precios de P1 a P6 (o varias filas) y "
+                        "pégala aquí con Ctrl+V",
+            help="Una fila de Excel rellena P1, P2… de la fila elegida (con 5 celdas, P6 no se "
+                 "toca). Varias filas rellenan las filas siguientes de la tabla. Una columna "
+                 "de hasta 6 celdas se toma como P1, P2… Coma o punto decimal.")
+        desde = c2.selectbox("Empezar en la fila", range(len(filas)), key=clave + "_fila",
+                             format_func=lambda i: filas[i]) if len(filas) > 1 else 0
+        if c2.button("Poner precios", key=clave + "_btn", type="primary",
+                     disabled=not (texto or "").strip(), use_container_width=True):
+            nueva, error = pegar_precios(tabla, texto, desde or 0)
+            if error:
+                st.error(error)
+            else:
+                aplicar_precios(o, concepto, nueva)
+                _subir_version()
+                st.rerun()
+
+
 def _importe(contenedor, etiqueta, o: mo.Oferta, attr: str, clave: str, escala: float = 1.0,
              **kw):
     """Importe escrito como texto (coma decimal): se guarda tal y como se escribe, con sus
@@ -1025,6 +1092,7 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             st.markdown(f"**{CONCEPTOS_PRECIO[concepto]}**" + (f" ({unidad})" if concepto ==
                                                                 "energia" else ""))
             tabla = tabla_precios(e, o, concepto)
+            _pegar_precios(o, concepto, tabla, f"{k}pg_{concepto}")
             editada = editor(tabla, f"{k}pr_{concepto}_{len(tabla)}_{o.modalidad}_{o.unidad}",
                              PER, hide_index=True, use_container_width=True,
                              disabled=["Grupo", "Año"])

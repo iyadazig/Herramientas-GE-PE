@@ -221,6 +221,39 @@ class Formato(unittest.TestCase):
         self.assertEqual(ap_.valores_pegados("1,5\t\t2,5"), [1.5, None, 2.5])     # hueco
         self.assertEqual(ap_.valores_pegados(""), [])
 
+    def test_pegar_precios_de_excel(self):
+        import pandas as pd
+        from analisis_ofertas import paginas as ap_
+        per = ["P1", "P2", "P3", "P4", "P5", "P6"]
+        tabla = pd.DataFrame([{"Grupo": g, "Año": a, **{p: None for p in per}}
+                              for g in ("6.1TD", "3.0TD") for a in (1, 2)])
+        tabla.loc[0, "P6"] = 0.09                                 # ya había un P6
+        # una fila de 5 celdas con coma decimal: P6 no se toca
+        nueva, error = ap_.pegar_precios(tabla, "0,1512\t0,1401\t0,1203\t0,1105\t0,1002\r\n")
+        self.assertIsNone(error)
+        self.assertEqual(list(nueva.loc[0, per]), [0.1512, 0.1401, 0.1203, 0.1105, 0.1002, 0.09])
+        self.assertTrue(pd.isna(tabla.loc[0, "P1"]))              # la original no cambia
+        # varias filas desde la fila 2 (3.0TD año 1), con punto decimal y un hueco
+        nueva, error = ap_.pegar_precios(tabla, "0.2\t0.19\t0.18\n0.21\t\t0.17", desde=2)
+        self.assertIsNone(error)
+        self.assertEqual(list(nueva.loc[2, ["P1", "P2", "P3"]]), [0.2, 0.19, 0.18])
+        self.assertEqual(nueva.loc[3, "P1"], 0.21)
+        self.assertIsNone(nueva.loc[3, "P2"])
+        self.assertEqual(nueva.loc[3, "P3"], 0.17)
+        # una columna de 6 celdas = P1…P6 de la fila elegida
+        nueva, error = ap_.pegar_precios(tabla, "1\n2\n3\n4\n5\n6", desde=1)
+        self.assertIsNone(error)
+        self.assertEqual(list(nueva.loc[1, per]), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        # errores: más de 6 periodos, más filas que la tabla, texto que no es número
+        for texto, desde, trozo in (("1\t2\t3\t4\t5\t6\t7", 0, "6 periodos"),
+                                    ("1\n2\n3\n4\n5\n6\n7", 0, "6 periodos"),
+                                    ("1\t2\n3\t4", 3, "solo quedan"),
+                                    ("1\tabc", 0, "no es un número"),
+                                    ("", 0, "nada pegado")):
+            nueva, error = ap_.pegar_precios(tabla, texto, desde)
+            self.assertIn(trozo, error or "", texto)
+            self.assertIs(nueva, tabla)
+
     def test_punto_decimal_se_ve_con_coma(self):
         from analisis_ofertas import paginas as ap_
         casos = {"0.394": "0,394", "-16.5": "-16,5", ".5": ",5", "1,5228": "1,5228",
