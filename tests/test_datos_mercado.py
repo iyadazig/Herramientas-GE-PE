@@ -200,5 +200,57 @@ class Estado(Base):
         json.dumps(c)                                   # se puede guardar tal cual
 
 
+
+class CompletarMercadoYSsaa(unittest.TestCase):
+    """Análisis de ofertas: meses del horizonte sin mercado y SSAA por defecto de Parámetros."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_oferta_mas_larga_completa_los_meses_que_faltan(self):
+        from analisis_ofertas import modelo as mo
+        from analisis_ofertas import servicio
+        omip = fichero_omip(self.dir / "omip.xlsx", [
+            fila("2026-11-04", "FTB YR-27", 80.0), fila("2026-11-04", "FTB YR-28", 60.0),
+            fila("2026-11-05", "FTB YR-28", 99.0)])
+        omie = fichero_omie(self.dir / "omie.xlsx", {(2025, m): 50.0 for m in range(1, 13)})
+        e = mo.Estudio(inicio=dt.date(2027, 1, 1))
+        e.ofertas = [mo.Oferta(nombre="12", duracion=12)]
+        servicio.congelar_regulados(e)
+        servicio.congelar_mercado(e, omip, omie)
+        e.sesion_omip = "2026-11-04"                     # la sesión con la que se congeló
+        e.mercado["2027-03"]["omip"] = 77.0              # lo que ya tiene no se toca
+        e.ofertas.append(mo.Oferta(nombre="24", duracion=24))
+        avisos = servicio.completar_mercado(e, omip, omie)
+        self.assertEqual(len([k for k in e.mercado if k.startswith("2028")]), 12)
+        self.assertEqual(e.mercado["2028-06"]["omip"], 60.0)     # misma sesión, no la última
+        self.assertEqual(e.mercado["2027-03"]["omip"], 77.0)
+        self.assertIn("12 meses", avisos[0])
+        self.assertEqual(servicio.completar_mercado(e, omip, omie), [])
+
+    def test_ssaa_estimados_de_parametros(self):
+        import datos_regulados as dr
+        from analisis_ofertas import modelo as mo
+        from analisis_ofertas import servicio
+        valores = dr.ssaa_estimados(2027)
+        self.assertEqual(len(valores), 12)
+        self.assertAlmostEqual(valores[0], 16.56)
+        self.assertAlmostEqual(valores[11], 17.25)
+        e = mo.Estudio(inicio=dt.date(2027, 1, 1))
+        self.assertTrue(servicio.ssaa_por_defecto(e))
+        self.assertEqual(e.ssaa_mes, valores)
+        e.ssaa_mes[0] = 30.0                             # cambiado en el análisis: se respeta
+        self.assertFalse(servicio.ssaa_por_defecto(e))
+        self.assertEqual(e.ssaa_mes[0], 30.0)
+        self.assertTrue(servicio.ssaa_por_defecto(e, forzar=True))
+        self.assertAlmostEqual(e.ssaa_mes[0], 16.56)
+        self.assertEqual(dr.validar(dict(dr.datos_anio(2027), mercado=dict(
+            dr.datos_anio(2027)["mercado"], ssaa_estimados=[1.0] * 11))),
+            ["SSAA estimados por mes: tiene que tener 12 valores."])
+
+
 if __name__ == "__main__":
     unittest.main()

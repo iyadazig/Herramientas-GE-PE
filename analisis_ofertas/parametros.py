@@ -203,8 +203,10 @@ def tablas_vigentes(anios: list = None, calculados: list = None, hoy: dt.date = 
         cong = dm.congelar(inicio, n_meses, m["pct_omip"], m["anios_media_omie"])
         e = mo.Estudio(inicio=inicio, pct_omip=m["pct_omip"], sesion_omip=cong["sesion_omip"],
                        mercado={f"{f['anio']}-{f['mes']:02d}": f for f in cong["meses"]},
-                       ssaa_mes=[None] * 12, regulados={a: regs[a] for a in anios})
-        mercado = tabla_mercado(e, n_meses).drop(columns=["SSAA (€/MWh)", "SSAA"])
+                       ssaa_mes=dr.ssaa_estimados(anios[0]) or [None] * 12,
+                       regulados={a: regs[a] for a in anios})
+        mercado = tabla_mercado(e, n_meses).drop(columns=["SSAA"]).rename(
+            columns={"SSAA (€/MWh)": "SSAA estimado (€/MWh)"})
         salida["Mercado"] = mercado
         avisos.append(f"OMIP: sesión del {dt.date.fromisoformat(cong['sesion_omip']):%d/%m/%Y} "
                       f"({dm.FUENTE_OMIP}). OMIE: {dm.FUENTE_OMIE}.")

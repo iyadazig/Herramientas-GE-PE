@@ -22,6 +22,22 @@ MODULO = "Administración"
 PERIODOS = ["P1", "P2", "P3", "P4", "P5", "P6"]
 
 
+MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto",
+         "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+
+
+def tabla_ssaa_estimados(datos: dict) -> pd.DataFrame:
+    valores = (datos.get("mercado") or {}).get("ssaa_estimados") or \
+        dr.ssaa_estimados(datos.get("anio") or 0) or [None] * 12
+    return pd.DataFrame({"Mes": MESES, "SSAA (€/MWh)": list(valores)[:12]})
+
+
+def aplicar_ssaa_estimados(df: pd.DataFrame) -> list:
+    """12 valores (o None si la tabla está vacía)."""
+    valores = [None if v is None or v != v else float(v) for v in df["SSAA (€/MWh)"]]
+    return valores if any(v is not None for v in valores) else None
+
+
 def _n_concepto(tarifa: str, clave: str) -> int:
     """Periodos de un concepto (la 2.0TD tiene 2 de potencia y 3 de energía)."""
     if tarifa == "2.0TD":
@@ -154,6 +170,13 @@ def pagina_datos_regulados():
         anios_omie = m2.number_input("Años de la media de OMIE", min_value=1, max_value=10,
                                      value=int(d["mercado"]["anios_media_omie"]), step=1,
                                      key=f"{clave}_m_anios")
+        st.markdown("**SSAA estimados por mes (€/MWh)**")
+        st.caption("Los toman por defecto los análisis de ofertas nuevos (y los que no tengan SSAA); "
+                   "en cada análisis se pueden cambiar.")
+        ssaa_df = editor(tabla_ssaa_estimados(d), f"{clave}_m_ssaa", ["SSAA (€/MWh)"],
+                         {"SSAA (€/MWh)": 2}, hide_index=True, disabled=["Mes"])
+        ssaa_fuente = st.text_input("Fuente de los SSAA estimados",
+                                    d["mercado"].get("ssaa_fuente", ""), key=f"{clave}_m_ssaa_f")
     with t_temp:
         com = dr.comunes()
         st.caption(com["temporadas"]["_fuente"] + " " + com["periodos_temporada"]["_fuente"])
@@ -175,7 +198,9 @@ def pagina_datos_regulados():
         aplicar_concepto(nuevo, c, tabla)
     aplicar_perdidas_sistema(nuevo, sistemas)
     nuevo["generales"] = gen
-    nuevo["mercado"] = {"pct_omip": float(pct), "anios_media_omie": int(anios_omie)}
+    nuevo["mercado"] = {"pct_omip": float(pct), "anios_media_omie": int(anios_omie),
+                        "ssaa_estimados": aplicar_ssaa_estimados(ssaa_df),
+                        "ssaa_fuente": ssaa_fuente.strip()}
     nuevo["fuentes"] = [f.strip() for f in fuentes.splitlines() if f.strip()]
     nuevo["revisado"] = revisado.strip()
 

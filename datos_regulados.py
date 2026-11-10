@@ -47,6 +47,8 @@ DESVIOS = [("desvios_coste_ref", "Desvíos: coste medio (ESIOS indicador 799, C2
            ("desvios_saldo_ref", "Desvíos: saldo medio (ESIOS indicador 800, C2)", "€/MWh")]
 MERCADO = [("pct_omip", "Ponderación de OMIP en el precio previsto", "tanto por uno"),
            ("anios_media_omie", "Años de la media mensual de OMIE", "años")]
+# además, en «mercado»: ssaa_estimados = SSAA medios por mes natural (12 valores, €/MWh) que
+# toman por defecto los análisis de ofertas (se cambian en cada análisis) y ssaa_fuente
 
 _cache = {}
 
@@ -103,6 +105,22 @@ def datos_anio(anio: int, guardados: dict = None) -> dict:
     else:
         datos.pop("copia_de", None)
     return datos
+
+
+def ssaa_estimados(anio: int, guardados: dict = None) -> list:
+    """SSAA estimados por mes natural (€/MWh; enero..diciembre) del año: los de los datos
+    regulados o, si lo guardado no los tiene, los de la semilla. None si no hay."""
+    valores = ((datos_anio(anio, guardados).get("mercado") or {}).get("ssaa_estimados"))
+    if not valores:
+        s = _leer_semilla()["anios"]
+        for a in sorted((int(x) for x in s), key=lambda x: (x > int(anio), -x)):
+            valores = (s[str(a)].get("mercado") or {}).get("ssaa_estimados")
+            if valores:
+                break
+    if not valores:
+        return None
+    return [float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+            for v in valores]
 
 
 def comunes() -> dict:
@@ -230,6 +248,8 @@ def validar(datos: dict) -> list:
         errores.append("La ponderación de OMIP tiene que estar entre 0 y 1.")
     if not isinstance(m.get("anios_media_omie"), int) or not 1 <= m["anios_media_omie"] <= 10:
         errores.append("Los años de la media de OMIE tienen que ser un número entero de 1 a 10.")
+    if m.get("ssaa_estimados") is not None:
+        _numeros(m["ssaa_estimados"], 12, "SSAA estimados por mes", errores)
     return errores
 
 

@@ -262,7 +262,9 @@
    },
    "mercado": {
     "pct_omip": 0.95,
-    "anios_media_omie": 3
+    "anios_media_omie": 3,
+    "ssaa_estimados": [16.56, 26.15, 29.73, 23.89, 23.4, 20.0, 19.6, 19.6, 27.4, 21.36, 19.64, 17.25],
+    "ssaa_fuente": "Estimación GE&PE de los SSAA medios por mes natural (€/MWh)"
    },
    "tarifas": {
     "2.0TD": {

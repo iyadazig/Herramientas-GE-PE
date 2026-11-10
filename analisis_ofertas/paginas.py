@@ -685,7 +685,16 @@ def _mercado(e: mo.Estudio):
             previsto["Previsto (€/MWh)"] = [texto_es(v, 2) for v in previsto["Previsto (€/MWh)"]]
             st.dataframe(previsto, hide_index=True, use_container_width=True)
     with t_ssaa:
-        st.caption("SSAA medios de cada mes natural (€/MWh), a mano en cada estudio.")
+        st.caption("SSAA medios de cada mes natural (€/MWh). Por defecto, los SSAA estimados de "
+                   "Parámetros (Administración → Datos regulados); se pueden cambiar en cada "
+                   "estudio.")
+        if st.button("Poner los SSAA estimados de Parámetros", key=f"ao_ssaa_def_{_v()}",
+                     help="Sustituye los 12 valores de este estudio por los SSAA estimados de "
+                          "Parámetros."):
+            if servicio.ssaa_por_defecto(e, forzar=True):
+                _subir_version()
+                st.rerun()
+            st.warning("En Parámetros no hay SSAA estimados para el año de inicio.")
         c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
         pegado = c1.text_area(
             "Pegar los 12 valores de una vez", key=f"ao_ssaa_pegar_{_v()}", height=68,
@@ -1665,6 +1674,15 @@ def pagina_nuevo_analisis():
     if st.session_state.get("ao_id"):
         st.info(f"Análisis nº {st.session_state.ao_id} cargado. «Guardar los cambios» lo "
                 "actualiza (queda quién y cuándo).")
+    # meses del horizonte sin precio de mercado (una oferta más larga) y SSAA vacíos: se
+    # rellenan con lo que hay en Parámetros
+    completados = servicio.completar_mercado(e)
+    if servicio.ssaa_por_defecto(e):
+        completados.append("SSAA vacíos: se han puesto los SSAA estimados de Parámetros "
+                           "(se pueden cambiar en la sección 3).")
+    if completados:
+        st.session_state.ao_avisos = (st.session_state.get("ao_avisos") or []) + completados
+        _subir_version()
     _suministros(e)
     _mercado(e)
     _contrato_actual(e)

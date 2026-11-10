@@ -135,6 +135,56 @@ def congelar_mercado(e: mo.Estudio, ruta_omip=None, ruta_omie=None) -> list:
             for f in c["meses"] if f["aviso"]]
 
 
+def completar_mercado(e: mo.Estudio, ruta_omip=None, ruta_omie=None) -> list:
+    """Meses del horizonte sin precio de mercado (p. ej. al añadir una oferta más larga que las
+    de cuando se congeló): se rellenan con los datos de mercado de Parámetros, de la misma
+    sesión de OMIP que el resto del estudio. Los meses que ya tiene no se tocan."""
+    congelar_regulados(e)
+    faltan = [k for k in range(e.horizonte())
+              if not (e.mercado.get(_clave_mes(e, k)) or {}).get("omie_media")
+              and not (e.mercado.get(_clave_mes(e, k)) or {}).get("omip")]
+    if not faltan:
+        return []
+    reg = e.regulados.get(e.inicio.year) or dr.datos_anio(e.inicio.year)
+    m = reg.get("mercado") or {"pct_omip": 0.95, "anios_media_omie": 3}
+    sesion = dt.date.fromisoformat(e.sesion_omip) if e.sesion_omip else None
+    try:
+        c = dm.congelar(e.inicio, e.horizonte(), e.pct_omip or m["pct_omip"],
+                        m["anios_media_omie"], fecha_sesion=sesion, ruta_omip=ruta_omip,
+                        ruta_omie=ruta_omie)
+    except dm.DatosMercado as err:
+        return [f"No se han podido completar los datos de mercado: {err}"]
+    if not e.sesion_omip:
+        e.sesion_omip, e.pct_omip = c["sesion_omip"], m["pct_omip"]
+    nuevos = 0
+    for f in c["meses"]:
+        clave = f"{f['anio']}-{f['mes']:02d}"
+        actual = e.mercado.get(clave) or {}
+        if actual.get("omie_media") or actual.get("omip"):
+            continue
+        e.mercado[clave] = {k: f[k] for k in ("omip", "contrato", "omie_media", "anios_omie")}
+        nuevos += 1
+    return [f"Se han añadido {nuevos} meses de precio de mercado desde Parámetros (sesión de OMIP "
+            f"del {dt.date.fromisoformat(c['sesion_omip']):%d/%m/%Y})."] if nuevos else []
+
+
+def _clave_mes(e: mo.Estudio, k: int) -> str:
+    f = mo.sumar_meses(e.inicio, k)
+    return f"{f.year}-{f.month:02d}"
+
+
+def ssaa_por_defecto(e: mo.Estudio, forzar: bool = False) -> bool:
+    """SSAA estimados de Parámetros (datos regulados del año de inicio) en el estudio, si no
+    tiene ninguno (o siempre con forzar). Devuelve si los ha puesto."""
+    if not forzar and any(v is not None for v in e.ssaa_mes):
+        return False
+    valores = dr.ssaa_estimados(e.inicio.year)
+    if not valores:
+        return False
+    e.ssaa_mes = list(valores)
+    return True
+
+
 def apuntamientos_vigentes(e: mo.Estudio, calculados: list, hoy: dt.date = None,
                            solo_vacios: bool = False) -> None:
     """Apuntamientos estimados del estudio = los calculados de los 12 últimos meses (con su mes,
@@ -160,6 +210,7 @@ def preparar(e: mo.Estudio, calculados: list = None, hoy: dt.date = None) -> lis
     """Congela regulados, mercado y apuntamientos de un estudio nuevo. Devuelve avisos."""
     congelar_regulados(e)
     avisos = congelar_mercado(e)
+    ssaa_por_defecto(e)
     if calculados is None:
         import almacen
         calculados = almacen.listar_apuntamientos()
