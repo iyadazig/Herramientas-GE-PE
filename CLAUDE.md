@@ -327,8 +327,14 @@ con punto decimal (un único punto es decimal; el punto escrito pasa a coma al s
 casilla). Para mostrar tablas: `estilo.tabla_es(df)` (no `st.dataframe` con floats, que salen
 con punto). Para escribir un número con decimales: `estilo.casilla_decimal(...)` (no
 `st.number_input`, que solo muestra punto; los enteros —años, meses, ids— sí pueden usar
-number_input). En tablas editables con decimales, columnas de texto leídas con `numeros.leer`
-(como `analisis_ofertas.paginas.editor`), no `NumberColumn` (al pegar «16,56» da 1656).
+number_input). Si el número tiene que seguir en `st.session_state[clave]` (otras partes lo leen
+o lo fijan, como las `c_*` de Revisión de SSAA): `estilo.casilla_decimal_ss(...)`. Formatos
+fijos en tablas: `tabla_es(df, formatos={"€/año": 0, "€/kWh": 4, "Var.": lambda v:
+numeros.porcentaje(v, 2, signo=True)})`. En tablas editables con decimales, columnas de texto
+(sin punto de miles, para que «1.234» no se confunda) leídas con `numeros.leer` (como
+`analisis_ofertas.paginas.editor`), no `NumberColumn` (al pegar «16,56» da 1656). El cuadro
+de seguimiento sí muestra miles al editar: `_texto_a_numeros` conserva el número de las
+celdas no tocadas.
 
 ## Datos
 
