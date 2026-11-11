@@ -20,6 +20,7 @@ import streamlit as st
 import almacen
 import config
 import estilo
+import numeros
 from seguimiento import columnas as C
 from seguimiento import datos as D
 from seguimiento import retraso as R
@@ -118,11 +119,12 @@ def _config_columnas(definiciones, df, listas, equipo, estados=()):
         k = c["clave"]
         if c["tipo"] == C.FECHA:
             cfg[k] = st.column_config.DateColumn(k, format="DD/MM/YYYY")
-        elif c["tipo"] == C.NUMERO:
-            cfg[k] = st.column_config.NumberColumn(k, format="localized")
+        elif c["tipo"] == C.NUMERO:                 # texto con coma (ver _numeros_a_texto)
+            cfg[k] = st.column_config.TextColumn(k, help="Con coma decimal (un punto escrito "
+                                                         "se toma como coma)")
         elif c["tipo"] == C.CALCULADA:
-            cfg[k] = st.column_config.NumberColumn(k, format="localized", disabled=True,
-                                                   help="Suma de las cuotas de SyC")
+            cfg[k] = st.column_config.TextColumn(k, disabled=True,
+                                                 help="Suma de las cuotas de SyC")
         elif c.get("lista") and k in df:
             cfg[k] = st.column_config.SelectboxColumn(
                 k, options=_opciones_con_valores(D.opciones(listas, equipo, c["lista"]), df[k]))
@@ -131,6 +133,44 @@ def _config_columnas(definiciones, df, listas, equipo, estados=()):
             cfg[k] = st.column_config.SelectboxColumn(
                 k, options=_opciones_con_valores(D.opciones(listas, equipo, "estados"), df[k]))
     return cfg
+
+
+_NUMERICAS = [c["clave"] for c in C.CUADRO if c["tipo"] in (C.NUMERO, C.CALCULADA)]
+
+
+def _numeros_a_texto(df):
+    """Columnas numéricas del cuadro como texto español (1.234,56) para verlas y editarlas."""
+    df = df.copy()
+    for k in _NUMERICAS:
+        if k in df:
+            df[k] = [numeros.texto(v) or None for v in df[k]]
+    return df
+
+
+def _texto_a_numeros(editado, original):
+    """Lo editado vuelve a números: «0.394» y «0,394» son 0,394; «1.234,5» es 1234,5. Las
+    celdas que no se han tocado conservan su número (así «1.234», que se ve con punto de
+    miles, sigue siendo 1234 y no 1,234)."""
+    df = editado.copy()
+    previos = {}
+    if D.ID in original:
+        for r in original.to_dict("records"):
+            if not pd.isna(r.get(D.ID)):
+                previos[int(r[D.ID])] = r
+    for k in _NUMERICAS:
+        if k not in df:
+            continue
+        valores = []
+        for id_, v in zip(df[D.ID] if D.ID in df else [None] * len(df), df[k]):
+            antes = previos.get(int(id_)) if id_ is not None and not pd.isna(id_) else None
+            if antes is not None and (numeros.texto(antes.get(k)) or None) == (
+                    None if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)):
+                valores.append(antes.get(k))
+            else:
+                valores.append(numeros.leer(v))
+        df[k] = pd.to_numeric(pd.Series(valores, index=df.index, dtype=object),
+                              errors="coerce")
+    return df
 
 
 def _filtrar(df, clave):
@@ -217,7 +257,7 @@ def pagina_cuadro():
                 return ""
             texto = "#FFFFFF" if c.upper() in ("#FF0000", "#7030A0") else "#1E1E1E"
             return "background-color: %s; color: %s" % (c, texto)
-        st.dataframe(vista.drop(columns=[D.ID]).style.map(
+        st.dataframe(_numeros_a_texto(vista.drop(columns=[D.ID])).style.map(
             color, subset=[c for c in columnas if c in meses]), hide_index=True,
             use_container_width=True, height=600)
     else:
@@ -226,12 +266,14 @@ def pagina_cuadro():
                    "antes de cambiar los filtros o el año: al cambiarlos se pierde lo no guardado.")
         cfg = _config_columnas([c for c in C.CUADRO if c["clave"] in columnas], vista, listas,
                                equipo, estados=[c for c in columnas if c in meses])
-        editado = st.data_editor(vista, hide_index=True, use_container_width=True,
+        editado = st.data_editor(_numeros_a_texto(vista), hide_index=True,
+                                 use_container_width=True,
                                  num_rows="dynamic", column_config=cfg, height=600,
                                  key="sgc_editor_%d_%s" % (anio, _firma(
                                      firma, columnas, tipo, cadencia, mes, estado, marca)))
         if st.button("Guardar cambios", type="primary", icon=":material/save:"):
-            n, e, b = D.guardar_cuadro(vista, editado, anio, _usuario())
+            n, e, b = D.guardar_cuadro(vista, _texto_a_numeros(editado, vista), anio,
+                                         _usuario())
             almacen.registrar_actividad(_usuario(), MODULO, "Guardar cuadro",
                                         "%d suministros, %d meses, %d bajas" % (n, e, b))
             st.success("Guardado: %d suministros, %d celdas de meses y %d bajas." % (n, e, b))
@@ -568,9 +610,9 @@ def pagina_retraso():
                 st.caption("Sin datos.")
                 continue
             st.altair_chart(_grafico_barras(tabla, por, color, filas), use_container_width=True)
-            st.dataframe(tabla, hide_index=True, use_container_width=True,
-                         height=35 * (filas + 1) + 3, column_config={
-                             "% Retraso": st.column_config.NumberColumn(format="percent")})
+            estilo.tabla_es(tabla, hide_index=True, use_container_width=True,
+                            height=35 * (filas + 1) + 3, formatos={
+                                "% Retraso": lambda v: numeros.porcentaje(v * 100, 1)})
 
     st.markdown("**Auditoría** (un bloque por fila; pulsa una fila para ver el suministro)")
     estilo_res = lambda v: ("background-color:#FFC7CE;color:#9C0006;font-weight:bold"
@@ -706,13 +748,13 @@ def pagina_bajas():
                 "CUPS", "Denominación suministro", "Tipo contratación", "Cadencia informe",
                 "Comercializadora", "Fecha fin contrato", C.TOTAL_CUOTA, "Observaciones", C.OTROS]
     st.metric("Suministros de baja", len(df))
-    sel = st.dataframe(df[[D.ID] + columnas], hide_index=True, use_container_width=True,
+    sel = st.dataframe(_numeros_a_texto(df[[D.ID] + columnas]), hide_index=True,
+                       use_container_width=True,
                        height=500, on_select="rerun", selection_mode="multi-row",
                        key="sgc_bajas_tabla", column_config={
                            D.ID: None,
                            "Fecha de baja": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                           "Fecha fin contrato": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                           C.TOTAL_CUOTA: st.column_config.NumberColumn(format="localized")})
+                           "Fecha fin contrato": st.column_config.DateColumn(format="DD/MM/YYYY")})
     filas = sel.selection.rows if sel else []
     if filas and st.button("Reactivar %d suministro(s)" % len(filas), icon=":material/undo:"):
         D.dar_de_baja([int(df.iloc[i][D.ID]) for i in filas], _usuario(), baja=False)

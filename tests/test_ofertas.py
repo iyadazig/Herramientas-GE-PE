@@ -517,8 +517,13 @@ class GasFormulario(unittest.TestCase):
         s = suministro_gas(presion=6.0, dias=5)
         t = op.tabla_tecnicos([s])
         self.assertEqual((t.loc[0, "Tarifa"], t.loc[0, "Consumo anual kWh"]),
-                         ("RL05", 1_200_000))
+                         ("RL05", "1.200.000"))                # texto con punto de miles
         self.assertEqual(op.tecnicos_de(t.iloc[0]), s["tecnicos"])
+        self.assertEqual(t.loc[0, op.COLUMNAS_TECNICOS["presion"]], "6")
+        t.loc[0, op.COLUMNAS_TECNICOS["presion"]] = "4.5"          # punto = coma decimal
+        self.assertEqual(op.tecnicos_de(t.iloc[0])["presion"], 4.5)
+        t.loc[0, op.COLUMNAS_TECNICOS["presion"]] = "4,25"
+        self.assertEqual(op.tecnicos_de(t.iloc[0])["presion"], 4.25)
         t.loc[0, op.COLUMNAS_TECNICOS["presion"]] = None
         self.assertIsNone(op.tecnicos_de(t.iloc[0])["presion"])
 

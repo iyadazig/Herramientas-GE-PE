@@ -22,6 +22,7 @@ import streamlit as st
 
 import almacen
 import estilo
+import numeros
 from gemweb_extractor import paginas as gw
 from analisis_ofertas import ayudas
 from ofertas import correo
@@ -169,6 +170,18 @@ def _fecha(texto):
     return datetime.strptime(texto, "%d/%m/%Y").date()
 
 
+def _editable(v) -> str:
+    """Número de una celda editable como texto con coma (sin punto de miles, para que al
+    leerlo no haya duda: «1234,5»); None si está vacía."""
+    return numeros.texto(v, miles=False) or None
+
+
+def _pct_inicial(clave):
+    """Valor guardado de una casilla de porcentaje (número; las solicitudes nuevas lo guardan
+    como texto con coma)."""
+    return numeros.leer(_valor(clave, None)["value"])
+
+
 def _valor(clave, defecto):
     """value= de un control: el de la solicitud cargada si la hay, si no el de por defecto.
     Siempre el mismo en cada recarga (si cambiara, Streamlit reiniciaria el control)."""
@@ -235,9 +248,8 @@ def _subir_plantilla(fichas, cups_sin_ficha, producto, clave):
         return None
     nuevas, cambios = pl.aplicar_plantilla(fichas, leido, producto)
     st.markdown("**Así quedarían los suministros**")
-    st.dataframe(pd.DataFrame(cambios), hide_index=True, use_container_width=True,
-                 column_config={c: st.column_config.NumberColumn(format="localized") for c in (
-                     "Consumo Gemweb (kWh)", "Consumo nuevo (kWh)")})
+    estilo.tabla_es(pd.DataFrame(cambios), hide_index=True, use_container_width=True,
+                    formatos={c: 0 for c in ("Consumo Gemweb (kWh)", "Consumo nuevo (kWh)")})
     if st.button("Aplicar plantilla", type="primary", key=clave + "_aplicar"):
         st.session_state.pop(clave + "_fichero", None)
         return nuevas
@@ -290,10 +302,8 @@ def consideraciones_de(fila) -> dict:
             "temporada": bool(fila[TEMPORADA]),
             "gdo": bool(fila[GDO]), "excedentes": bool(fila[EXCEDENTES]),
             "exencion": exento,
-            "pct_consumo_exento": (float(fila[PCT_CONSUMO]) if exento and
-                                   _texto(fila[PCT_CONSUMO]) else None),
-            "pct_tipo_exencion": (float(fila[PCT_TIPO]) if exento and
-                                  _texto(fila[PCT_TIPO]) else None)}
+            "pct_consumo_exento": numeros.leer(fila[PCT_CONSUMO]) if exento else None,
+            "pct_tipo_exencion": numeros.leer(fila[PCT_TIPO]) if exento else None}
 
 
 def _duraciones(fila) -> list:
@@ -331,7 +341,7 @@ def consideraciones_de_gas(fila) -> dict:
             "inicio": _texto(fila[INICIO]), "duraciones": _duraciones(fila),
             "temporada": False, "gdo": _si(fila[GDO_GAS]),
             "ieh": _texto(fila[IEH]) or so.IEH_REDUCIDO,
-            "pct_ieh": float(fila[PCT_IEH]) if _texto(fila[PCT_IEH]) else None}
+            "pct_ieh": numeros.leer(fila[PCT_IEH])}
 
 
 def fila_de_gas(c: dict, n_plazos: int = 1) -> dict:
@@ -355,8 +365,10 @@ def tabla_tecnicos(fichas: list) -> pd.DataFrame:
                            "Consumo anual kWh": round(consumo)},
                           **{col: t.get(k) for k, col in COLUMNAS_TECNICOS.items()}))
     tabla = pd.DataFrame(filas)
-    for k in NUMEROS_TECNICOS:
-        tabla[COLUMNAS_TECNICOS[k]] = pd.to_numeric(tabla[COLUMNAS_TECNICOS[k]])
+    for k in ("qd", "presion"):                 # decimales con coma (texto)
+        tabla[COLUMNAS_TECNICOS[k]] = [_editable(v) for v in tabla[COLUMNAS_TECNICOS[k]]]
+    tabla[COLUMNAS_TECNICOS["dias"]] = pd.to_numeric(tabla[COLUMNAS_TECNICOS["dias"]])
+    tabla["Consumo anual kWh"] = [numeros.fijo(v, 0) for v in tabla["Consumo anual kWh"]]
     return tabla
 
 
@@ -366,7 +378,7 @@ def tecnicos_de(fila) -> dict:
     for k, col in COLUMNAS_TECNICOS.items():
         valor = fila[col]
         if k in NUMEROS_TECNICOS:
-            t[k] = float(valor) if _texto(valor) else None
+            t[k] = numeros.leer(valor)
         elif k == "termino_fijo":
             t[k] = _texto(valor) or so.CUOTA_FIJA
         else:
@@ -392,9 +404,8 @@ def editor_tecnicos(fichas: list, clave) -> list:
             tabla_tecnicos(fichas), hide_index=True, use_container_width=True,
             disabled=["CUPS", "Tarifa", "Consumo anual kWh"],
             column_config={
-                "Consumo anual kWh": st.column_config.NumberColumn(format="localized"),
-                cols["qd"]: st.column_config.NumberColumn(min_value=0, format="localized"),
-                cols["presion"]: st.column_config.NumberColumn(min_value=0, format="%g"),
+                cols["qd"]: st.column_config.TextColumn(help="Con coma decimal"),
+                cols["presion"]: st.column_config.TextColumn(help="Con coma decimal"),
                 cols["dias"]: st.column_config.NumberColumn(min_value=1, max_value=7, step=1),
                 cols["termino_fijo"]: st.column_config.SelectboxColumn(
                     options=[so.CUOTA_FIJA, so.VARIABLE], required=True),
@@ -440,17 +451,15 @@ def consideraciones_comunes() -> dict:
                                       **_valor("sol_exencion", False),
                                       help=ayudas.AYUDA["sol_exencion"])
         p1, p2 = st.columns(2)
-        comun[PCT_CONSUMO] = p1.number_input("Porcentaje de consumo sujeto a exención (%)",
-                                             min_value=0.0, max_value=100.0,
-                                             disabled=not comun[EXENCION], key="sol_pct_consumo",
-                                             help="Parte del consumo con derecho a la exención "
-                                                  "o reducción (100 % si es todo).",
-                                             **_valor("sol_pct_consumo", None))
-        comun[PCT_TIPO] = p2.number_input("Porcentaje tipo de exención (%)", min_value=0.0,
-                                          max_value=100.0, disabled=not comun[EXENCION],
-                                          key="sol_pct_tipo", **_valor("sol_pct_tipo", None),
-                                          help="Porcentaje de la exención: 85 % (reducción "
-                                               "del art. 98.1) o 100 % (exención total).")
+        comun[PCT_CONSUMO] = estilo.casilla_decimal(
+            p1, "Porcentaje de consumo sujeto a exención (%)", _pct_inicial("sol_pct_consumo"),
+            "sol_pct_consumo", minimo=0, maximo=100, disabled=not comun[EXENCION],
+            help="Parte del consumo con derecho a la exención o reducción (100 % si es todo).")
+        comun[PCT_TIPO] = estilo.casilla_decimal(
+            p2, "Porcentaje tipo de exención (%)", _pct_inicial("sol_pct_tipo"), "sol_pct_tipo",
+            minimo=0, maximo=100, disabled=not comun[EXENCION],
+            help="Porcentaje de la exención: 85 % (reducción del art. 98.1) o 100 % "
+                 "(exención total).")
     return _fechas_comunes(comun)
 
 
@@ -480,9 +489,9 @@ def consideraciones_comunes_gas() -> dict:
                  "eléctrica. General (1.10.1): el resto. Exento: generación eléctrica o "
                  "cogeneración con autorización de Hacienda, reducción química o usos no "
                  "combustibles (Ley 38/1992, art. 51).")
-        comun[PCT_IEH] = st.number_input(
-            "Porcentaje del consumo al que se aplica (%)", min_value=0.0, max_value=100.0,
-            key="sol_pct_ieh", **_valor("sol_pct_ieh", None),
+        comun[PCT_IEH] = estilo.casilla_decimal(
+            st, "Porcentaje del consumo al que se aplica (%)", _pct_inicial("sol_pct_ieh"),
+            "sol_pct_ieh", minimo=0, maximo=100,
             help="Solo si no se aplica a todo el consumo: usos mixtos (art. 50.4) o una parte "
                  "exenta. Vacío = todo el consumo.")
     return _fechas_comunes(comun)
@@ -557,7 +566,7 @@ def tabla_consideraciones(fichas: list, comun: dict, guardado: dict = None,
     for col in [INICIO] + columnas_plazo(tabla.columns):
         tabla[col] = pd.to_datetime(tabla[col])
     for col in (PCT_IEH,) if gas else (PCT_CONSUMO, PCT_TIPO):
-        tabla[col] = pd.to_numeric(tabla[col])
+        tabla[col] = [_editable(numeros.leer(v)) for v in tabla[col]]
     return tabla
 
 
@@ -636,20 +645,19 @@ def seccion_solicitud_ofertas(res: dict) -> None:
             st.caption("Salen de la última factura; cámbialas si hay que pedir otras (kW).")
             potencias = st.data_editor(
                 pd.DataFrame([dict({"CUPS": f["cups"], "Última factura": f.get("ultima_factura")},
-                                   **{p: f["potencias"][n] for n, p in enumerate(so.PERIODOS)})
+                                   **{p: _editable(f["potencias"][n])
+                                      for n, p in enumerate(so.PERIODOS)})
                               for f in fichas]),
                 hide_index=True, use_container_width=True, disabled=["CUPS", "Última factura"],
-                column_config={p: st.column_config.NumberColumn(min_value=0, format="%g")
+                column_config={p: st.column_config.TextColumn(help="kW, con coma decimal")
                                for p in so.PERIODOS},
                 key="sol_potencias_%d" % hash(clave_tablas))
     with st.expander("Consumo anual de cada suministro"):
-        st.dataframe(pd.DataFrame([{
+        estilo.tabla_es(pd.DataFrame([{
             "CUPS": f["cups"], "Alias": f.get("alias") or "",
             "Consumo anual (kWh)": round(so.consumo_anual(f)),
             "De dónde sale el consumo": pl.origen_consumo(f)} for f in fichas]),
-            hide_index=True, use_container_width=True,
-            column_config={"Consumo anual (kWh)": st.column_config.NumberColumn(
-                format="localized")})
+            hide_index=True, use_container_width=True, formatos={"Consumo anual (kWh)": 0})
     for f in fichas:
         if f.get("aviso"):
             # solo es un problema si las facturas cubren mas de un año (dias repetidos)
@@ -661,7 +669,8 @@ def seccion_solicitud_ofertas(res: dict) -> None:
                "cambias algo de arriba, esta tabla vuelve a empezar con ello.")
     columnas = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
                 for c in [INICIO] + columnas_plazo(comun)}
-    columnas.update({c: st.column_config.NumberColumn(min_value=0, max_value=100, format="%.2f")
+    columnas.update({c: st.column_config.TextColumn(help="Porcentaje (0 a 100) con coma "
+                                                         "decimal")
                      for c in ((PCT_IEH,) if gas else (PCT_CONSUMO, PCT_TIPO))})
     columnas.update({c: st.column_config.CheckboxColumn()
                      for c in (COLUMNAS_CASILLA_GAS if gas else COLUMNAS_CASILLA)})
@@ -691,8 +700,7 @@ def seccion_solicitud_ofertas(res: dict) -> None:
                 c["ieh"] = ieh
                 sin_reducido.append(s["cups"])
         else:
-            s["potencias"] = [None if _texto(fila_p[p]) == "" else float(fila_p[p])
-                              for p in so.PERIODOS]
+            s["potencias"] = [numeros.leer(fila_p[p]) for p in so.PERIODOS]
             s["consideraciones"] = consideraciones_de(fila_c)
         s["fecha_inicio"] = s["consideraciones"]["inicio"]
         suministros.append(s)
@@ -819,9 +827,8 @@ def pagina_solicitudes_guardadas():
         "Consumo anual kWh": s["consumo"], "Recepción desde": s["recepcion_desde"],
         "Recepción hasta": s["recepcion_hasta"], "Estado": s["estado"],
         "Comercializadoras": s["comercializadoras"]} for s in filtradas])
-    st.dataframe(tabla, hide_index=True, use_container_width=True,
-                 column_config={"Consumo anual kWh": st.column_config.NumberColumn(
-                     format="localized")})
+    estilo.tabla_es(tabla, hide_index=True, use_container_width=True,
+                    formatos={"Consumo anual kWh": 0})
     estilo.borrar_mios("Solicitud de ofertas", filtradas, lambda s: "Nº %d · %s · %s" % (
         s["id"], _fecha_hora(s["fecha"]), s["cliente"] or s["ref"] or "—"),
         almacen.borrar_solicitud, "of_borrar", que="solicitudes")
