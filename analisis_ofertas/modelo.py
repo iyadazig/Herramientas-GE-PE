@@ -153,8 +153,9 @@ class Oferta:
     desvios: float = 0.0                   # €/MWh en barras
     fee: float = 0.0                       # €/MWh
     base_fee: str = NETO
-    k: float = 0.0                         # K / impuesto municipal
-    k_ssaa: bool = False
+    k: float = 0.0                         # K / impuesto municipal (energía y otros)
+    k_ssaa: bool = False                   # hay una K que se aplica a los SSAA
+    k_ssaa_valor: float = 0.0              # esa K (solo sobre los SSAA)
     gdo: float = 0.0                       # €/MWh
     fnee: str = FNEE_INCLUIDO
     otros_fijos: float = 0.0               # €/CUPS·mes
@@ -285,6 +286,8 @@ def oferta_de_dict(d: dict) -> Oferta:
     d = copy.deepcopy(d)
     validos = {f.name for f in fields(Oferta)}
     d = {k: v for k, v in d.items() if k in validos}
+    if d.get("k_ssaa") and "k_ssaa_valor" not in d:
+        d["k_ssaa_valor"] = d.get("k") or 0.0     # antes la K de los SSAA era la misma
     d["inicio"] = _texto_a_fecha(d.get("inicio"))
     d["cierres"] = [Cierre(**c) for c in d.get("cierres") or []]
     d["precios"] = {g: [PreciosAnio(**p) for p in lista]

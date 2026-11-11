@@ -407,7 +407,8 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
         peajes = (c * A).sum(axis=1)
         s_ss = (c * S).sum(axis=1)
         otros = (c * O).sum(axis=1)
-        k_im = o.k * (energia + otros + (s_ss if o.k_ssaa else 0))
+        # K / impuesto municipal sobre energía y otros; la de los SSAA, con su propio valor
+        k_im = o.k * (energia + otros) + (o.k_ssaa_valor * s_ss if o.k_ssaa else 0)
         servicios = np.full(D, o.otros_fijos + float(s.alquiler or 0))
         kwh = c.sum(axis=1)
         # IEE: tipo del año de contrato sobre la base (sin servicios ni alquiler); ya no se

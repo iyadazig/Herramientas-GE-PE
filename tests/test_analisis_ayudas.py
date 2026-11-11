@@ -56,12 +56,17 @@ class Avisos(unittest.TestCase):
         self.assertEqual(ayudas.avisos_coherencia(o), [])
 
     def test_k_y_factor_de_ssaa_a_la_vez(self):
-        av = ayudas.avisos_coherencia(self.pt(k_ssaa=True, ssaa_f2=1.015))
+        av = ayudas.avisos_coherencia(self.pt(k_ssaa=True, k_ssaa_valor=0.015, ssaa_f2=1.015))
         self.assertTrue(any("dos veces" in x for x in av))
         self.assertFalse(any("dos veces" in x for x in ayudas.avisos_coherencia(
             self.pt(k_ssaa=False, ssaa_f2=1.015))))
         self.assertFalse(any("dos veces" in x for x in ayudas.avisos_coherencia(
-            self.pt(k_ssaa=True, ssaa_f1=1.02))))
+            self.pt(k_ssaa=True, k_ssaa_valor=0.015, ssaa_f1=1.02))))
+
+    def test_k_de_ssaa_sin_valor(self):
+        av = ayudas.avisos_coherencia(self.pt(k_ssaa=True, k_ssaa_valor=0.0))
+        self.assertTrue(any("K de los SSAA» está a 0" in x for x in av))
+        self.assertEqual(ayudas.avisos_coherencia(self.pt(k_ssaa=True, k_ssaa_valor=0.02)), [])
 
     def test_fijo_con_componentes_de_mercado(self):
         o = mo.Oferta(modalidad=mo.FIJO, pagos_capacidad=True)
@@ -96,14 +101,16 @@ class Formula(unittest.TestCase):
 class FormulaLatex(unittest.TestCase):
     def test_pass_through_con_k_sobre_ssaa(self):
         o = mo.Oferta(modalidad=mo.PASS_THROUGH, atr_incluido=False, pagos_capacidad=True,
-                      fee=1.0, k=0.015, k_ssaa=True, ssaa_modo=mo.SSAA_PERIODO,
-                      ssaa_perdidas=mo.PERD_TARIFA)
+                      fee=1.0, k=0.015, k_ssaa=True, k_ssaa_valor=0.02,
+                      ssaa_modo=mo.SSAA_PERIODO, ssaa_perdidas=mo.PERD_TARIFA)
         f, ley = ayudas.formula_latex(o)
         self.assertTrue(f.startswith(r"\begin{aligned}") and f.endswith(r"\end{aligned}"))
         self.assertIn(r"\Big[", f)
         self.assertIn(r"\Big]\times(1+1{,}5\%)", f)
-        # los SSAA van dentro del corchete de la K y los peajes fuera
-        self.assertLess(f.index("SSAA"), f.index(r"\Big]"))
+        # los SSAA van fuera del corchete de la K, con su propia K, y los peajes también fuera
+        self.assertGreater(f.index("SSAA"), f.index(r"\Big]"))
+        self.assertIn(r"\times(1+2\%)", f)
+        self.assertTrue(any("K de los SSAA" in x for x in ley))
         self.assertGreater(f.index("Peajes y cargos"), f.index(r"\Big]"))
         self.assertTrue(any("Apunt." in x for x in ley))
         self.assertNotIn(chr(8), f)
@@ -119,9 +126,10 @@ class FormulaLatex(unittest.TestCase):
                       fee=1.0, base_fee=mo.BARRAS, fnee=mo.BARRAS, gdo=2.0, k=0.015,
                       k_ssaa=True, ssaa_modo=mo.SSAA_PERIODO, ssaa_perdidas=mo.PERD_TARIFA)
         f, ley = ayudas.formula_latex(o)
-        self.assertEqual(f.count(r"\times (1+\text{Pérdidas})"), 1)    # todo en un paréntesis
+        # energía y otros en un paréntesis; los SSAA (con su propia K) en otro
+        self.assertEqual(f.count(r"\times (1+\text{Pérdidas})"), 2)
         grupo = f[:f.index(r"\times (1+\text{Pérdidas})")]
-        for termino in ("OMIE", "Capacidad", "Fee", "FNEE", "SSAA"):
+        for termino in ("OMIE", "Capacidad", "Fee", "FNEE"):
             self.assertIn(termino, grupo)
         self.assertNotIn("GdO", grupo)                                   # la GdO va sin pérdidas
         self.assertTrue(f.endswith(r"\bigg\}\times(1+\text{I.E.})\end{aligned}"))

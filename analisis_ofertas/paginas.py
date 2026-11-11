@@ -1064,11 +1064,14 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
                           help=AY["base_fee"])
         _importe(c3, "Garantías de origen (€/MWh)", o, "gdo", k + "gdo", help=AY["gdo"])
         o.fnee = _sel(c4, "FNEE", mo.MODOS_FNEE, o.fnee, k + "fnee", help=AY["fnee"])
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         _importe(c1, "K / impuesto municipal (%)", o, "k", k + "k", 100, help=AY["k"])
         o.k_ssaa = _chk(c2, "La K se aplica a los SSAA", o.k_ssaa, k + "kss",
                         help=AY["k_ssaa"])
-        _importe(c3, "Otros costes fijos (€/CUPS·mes)", o, "otros_fijos", k + "otf",
+        if o.k_ssaa:
+            _importe(c3, "K de los SSAA (%)", o, "k_ssaa_valor", k + "kssv", 100,
+                     help=AY["k_ssaa_valor"])
+        _importe(c4, "Otros costes fijos (€/CUPS·mes)", o, "otros_fijos", k + "otf",
                  help=AY["otros_fijos"])
         st.markdown("**Servicios de ajuste (SSAA)**")
         c1, c2, c3, c4 = st.columns(4)

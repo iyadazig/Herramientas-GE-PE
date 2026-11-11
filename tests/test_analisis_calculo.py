@@ -310,10 +310,32 @@ class Ssaa(unittest.TestCase):
                                          ssaa_pct_perdidas=0.05), 24000 * 0.01 * 1.05)
 
     def test_k_sobre_ssaa(self):
+        # la K / impuesto municipal va sobre la energía; la de los SSAA, con su propio valor
         e = estudio()
-        o = fijo(0.1, ssaa_modo=mo.SSAA_PLANO, k=0.02, k_ssaa=True)
+        o = fijo(0.1, ssaa_modo=mo.SSAA_PLANO, k=0.02, k_ssaa=True, k_ssaa_valor=0.03)
         r = calculo.calcular_oferta(e, o)
-        self.assertAlmostEqual(r.conceptos["k"].sum(), 0.02 * (2400 + 240))
+        self.assertAlmostEqual(r.conceptos["k"].sum(), 0.02 * 2400 + 0.03 * 240)
+        o = fijo(0.1, ssaa_modo=mo.SSAA_PLANO, k=0.02, k_ssaa=False, k_ssaa_valor=0.03)
+        self.assertAlmostEqual(calculo.calcular_oferta(e, o).conceptos["k"].sum(), 0.02 * 2400)
+        o = fijo(0.1, ssaa_modo=mo.SSAA_PLANO, k=0.0, k_ssaa=True, k_ssaa_valor=0.03)
+        self.assertAlmostEqual(calculo.calcular_oferta(e, o).conceptos["k"].sum(), 0.03 * 240)
+
+    def test_k_ssaa_de_analisis_antiguos(self):
+        # antes «La K se aplica a los SSAA» usaba la misma K: al cargarlos se conserva
+        o = mo.oferta_de_dict({"k": 0.015, "k_ssaa": True})
+        self.assertEqual(o.k_ssaa_valor, 0.015)
+        self.assertEqual(mo.oferta_de_dict({"k": 0.015, "k_ssaa": False}).k_ssaa_valor, 0.0)
+        o = mo.oferta_de_dict({"k": 0.015, "k_ssaa": True, "k_ssaa_valor": 0.02})
+        self.assertEqual(o.k_ssaa_valor, 0.02)
+
+    def test_banda_con_la_media_mensual_salvo_perfil(self):
+        # SSAA estimado del mes = 10 €/MWh; apuntamiento de SSAA 1,5 (P1) y 0,5 (P6)
+        banda = dict(ssaa_modo=mo.SSAA_BANDA, banda_min=8, banda_max=14)
+        self.assertEqual(self.ssaa(**banda), 0.0)                # 10 está dentro de la banda
+        # con perfil: P1 15 → paga 1 €/MWh; P6 5 → abona 3 €/MWh (12.000 kWh cada uno)
+        self.assertAlmostEqual(self.ssaa(**banda, ssaa_perfil=True), 12 - 36)
+        # sin perfil, la media del mes por encima del máximo: 1 €/MWh sobre 24.000 kWh
+        self.assertAlmostEqual(self.ssaa(ssaa_modo=mo.SSAA_BANDA, banda_min=4, banda_max=9), 24)
 
 
 class Otros(unittest.TestCase):

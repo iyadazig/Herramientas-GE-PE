@@ -61,7 +61,11 @@ AYUDA = {
          "sobre la energía y los otros conceptos. Si la fórmula multiplica por 1,015, pon 1,5. "
          "En precio fijo normalmente va incluida en el precio: deja 0 salvo que la fórmula la "
          "aplique aparte.",
-    "k_ssaa": "Márcalo si la K (× 1,015) también multiplica a los servicios de ajuste.",
+    "k_ssaa": "Márcalo si la oferta aplica una K a los servicios de ajuste; escribe su valor "
+              "en «K de los SSAA». La «K / impuesto municipal» solo se aplica a la energía y a "
+              "los otros conceptos (FNEE, GdO, fee).",
+    "k_ssaa_valor": "K que se aplica solo a los SSAA, en % (por ejemplo 1,5). Es independiente "
+                    "de la «K / impuesto municipal», que se aplica a la energía y otros.",
     "otros_fijos": "Cargos fijos al mes por CUPS que cobre la oferta (servicios, alquileres no "
                    "regulados…). El alquiler del contador va en la tabla de suministros.",
     "desvios": "Coste de desvíos en €/MWh, en barras (con pérdidas), si la oferta lo cobra aparte "
@@ -306,8 +310,15 @@ def avisos_coherencia(o: mo.Oferta) -> list:
         if precios and max(precios) < 60:
             a.append("Precio fijo «con ATR» por debajo de 60 €/MWh: ¿seguro que incluye peajes "
                      "y cargos?")
-    if o.ssaa_modo != mo.SSAA_INCLUIDOS and o.k_ssaa and o.k:
-        dobles = [f for f in (o.ssaa_f1, o.ssaa_f2) if f and abs(f - (1 + o.k)) < 0.0005]
+    if o.ssaa_modo != mo.SSAA_INCLUIDOS and o.k_ssaa and not o.k_ssaa_valor:
+        a.append("Has marcado «La K se aplica a los SSAA» pero «K de los SSAA» está a 0: "
+                 "escribe su valor o desmárcalo.")
+    if o.k_ssaa and o.k_ssaa_valor and o.k_ssaa_valor > 0.05:
+        a.append(f"K de los SSAA del {o.k_ssaa_valor * 100:.2f} %".replace(".", ",")
+                 + ": escríbela en %, por ejemplo 1,5 (no 150).")
+    if o.ssaa_modo != mo.SSAA_INCLUIDOS and o.k_ssaa and o.k_ssaa_valor:
+        dobles = [f for f in (o.ssaa_f1, o.ssaa_f2)
+                  if f and abs(f - (1 + o.k_ssaa_valor)) < 0.0005]
         if dobles:
             a.append("La K ya se aplica a los SSAA y además hay un factor de SSAA de "
                      f"{dobles[0]:.4f}".replace(".", ",") + ": el impuesto municipal se "
@@ -358,7 +369,9 @@ def resumen_formula(o: mo.Oferta) -> str:
     if otros:
         partes.append(" + ".join(otros))
     if o.k:
-        partes.append(f"K {n(o.k * 100, 4)} %" + (" (también sobre SSAA)" if o.k_ssaa else ""))
+        partes.append(f"K {n(o.k * 100, 4)} %")
+    if o.k_ssaa and o.k_ssaa_valor and o.ssaa_modo != mo.SSAA_INCLUIDOS:
+        partes.append(f"K SSAA {n(o.k_ssaa_valor * 100, 4)} %")
     partes.append("potencia " + ("del BOE" if o.potencia == mo.POT_REGULADA else "propia"))
     return " · ".join(partes)
 
@@ -445,9 +458,7 @@ def formula_latex(o: mo.Oferta):
                     mo.SSAA_TECHO: f"Se paga solo lo que pase de {o.techo:g} €/MWh."}[o.ssaa_modo])
     else:
         ley.append("SSAA incluidos en el precio: no se suman.")
-    ssaa_en_k = bool(ssaa and o.k and o.k_ssaa)
-    if ssaa_en_k:
-        (con_perdidas if ssaa_perd else sin_perdidas).append(ssaa)
+    k_ss = bool(ssaa and o.k_ssaa and o.k_ssaa_valor)      # K propia de los SSAA
 
     def grupo(terminos, por_linea=4):
         """Paréntesis × (1 + Pérdidas); si hay muchos términos se parte en varias líneas para
@@ -467,11 +478,16 @@ def formula_latex(o: mo.Oferta):
     if o.k:
         lineas[0] = r"\Big[\," + lineas[0]
         lineas[-1] += r"\,\Big]\times(1+" + _n(o.k * 100, 6) + r"\%)"
-        ley.append(f"{o.k * 100:g} %".replace(".", ",") + ": K / impuesto municipal"
-                   + (" (también sobre los SSAA)." if o.k_ssaa else "."))
+        ley.append(f"{o.k * 100:g} %".replace(".", ",") + ": K / impuesto municipal "
+                   "(energía y otros).")
     cola = []
-    if ssaa and not ssaa_en_k:
-        cola.append(grupo([ssaa]) if ssaa_perd else ssaa)
+    if ssaa:
+        t = grupo([ssaa]) if ssaa_perd else ssaa
+        if k_ss:
+            t = r"\left(" + t + r"\right)\times(1+" + _n(o.k_ssaa_valor * 100, 6) + r"\%)"
+            ley.append(f"{o.k_ssaa_valor * 100:g} %".replace(".", ",")
+                       + ": K de los SSAA (solo sobre los servicios de ajuste).")
+        cola.append(t)
     if not o.atr_incluido:
         cola.append(_t("Peajes y cargos"))
         ley.append("Peajes y cargos: los de energía del BOE de cada periodo y año.")

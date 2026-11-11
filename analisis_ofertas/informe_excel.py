@@ -408,7 +408,7 @@ def columnas_oferta(o: mo.Oferta, hay_b: bool) -> list:
     for bloque, titulo in BLOQUES_OTROS:
         if usa[clave(bloque)]:
             cols.append((titulo, clave(bloque), bloque))
-    if o.k:
+    if o.k or (o.k_ssaa and o.k_ssaa_valor and o.ssaa_modo != mo.SSAA_INCLUIDOS):
         cols.append(("Impuesto municipal", "K", None))
     return cols + [("IEE", "IEE", None), ("Servicios y alquiler", "SERV", None)]
 
@@ -455,6 +455,7 @@ class HojaOferta:
                 ("Añade SRAD", 1 if o.srad else 0), ("Desvíos (€/MWh, en barras)", o.desvios),
                 ("Fee / coste de gestión (€/MWh)", o.fee), ("Base del fee", o.base_fee),
                 ("K / impuesto municipal", o.k), ("K también sobre SSAA", 1 if o.k_ssaa else 0),
+                ("K de los SSAA", o.k_ssaa_valor),
                 ("GdO (€/MWh)", o.gdo), ("FNEE", o.fnee),
                 ("Otros fijos (€/CUPS·mes)", o.otros_fijos), ("Modo SSAA", o.ssaa_modo),
                 ("Banda mínima (€/MWh)", o.banda_min), ("Banda máxima (€/MWh)", o.banda_max),
@@ -469,7 +470,7 @@ class HojaOferta:
             _put(ws, f"A{f}", k, borde=True, size=9)
             ws.merge_cells(f"A{f}:B{f}")
             _put(ws, f"C{f}", v, PCT if k in ("Descuento (fijo)", "K / impuesto municipal",
-                                             "% pérdidas fijo SSAA") else None,
+                                             "K de los SSAA", "% pérdidas fijo SSAA") else None,
                  fill="in", borde=True, size=9, al="center")
             self.c[k] = f"$C${f}"
         fila = 7 + len(cond) + 1
@@ -732,8 +733,10 @@ class HojaOferta:
                          EUR2, borde=True)
             if "K" in ci:
                 base_k = [f"{X(k_)}{f}" for _t, k_, _b in cols if k_ in K_BASE]
-                ss = f"+IF({c('K también sobre SSAA')}=1,{X('SSAA')}{f},0)" if "SSAA" in ci else ""
-                _put(ws, f"{X('K')}{f}", f"={c('K / impuesto municipal')}*({'+'.join(base_k) or '0'}{ss})",
+                ss = (f"+IF({c('K también sobre SSAA')}=1,{c('K de los SSAA')}*{X('SSAA')}{f},0)"
+                      if "SSAA" in ci else "")
+                _put(ws, f"{X('K')}{f}",
+                     f"={c('K / impuesto municipal')}*({'+'.join(base_k) or '0'}){ss}",
                      EUR2, borde=True)
             # base del IEE: todos los conceptos salvo el propio IEE y los servicios
             _put(ws, f"{CB}{f}", f"=SUM(J{f}:{CL(ci['IEE'] - 1)}{f})", EUR2, borde=True, color="7F7F7F")

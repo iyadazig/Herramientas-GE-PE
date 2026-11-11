@@ -119,6 +119,7 @@ def oferta_de(ws, cups_por_n: dict) -> mo.Oferta:
                   pagos_capacidad=c["pc"] == "Sí", os=c["os"] == "Sí", om=c["om"] == "Sí",
                   srad=c["srad"] == "Sí", desvios=_n(c["desvios"]), fee=_n(c["fee"]),
                   base_fee=c["base_fee"] or mo.NETO, k=_n(c["k"]), k_ssaa=c["k_ssaa"] == "Sí",
+                  k_ssaa_valor=_n(c["k"]) if c["k_ssaa"] == "Sí" else 0.0,
                   gdo=_n(c["gdo"]), fnee=c["fnee"] or mo.FNEE_INCLUIDO,
                   otros_fijos=_n(c["otros_fijos"]), ssaa_modo=c["ssaa_modo"] or mo.SSAA_INCLUIDOS,
                   banda_min=_n(c["banda_min"]), banda_max=_n(c["banda_max"]),
