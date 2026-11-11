@@ -158,57 +158,74 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
     s_gris = _st("gris", 6.5, color=C["gris"], cursiva=True)
     filas = filas + [None] * (n_cols - len(filas))
     validas = [f for f in filas if f]
-    # ranking y mejor oferta: por la variación frente al contrato actual en los mismos meses
-    minimo = min(validas, key=resultados.orden) if validas else None
-    rank = {f["nombre"]: i for i, f in enumerate(sorted(validas, key=resultados.orden), 1)}
-    variacion = lambda f: f["variacion"]
+    # bloque principal: primer año frente al contrato actual en esos meses (ranking y mejor
+    # oferta); bloque gris: periodo total de cada oferta con su propio ranking
+    minimo = min(validas, key=resultados.orden_anio1) if validas else None
+    rank1 = {f["nombre"]: i for i, f in enumerate(sorted(validas, key=resultados.orden_anio1), 1)}
+    rankp = {f["nombre"]: i for i, f in enumerate(sorted(validas, key=resultados.orden), 1)}
+    rojo = lambda v: C["rojo"] if (v or 0) < 0 else colors.black
+
+    def celda(f, texto, estilo):
+        return Paragraph(texto(f), estilo) if f else Paragraph("-", estilo)
+
+    def gris(texto):
+        return ([celda(f, texto, s_gris) for f in filas]
+                + [Paragraph(texto(minimo) if minimo else "-", s_gris)])
+
     actual_txt = f"Contrato actual<br/>{escape(act['nombre'])}"
+    eur_mwh = lambda v: "-" if v is None else _num(v, 2) + " €/MWh"
     datos = [
         [Paragraph(actual_txt, _st("ac", 8, True, colors.white)),
          Paragraph(escape(titulo), _st("tt", 9, True, colors.white))] + [""] * (n_cols - 1)
         + [Paragraph("Mejor oferta", _st("om", 9, True, colors.white))],
         [""] + [Paragraph(cabecera_oferta(f), s_cab) if f else Paragraph("-", s_cab) for f in filas]
         + [""],
+        # primer año
         [Paragraph(_eur(act["total"], " €/año"), s_val)]
-        + [Paragraph(_eur(f["media_anual"], " €/año"), s_val) if f else "-" for f in filas]
-        + [Paragraph(_eur(minimo["media_anual"], " €/año") if minimo else "-", _st("mv", 8, True))],
-        [Paragraph(_num(act["eur_kwh"], 4) + " €/kWh", s_val)]
-        + [Paragraph(_num(f["eur_kwh"], 4) + " €/kWh", s_val) if f else "-" for f in filas]
-        + [Paragraph(_num(minimo["eur_kwh"], 4) + " €/kWh" if minimo else "-", _st("mk", 8, True))],
+        + [Paragraph(_eur(f["anio1"], " €/año"), s_val) if f else "-" for f in filas]
+        + [Paragraph(_eur(minimo["anio1"], " €/año") if minimo else "-", _st("mv", 8, True))],
+        [Paragraph(eur_mwh(act["eur_mwh"]), s_val)]
+        + [Paragraph(eur_mwh(f["anio1_eur_mwh"]), s_val) if f else "-" for f in filas]
+        + [Paragraph(eur_mwh(minimo["anio1_eur_mwh"]) if minimo else "-", _st("mk", 8, True))],
         [Paragraph("Variación sobre<br/>contrato actual", s_lbl)]
-        + [Paragraph(_pct(variacion(f)), _st("v", 8, color=C["rojo"] if (variacion(f) or 0) < 0
-                                               else colors.black)) if f else "-" for f in filas]
-        + [Paragraph(_pct(variacion(minimo)) if minimo else "-",
-                     _st("mv2", 8, True, C["rojo"] if minimo and (variacion(minimo) or 0) < 0
-                         else colors.black))],
-        [""] + [Paragraph(_eur(f["media_anual"] - f["actual_mismo_periodo"], " €"),
-                          _st("d", 8, color=C["rojo"] if f["media_anual"] < f["actual_mismo_periodo"]
-                              else colors.black)) if f and f["actual_mismo_periodo"] else "-"
-                for f in filas]
-        + [Paragraph(_eur(minimo["media_anual"] - minimo["actual_mismo_periodo"], " €")
-                     if minimo and minimo["actual_mismo_periodo"] else "-", _st("md", 8, True))],
+        + [Paragraph(_pct(f["variacion_anio1"]), _st("v", 8, color=rojo(f["variacion_anio1"])))
+           if f else "-" for f in filas]
+        + [Paragraph(_pct(minimo["variacion_anio1"]) if minimo else "-",
+                     _st("mv2", 8, True, rojo(minimo and minimo["variacion_anio1"])))],
+        [""] + [Paragraph(_eur(f["dif_anio1"], " €"), _st("d", 8, color=rojo(f["dif_anio1"])))
+                if f and f["dif_anio1"] is not None else "-" for f in filas]
+        + [Paragraph(_eur(minimo["dif_anio1"], " €") if minimo and minimo["dif_anio1"] is not None
+                     else "-", _st("md", 8, True, rojo(minimo and minimo["dif_anio1"])))],
         [Paragraph("Ranking de oferta", s_lbl)]
-        + [Paragraph(str(rank[f["nombre"]]), _st("rk", 9, True)) if f else "-" for f in filas]
+        + [Paragraph(str(rank1[f["nombre"]]), _st("rk", 9, True)) if f else "-" for f in filas]
         + [Paragraph(cabecera_oferta(minimo).replace("<br/>", " ") if minimo else "-",
                      _st("mn", 7, True))],
-        [Paragraph("Contrato actual en el mismo periodo (€/año)", s_gris)]
-        + [Paragraph(_eur(f["actual_mismo_periodo"]), s_gris) if f else Paragraph("-", s_gris)
-           for f in filas]
-        + [Paragraph(_eur(minimo["actual_mismo_periodo"]) if minimo else "-", s_gris)]]
+        # periodo total de cada oferta (en gris)
+        [Paragraph("Contrato actual en el mismo periodo que la oferta analizada (€/año)", s_gris)]
+        + gris(lambda f: _eur(f["actual_mismo_periodo"])),
+        [Paragraph("Oferta analizada en su periodo total (€/año)", s_gris)]
+        + gris(lambda f: _eur(f["media_anual"])),
+        [Paragraph("Diferencia en su periodo total", s_gris)]
+        + gris(lambda f: _pct(f["variacion"])),
+        [""] + gris(lambda f: _eur(f["media_anual"] - f["actual_mismo_periodo"], " €")
+                    if f["actual_mismo_periodo"] else "-"),
+        [Paragraph("Ranking en su periodo total", s_gris)]
+        + gris(lambda f: str(rankp[f["nombre"]]))]
     t = Table(datos, colWidths=[COL_ETIQ] + [ancho_of] * n_cols + [COL_MIN],
-              rowHeights=[6.5 * mm, 11.5 * mm, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, 8 * mm, 6 * mm])
+              rowHeights=[6.5 * mm, 11.5 * mm, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, 8 * mm,
+                          8.5 * mm, 6 * mm, 4.4 * mm, 4.4 * mm, 4.8 * mm])
     ult = n_cols + 1
     est = [("SPAN", (0, 0), (0, 1)), ("SPAN", (1, 0), (n_cols, 0)), ("SPAN", (ult, 0), (ult, 1)),
-           ("SPAN", (0, 4), (0, 5)),
+           ("SPAN", (0, 4), (0, 5)), ("SPAN", (0, 9), (0, 10)),
            ("BACKGROUND", (0, 0), (0, 1), C["teal"]), ("BACKGROUND", (1, 0), (n_cols, 0), C["teal"]),
            ("BACKGROUND", (ult, 0), (ult, 1), C["minh"]),
            ("BACKGROUND", (1, 1), (n_cols, 1), C["lteal"]),
            ("BACKGROUND", (0, 2), (0, 3), C["act"]), ("BACKGROUND", (0, 4), (0, 6), C["lteal"]),
            ("BACKGROUND", (ult, 2), (ult, 6), C["min"]),
-           ("GRID", (0, 0), (-1, -2), 0.4, C["linea"]),
+           ("GRID", (0, 0), (-1, 6), 0.4, C["linea"]),
            ("BOX", (0, 0), (0, 6), 1.2, colors.black), ("BOX", (1, 0), (n_cols, 6), 1.2, colors.black),
            ("BOX", (ult, 0), (ult, 6), 1.2, colors.black),
-           ("BOX", (0, 7), (-1, 7), 0.4, C["linea"]), ("INNERGRID", (0, 7), (-1, 7), 0.4, C["linea"]),
+           ("BOX", (0, 7), (-1, -1), 0.4, C["linea"]), ("INNERGRID", (0, 7), (-1, -1), 0.4, C["linea"]),
            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 0), (-1, -1), "CENTER"),
            ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
            ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]
@@ -276,21 +293,20 @@ def _notas(e: mo.Estudio, anios: list, medias: list) -> list:
         "El coste recoge todos los conceptos de la factura eléctrica (término de potencia, energía, "
         "peajes y cargos, servicios de ajuste, FNEE, garantías de origen, impuesto municipal e impuesto "
         "eléctrico) salvo IVA, excesos de potencia y energía reactiva.",
-        "€/año: coste medio anual durante la duración de cada oferta. La variación se calcula frente al "
-        "coste del contrato actual en esos mismos meses (fila «Contrato actual en el mismo periodo»). "
-        "La columna del contrato actual muestra su primer año.",
-        "Las ofertas con cabecera naranja tienen una duración superior a 12 meses. El ranking y la "
-        "mejor oferta de cada tabla se establecen por la variación frente al contrato actual en el "
-        "mismo periodo."]
+        "€/año y €/MWh: coste del primer año de cada oferta y del contrato actual. La variación, el "
+        "ranking y la mejor oferta comparan ese primer año con el contrato actual en esos mismos "
+        "meses.",
+        "En gris, el periodo total de cada oferta: su coste medio anual durante toda su duración "
+        "frente al contrato actual en esos mismos meses, la diferencia y el ranking por esa "
+        "diferencia. Las ofertas con cabecera naranja duran más de 12 meses."]
 
 
 def _pagina_informe(e, res, ref, n_cols, ancho_of, ancho_util, con_logo=True) -> list:
     filas = resultados.comparativa(res)
     actual = res.get("actual")
-    p = actual.por_anio()[0] if actual else {"total": None, "consumo": 0}
     act = {"nombre": (nombre_corto(actual.oferta.comercializadora, "") +
                       ("" if actual.oferta.modalidad == mo.FIJO else " index.")) if actual else "",
-           "total": p["total"], "eur_kwh": p["total"] / p["consumo"] if p.get("consumo") else None}
+           **resultados.actual_primer_anio(res)}
     h = _cabecera(e, ancho_util, "RESUMEN DEL ESTUDIO DE OFERTAS DE RENOVACIÓN", ref, con_logo)
     for tipo, titulo in (("Fijo", "Estimación facturación ofertas a precio fijo (€/año)"),
                          ("Indexado", "Estimación facturación ofertas indexadas (€/año)")):

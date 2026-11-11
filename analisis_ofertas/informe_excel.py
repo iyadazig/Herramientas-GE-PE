@@ -812,38 +812,57 @@ class HojaOferta:
                 fila = g0 + D + 2
         # resultado
         c0 = 5
+        m1 = min(12, D)                          # primer año (anualizado si dura menos)
+        f1 = f0 + m1 - 1
         filas = [("Meses del contrato", D, "0"), ("Coste total del contrato (€)", f"={CT}{ft}", EUR),
                  ("Consumo del contrato (MWh)", f"=C{ft}/1000", "#,##0.0"),
                  ("Coste medio anual (€/año)", f"={CT}{ft}*12/{D}", EUR),
                  ("Coste unitario (€/MWh)", f"=IF(C{ft}=0,\"\",{CT}{ft}/C{ft}*1000)", EUR2),
-                 ("Coste año 1 (€)", f"=SUM({CT}{f0}:{CT}{f0 + min(12, D) - 1})", EUR)]
-        for i, (k, v, fmt) in enumerate(filas):
-            f = 7 + i
-            ws.merge_cells(start_row=f, start_column=c0, end_row=f, end_column=c0 + 2)
-            _put(ws, f"{CL(c0)}{f}", k, b=True, borde=True, size=9)
-            _put(ws, f"{CL(c0 + 3)}{f}", v, fmt, b=True, fill="min", borde=True, al="right")
-            self.res_fila[k] = f"{_q(self.nombre)}${CL(c0 + 3)}${f}"
+                 ("Coste año 1 (€/año)", f"=SUM({CT}{f0}:{CT}{f1})*12/{m1}", EUR),
+                 ("Consumo año 1 (MWh)", f"=SUM(C{f0}:C{f1})/1000", "#,##0.0"),
+                 ("Coste unitario año 1 (€/MWh)",
+                  f"=IF(SUM(C{f0}:C{f1})=0,\"\",SUM({CT}{f0}:{CT}{f1})/SUM(C{f0}:C{f1})*1000)", EUR2)]
+        self._escribir_resultado(filas, 7)
         self.res_fila["_fila_libre"] = 7 + len(filas)
 
-    def comparar_con_actual(self, actual: "HojaOferta"):
-        """Contrato actual en los mismos meses que la oferta y variación."""
+    def _escribir_resultado(self, filas, f_ini):
         ws = self.ws
+        for i, (k, v, fmt) in enumerate(filas):
+            f = f_ini + i
+            ws.merge_cells(start_row=f, start_column=5, end_row=f, end_column=7)
+            _put(ws, f"E{f}", k, b=True, borde=True, size=9)
+            _put(ws, f"H{f}", v, fmt, b=True, fill="min", borde=True, al="right")
+            self.res_fila[k] = f"{_q(self.nombre)}$H${f}"
+
+    def comparar_con_actual(self, actual: "HojaOferta"):
+        """Contrato actual en los mismos meses que la oferta (primer año y periodo total) y la
+        diferencia y variación de cada uno."""
         f = self.res_fila["_fila_libre"]
         a = actual
         rng_f = f"{_q(a.nombre)}$B${a.tot['f0']}:$B${a.tot['ft'] - 1}"
         rng_t = f"{_q(a.nombre)}${a.tot['total']}${a.tot['f0']}:${a.tot['total']}${a.tot['ft'] - 1}"
         ini = f"$B${self.tot['f0']}"
         fin = f"$B${self.tot['ft'] - 1}"
-        filas = [("Contrato actual en los mismos meses (€/año)",
+        m1 = min(12, self.D)
+        fin1 = f"$B${self.tot['f0'] + m1 - 1}"
+        local = lambda k: "$H$" + self.res_fila[k].split("$H$")[1]       # en la misma hoja
+        filas = [("Contrato actual en el primer año de la oferta (€/año)",
+                  f"=SUMIFS({rng_t},{rng_f},\">=\"&{ini},{rng_f},\"<=\"&{fin1})*12/{m1}", EUR),
+                 ("Diferencia año 1 frente al actual (€/año)", "", EUR),
+                 ("Variación año 1 frente al actual", "", PCT),
+                 ("Contrato actual en los mismos meses (€/año)",
                   f"=SUMIFS({rng_t},{rng_f},\">=\"&{ini},{rng_f},\"<=\"&{fin})*12/{self.D}", EUR),
-                 ("Diferencia frente al actual (€/año)", f"=H{f - 3}-H{f}", EUR),
-                 ("Variación frente al actual", f"=IF(N(H{f})=0,\"\",H{f - 3}/H{f}-1)", PCT)]
-        for i, (k, v, fmt) in enumerate(filas):
-            r = f + i
-            ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=7)
-            _put(ws, f"E{r}", k, b=True, borde=True, size=9)
-            _put(ws, f"H{r}", v, fmt, b=True, fill="min", borde=True, al="right")
-            self.res_fila[k] = f"{_q(self.nombre)}$H${r}"
+                 ("Diferencia frente al actual (€/año)", "", EUR),
+                 ("Variación frente al actual", "", PCT)]
+        # las diferencias se escriben después: necesitan las celdas de las filas de arriba
+        self._escribir_resultado(filas, f)
+        a1, act1 = local("Coste año 1 (€/año)"), local("Contrato actual en el primer año de la oferta (€/año)")
+        ap, actp = local("Coste medio anual (€/año)"), local("Contrato actual en los mismos meses (€/año)")
+        for k, v in (("Diferencia año 1 frente al actual (€/año)", f"={a1}-{act1}"),
+                     ("Variación año 1 frente al actual", f"=IF(N({act1})=0,\"\",{a1}/{act1}-1)"),
+                     ("Diferencia frente al actual (€/año)", f"={ap}-{actp}"),
+                     ("Variación frente al actual", f"=IF(N({actp})=0,\"\",{ap}/{actp}-1)")):
+            self.ws[local(k).replace("$", "")] = v
 
 
 # ------------------------------------------------------------------- Resumen (formato Informe)
@@ -864,9 +883,8 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
     ws.merge_cells(f"B7:{MC}7")
     _put(ws, "B7", (e.cliente or "").upper(), b=True, size=13, al="center")
     act_nombre = nombre_corto(actual_h.o.comercializadora) + ("" if actual_h.o.modalidad == mo.FIJO else " index.")
-    act_y1 = actual_h.res_fila["Coste año 1 (€)"]
-    act_kwh = (f"={act_y1}/(SUM({_q(actual_h.nombre)}$C${actual_h.tot['f0']}:$C$"
-               f"{actual_h.tot['f0'] + 11}))")
+    act_y1 = actual_h.res_fila["Coste año 1 (€/año)"]
+    act_mwh = f"={actual_h.res_fila['Coste unitario año 1 (€/MWh)']}"
     fila = 9
     for tipo, titulo in (("Fijo", "Estimación facturación ofertas a precio fijo (€/año)"),
                          ("Indexado", "Estimación facturación ofertas indexadas (€/año)")):
@@ -882,38 +900,58 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
         _put(ws, f"{MC}{t}", "Mejor oferta", b=True, color="FFFFFF", fill="minh", size=11, al="center")
         ws.row_dimensions[t].height = 24
         ws.row_dimensions[t + 1].height = 48
-        rv, rk, rp, re_, rn, rf = t + 2, t + 3, t + 4, t + 5, t + 6, t + 7
-        _put(ws, f"B{rv}", f"={act_y1}", '#,##0 "€/año"', fill="act", al="center", borde=True)
-        _put(ws, f"B{rk}", act_kwh, '0.0000 "€/kWh"', fill="act", al="center", borde=True)
+        # primer año: coste, €/MWh, variación frente al actual en esos meses y ranking
+        rv, rk, rp, re_, rn = t + 2, t + 3, t + 4, t + 5, t + 6
+        # periodo total (en gris): actual en los mismos meses, oferta, diferencia y ranking
+        ga, go, gp, ge, gn = t + 7, t + 8, t + 9, t + 10, t + 11
+        EURA, EURM = '#,##0 "€/año"', '#,##0.00 "€/MWh"'
+        GRIS = dict(it=True, color="7F7F7F", size=8, al="center")
+        _put(ws, f"B{rv}", f"={act_y1}", EURA, fill="act", al="center", borde=True)
+        _put(ws, f"B{rk}", act_mwh, EURM, fill="act", al="center", borde=True)
         ws.merge_cells(f"B{rp}:B{re_}")
         _put(ws, f"B{rp}", "Variación sobre contrato actual", b=True, fill="lteal", al="center", wrap=True, borde=True)
         _put(ws, f"B{rn}", "Ranking de oferta", b=True, fill="lteal", al="center", borde=True)
-        _put(ws, f"B{rf}", "Contrato actual en el mismo periodo (€/año)", it=True, color="7F7F7F", size=8, wrap=True)
+        _put(ws, f"B{ga}", "Contrato actual en el mismo periodo que la oferta analizada (€/año)",
+             it=True, color="7F7F7F", size=8, wrap=True)
+        _put(ws, f"B{go}", "Oferta analizada en su periodo total (€/año)", it=True, color="7F7F7F",
+             size=8, wrap=True)
+        ws.merge_cells(f"B{gp}:B{ge}")
+        _put(ws, f"B{gp}", "Diferencia en su periodo total", it=True, color="7F7F7F", size=8, wrap=True)
+        _put(ws, f"B{gn}", "Ranking en su periodo total", it=True, color="7F7F7F", size=8, wrap=True)
+        ws.row_dimensions[ga].height = 34
+        ws.row_dimensions[go].height = 24
         rng = lambda r_: f"$C${r_}:${CL(2 + n)}${r_}"
         for i in range(n):
             col = CL(3 + i)
             if i < len(de_tipo):
                 fo, h = de_tipo[i]
+                R = h.res_fila
                 _put(ws, f"{col}{t + 1}", cabecera_oferta(fo).replace("<br/>", "\n"), b=True,
                      fill="orange" if fo["duracion"] > 12 else "lteal", size=9, al="center", wrap=True, borde=True)
-                _put(ws, f"{col}{rv}", f"={h.res_fila['Coste medio anual (€/año)']}", '#,##0 "€/año"', al="center", borde=True)
-                _put(ws, f"{col}{rk}", f"={h.res_fila['Coste unitario (€/MWh)']}/1000", '0.0000 "€/kWh"', al="center", borde=True)
-                act_mp = h.res_fila["Contrato actual en los mismos meses (€/año)"]
-                _put(ws, f"{col}{rp}", f"={col}{rv}/{act_mp}-1", PCT, al="center", borde=True)
-                _put(ws, f"{col}{re_}", f"={col}{rv}-{act_mp}", EUR, al="center", borde=True)
-                # ranking por la variación frente al contrato actual en los mismos meses
+                _put(ws, f"{col}{rv}", f"={R['Coste año 1 (€/año)']}", EURA, al="center", borde=True)
+                _put(ws, f"{col}{rk}", f"={R['Coste unitario año 1 (€/MWh)']}", EURM, al="center", borde=True)
+                _put(ws, f"{col}{rp}", f"={R['Variación año 1 frente al actual']}", PCT, al="center", borde=True)
+                _put(ws, f"{col}{re_}", f"={R['Diferencia año 1 frente al actual (€/año)']}", EUR, al="center", borde=True)
                 _put(ws, f"{col}{rn}", f"=RANK({col}{rp},{rng(rp)},1)", "0", b=True, al="center", borde=True)
-                _put(ws, f"{col}{rf}", f"={act_mp}", KWH, it=True, color="7F7F7F", size=8, al="center")
+                _put(ws, f"{col}{ga}", f"={R['Contrato actual en los mismos meses (€/año)']}", KWH, **GRIS)
+                _put(ws, f"{col}{go}", f"={R['Coste medio anual (€/año)']}", KWH, **GRIS)
+                _put(ws, f"{col}{gp}", f"={R['Variación frente al actual']}", PCT, **GRIS)
+                _put(ws, f"{col}{ge}", f"={R['Diferencia frente al actual (€/año)']}", EUR, **GRIS)
+                _put(ws, f"{col}{gn}", f"=RANK({col}{gp},{rng(gp)},1)", "0", **GRIS)
             else:
                 for r_ in (t + 1, rv, rk, rp, re_, rn):
                     _put(ws, f"{col}{r_}", "-", al="center", borde=True, fill="lteal" if r_ == t + 1 else None)
-        pos = f"MATCH(MIN({rng(rp)}),{rng(rp)},0)"           # la de mayor ahorro en %
-        for r_, fmt in ((rv, '#,##0 "€/año"'), (rk, '0.0000 "€/kWh"'), (rp, PCT), (re_, EUR), (rf, KWH)):
-            _put(ws, f"{MC}{r_}", f"=INDEX({rng(r_)},{pos})", fmt, b=r_ != rf, fill="min", al="center", borde=True)
+                for r_ in (ga, go, gp, ge, gn):
+                    _put(ws, f"{col}{r_}", "-", **GRIS)
+        pos = f"MATCH(MIN({rng(rp)}),{rng(rp)},0)"           # mejor variación del primer año
+        for r_, fmt in ((rv, EURA), (rk, EURM), (rp, PCT), (re_, EUR)):
+            _put(ws, f"{MC}{r_}", f"=INDEX({rng(r_)},{pos})", fmt, b=True, fill="min", al="center", borde=True)
+        for r_, fmt in ((ga, KWH), (go, KWH), (gp, PCT), (ge, EUR), (gn, "0")):
+            _put(ws, f"{MC}{r_}", f"=INDEX({rng(r_)},{pos})", fmt, **GRIS)
         _put(ws, f"{MC}{rn}", f"=SUBSTITUTE(INDEX({rng(t + 1)},{pos}),CHAR(10),\" \")", b=True, fill="min",
              al="center", wrap=True, borde=True, size=8)
         ws.row_dimensions[rn].height = 30
-        fila = rf + 3
+        fila = gn + 3
     # notas
     _put(ws, f"B{fila}", "Notas:", b=True)
     sesion = dt.date.fromisoformat(e.sesion_omip).strftime("%d/%m/%Y") if e.sesion_omip else "-"
@@ -922,8 +960,10 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
              "El coste recoge todos los conceptos de la factura (potencia, energía, peajes y cargos, SSAA, "
              "FNEE, garantías de origen, impuesto municipal e impuesto eléctrico) salvo IVA, excesos de "
              "potencia y energía reactiva.",
-             "€/año: coste medio anual durante la duración de cada oferta, comparado con el contrato actual "
-             "en esos mismos meses. El ranking y la mejor oferta se establecen por esa variación. El "
+             "€/año y €/MWh: coste del primer año de cada oferta y del contrato actual. La variación, el "
+             "ranking y la mejor oferta comparan ese primer año con el contrato actual en esos mismos meses.",
+             "En gris, el periodo total de cada oferta: su coste medio anual durante toda su duración frente "
+             "al contrato actual en esos mismos meses, la diferencia y el ranking por esa diferencia. El "
              "detalle de cada cálculo está en la hoja de cada oferta."]
     for i, nt in enumerate(notas):
         ws.merge_cells(f"B{fila + 1 + i}:{MC}{fila + 1 + i}")

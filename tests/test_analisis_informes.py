@@ -59,7 +59,7 @@ def _invade_papel(pdf: bytes) -> list:
             with fitz.open(str(ruta)) as papel:
                 propias = {w[4] for w in papel[0].get_text("words")}
             for x0, y0, x1, y1, w, *_ in p.get_text("words"):
-                if w in propias or w.startswith("Página") or w.isdigit() and y0 > p.rect.height - 30:
+                if w in propias or w.startswith("Página") or w.isdigit() and y0 > p.rect.height - 45:
                     continue
                 arriba = (z["arriba"] - informe_pdf.HUECO) * f
                 abajo = p.rect.height - (z["abajo"] - informe_pdf.HUECO) * f
@@ -102,7 +102,9 @@ class Pdf(unittest.TestCase):
         e = _ofertas(estudio(n_cups=1))
         b = informes.pdf(e, calculo.calcular(e))
         paginas = _paginas(b)
-        self.assertEqual(paginas[0][:2], (595, 842))           # ficha en A4 vertical, la primera
+        ancho, alto = paginas[0][:2]
+        self.assertLess(ancho, alto)                            # ficha vertical, la primera
+        self.assertIn((ancho, alto), ((595, 842), (842, 1191)))  # A4 o A3 (todas iguales)
         self.assertIn("FICHA DEL PUNTO DE SUMINISTRO", paginas[0][2])
         self.assertEqual(_invade_papel(b), [])
 

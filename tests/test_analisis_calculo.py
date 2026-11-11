@@ -453,6 +453,30 @@ class Resultados(unittest.TestCase):
         self.assertEqual([f["ronda"] for f in rondas[0]["rondas"]], [1, 1, 2])
         self.assertEqual(e.ofertas[0].precios["6.1TD"][0].energia[0], 0.1)   # copia aparte
 
+    def test_primer_anio_y_periodo_total(self):
+        """El informe compara el primer año de cada oferta con el contrato actual en esos meses
+        (ranking principal) y, aparte, el periodo total (ranking en gris)."""
+        e = estudio()
+        e.actual = fijo(0.15, nombre="Actual", es_actual=True)
+        corta = fijo(0.10, nombre="12 m", duracion=12)
+        larga = fijo(0.12, nombre="24 m", duracion=24)
+        larga.precios["6.1TD"].append(mo.PreciosAnio(energia=[0.05] * 6))     # año 2 barato
+        e.ofertas = [corta, larga]
+        res = calculo.calcular(e)
+        f = {x["nombre"]: x for x in resultados.comparativa(res)}
+        r_larga = res["ofertas"][1]
+        self.assertAlmostEqual(f["24 m"]["anio1"], float(r_larga.total_mes[:12].sum()))
+        self.assertLess(f["24 m"]["anio1"], r_larga.total)                    # solo el año 1
+        self.assertAlmostEqual(f["24 m"]["actual_anio1"], f["12 m"]["actual_anio1"])
+        self.assertAlmostEqual(f["24 m"]["variacion_anio1"],
+                               f["24 m"]["anio1"] / f["24 m"]["actual_anio1"] - 1)
+        self.assertAlmostEqual(f["12 m"]["anio1_eur_mwh"], f["12 m"]["anio1"] / 24)  # 24 MWh
+        # el primer año gana la de 12 meses; en el periodo total, la de 24
+        self.assertEqual((f["12 m"]["ranking_anio1"], f["24 m"]["ranking_anio1"]), (1, 2))
+        self.assertEqual((f["12 m"]["ranking"], f["24 m"]["ranking"]), (2, 1))
+        act = resultados.actual_primer_anio(res)
+        self.assertAlmostEqual(act["total"], f["12 m"]["actual_anio1"])
+
 
 class Json(unittest.TestCase):
     def test_ida_y_vuelta(self):

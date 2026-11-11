@@ -3,8 +3,11 @@
 RESULTADOS DEL ANALISIS DE OFERTAS
 ==================================
 Tablas para la app, el informe y el correo:
-    comparativa       una fila por oferta: coste medio anual en su duración frente al contrato
-                      actual en los mismos meses, €/kWh, ahorro, variación y ranking
+    comparativa       una fila por oferta: primer año (coste, €/MWh, variación frente al contrato
+                      actual en esos meses y ranking) y periodo total (coste medio anual en su
+                      duración frente al contrato actual en los mismos meses, ahorro, variación
+                      y ranking)
+    actual_primer_anio  coste y €/MWh del contrato actual en los 12 primeros meses
     mejores           oferta de menor coste anual de cada tipo (fijo / indexado)
     cuadro_mercado    precio previsto, OMIP, OMIE y SSAA por trimestre del horizonte
     escenarios        coste de cada oferta con OMIP ± X %
@@ -35,7 +38,18 @@ def comparativa(res: dict) -> list:
     for r in res["ofertas"]:
         o = r.oferta
         act = actual.total_en(r.meses) * 12 / r.n_meses if actual and r.n_meses else None
+        # primer año de la oferta (anualizado si dura menos de 12 meses) y el contrato actual en
+        # esos mismos meses: la comparación homogénea del informe
+        m1 = min(12, r.n_meses)
+        coste1 = float(r.total_mes[:m1].sum()) if m1 else 0.0
+        mwh1 = float(r.consumo[:m1].sum()) / 1000 if m1 else 0.0
+        anio1 = coste1 * 12 / m1 if m1 else None
+        act1 = actual.total_en(r.meses[:m1]) * 12 / m1 if actual and m1 else None
         filas.append({
+            "anio1": anio1, "anio1_eur_mwh": coste1 / mwh1 if mwh1 else None,
+            "actual_anio1": act1,
+            "dif_anio1": (anio1 - act1) if act1 else None,
+            "variacion_anio1": (anio1 / act1 - 1) if act1 else None,
             "nombre": o.nombre, "comercializadora": o.comercializadora, "producto": o.producto,
             "gestor": o.gestor, "email_gestor": o.email_gestor, "ronda": o.ronda,
             "modalidad": o.modalidad, "tipo": tipo(o), "ssaa": o.resumen_ssaa(),
@@ -49,9 +63,30 @@ def comparativa(res: dict) -> list:
     con_variacion = sorted((f for f in filas if f["variacion"] is not None), key=orden)
     for n, f in enumerate(con_variacion, start=1):
         f["ranking"] = n
+    for n, f in enumerate(sorted(filas, key=orden_anio1), start=1):
+        f["ranking_anio1"] = n
     for f in filas:
         f.setdefault("ranking", None)
     return filas
+
+
+def orden_anio1(f: dict):
+    """Ranking del primer año: la variación frente al contrato actual en esos mismos meses
+    (sin contrato actual, el coste del primer año)."""
+    v = f.get("variacion_anio1")
+    return (v is None, v if v is not None else 0.0, f.get("anio1") or 0.0)
+
+
+def actual_primer_anio(res: dict) -> dict:
+    """{"total": €/año, "eur_mwh": €/MWh} del contrato actual en los 12 primeros meses del
+    estudio (columna «Contrato actual» del informe)."""
+    actual = res.get("actual")
+    if not actual or not actual.n_meses:
+        return {"total": None, "eur_mwh": None}
+    m1 = min(12, actual.n_meses)
+    coste = float(actual.total_mes[:m1].sum())
+    mwh = float(actual.consumo[:m1].sum()) / 1000
+    return {"total": coste * 12 / m1, "eur_mwh": coste / mwh if mwh else None}
 
 
 def orden(f: dict):
