@@ -11,7 +11,9 @@ eléctrico y los parámetros de estimación del mercado (% OMIP, años de la med
                                 sobre la semilla, así editar desde la app no cambia el repositorio
 
 Si un año no está (años futuros sin publicar), se usa una copia del último año anterior que sí
-está, marcada con "copia_de" para avisar en los controles del análisis.
+está, marcada con "copia_de" para avisar en los controles del análisis. Sobre esa copia se
+aplican los valores previstos de la semilla para ese año («previsiones», p. ej. el FNEE de
+2027-2029), anotados en "previsto".
 
 Lo usan el análisis de ofertas y el estudio de potencia (precios_potencia(): misma forma que
 potencia/precios.json). Sin Streamlit.
@@ -102,9 +104,31 @@ def datos_anio(anio: int, guardados: dict = None) -> dict:
                        "guardado" if fuente in g else "semilla")
     if fuente != anio:
         datos["copia_de"] = fuente
+        _aplicar_prevision(datos, anio)
     else:
         datos.pop("copia_de", None)
+        datos.pop("previsto", None)
     return datos
+
+
+def _aplicar_prevision(datos: dict, anio: int) -> None:
+    """Sobre la copia de un año sin publicar, los valores previstos de la semilla
+    («previsiones»: p. ej. el FNEE de 2027). Quedan anotados en 'previsto' y en las fuentes."""
+    prev = (_leer_semilla().get("previsiones") or {}).get(str(anio))
+    if not prev:
+        datos.pop("previsto", None)
+        return
+    previstos = []
+    for bloque, valores in prev.items():
+        if bloque.startswith("_") or not isinstance(valores, dict):
+            continue
+        destino = datos.setdefault(bloque, {})
+        for clave, valor in valores.items():
+            destino[clave] = copy.deepcopy(valor)
+            previstos.append(f"{bloque}.{clave}")
+    datos["previsto"] = previstos
+    if prev.get("_fuente"):
+        datos["fuentes"] = list(datos.get("fuentes") or []) + [prev["_fuente"]]
 
 
 def ssaa_estimados(anio: int, guardados: dict = None) -> list:
@@ -271,7 +295,7 @@ def validar_comunes(c: dict) -> list:
 def limpiar(datos: dict) -> dict:
     """Quita las marcas que añade datos_anio antes de guardar."""
     d = copy.deepcopy(datos)
-    for k in ("anio", "origen", "copia_de"):
+    for k in ("anio", "origen", "copia_de", "previsto"):
         d.pop(k, None)
     return d
 

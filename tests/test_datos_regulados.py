@@ -78,11 +78,30 @@ class Anios(unittest.TestCase):
         g[2027]["generales"]["fnee"] = 4.0
         self.assertEqual(dr.datos_anio(2026, g)["generales"]["fnee"], 3.0)
         self.assertEqual(dr.datos_anio(2026, g)["origen"], "guardado")
-        d = dr.datos_anio(2028, g)
+        d = dr.datos_anio(2031, g)                  # 2031 no tiene previsión: copia de 2027
         self.assertEqual((d["copia_de"], d["generales"]["fnee"]), (2027, 4.0))
         exportado = json.loads(dr.exportar_json(g))
         self.assertEqual(list(exportado["anios"]), ["2026", "2027"])
         self.assertNotIn("origen", exportado["anios"]["2027"])
+
+    def test_fnee_de_mercado_libre_y_previsiones(self):
+        """FNEE de mercado libre 2,658 €/MWh en 2026 y previsto para 2027-2029 (sobre la copia
+        de 2026); lo guardado desde Administración para un año manda sobre la previsión."""
+        self.assertEqual(dr.datos_anio(2026, {})["generales"]["fnee"], 2.658)
+        for anio in (2027, 2028, 2029):
+            d = dr.datos_anio(anio, {})
+            self.assertEqual((d["origen"], d["copia_de"]), ("copia", 2026))
+            self.assertEqual(d["generales"]["fnee"], 2.658)
+            self.assertEqual(d["previsto"], ["generales.fnee"])
+            self.assertTrue(any(f"FNEE {anio}" in f for f in d["fuentes"]))
+        g = {2026: dr.limpiar(dr.datos_anio(2026, {}))}
+        g[2026]["generales"]["fnee"] = 1.0
+        self.assertEqual(dr.datos_anio(2027, g)["generales"]["fnee"], 2.658)   # previsión
+        self.assertEqual(dr.datos_anio(2031, g)["generales"]["fnee"], 1.0)     # sin previsión
+        g[2027] = dr.limpiar(dr.datos_anio(2027, g))
+        g[2027]["generales"]["fnee"] = 3.1
+        self.assertNotIn("previsto", g[2027])
+        self.assertEqual(dr.datos_anio(2027, g)["generales"]["fnee"], 3.1)     # guardado manda
 
     def test_la_copia_no_cambia_la_semilla(self):
         d = dr.datos_anio(2026, {})

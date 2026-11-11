@@ -1,5 +1,11 @@
 {
  "_comentario": "Datos regulados por año natural para el análisis de ofertas y el estudio de potencia. Semilla del repositorio: lo que se guarda desde Administración → Datos regulados (base de datos) prevalece. Potencias en €/kW·año, energía y pagos por capacidad en €/kWh, pérdidas en tanto por uno, generales en €/MWh salvo los porcentajes (tanto por uno). 2.0TD: potencia en 2 periodos y energía en 3.",
+ "previsiones": {
+  "_comentario": "Valores previstos para años aún sin publicar: se aplican sobre la copia del último año publicado. Lo guardado desde Administración para ese año prevalece.",
+  "2027": {"generales": {"fnee": 2.658}, "_fuente": "FNEE 2027: 2,658 €/MWh de mercado libre (criterio GE&PE)."},
+  "2028": {"generales": {"fnee": 2.658}, "_fuente": "FNEE 2028: 2,658 €/MWh de mercado libre (criterio GE&PE)."},
+  "2029": {"generales": {"fnee": 2.658}, "_fuente": "FNEE 2029: 2,658 €/MWh de mercado libre (criterio GE&PE)."}
+ },
  "sistemas": [
   "Península",
   "Baleares",
@@ -237,7 +243,7 @@
     "Cargos 2026, pagos por capacidad y pago OM: Orden TED/1524/2025, de 23/12 (BOE núm. 312, 27/12/2025, BOE-A-2025-26705).",
     "Pago OS 2026: Resolución CNMC de 23/12/2025 (BOE núm. 315, 31/12/2025, BOE-A-2025-27211).",
     "Pérdidas: Circular CNMC 3/2020, art. 11 (modif. Circular 1/2025, BOE-A-2025-2044). Tarifas VE = peaje general de su tensión.",
-    "FNEE: Orden TED/133/2026, de 25/02 (BOE-A-2026-4522), apdo. Cuarto (RFE). La comercializadora puede repercutir otro valor.",
+    "FNEE: 2,658 €/MWh, el que se aplica en mercado libre (criterio GE&PE). Los 2,4374639 €/MWh de la Orden TED/133/2026 (BOE-A-2026-4522, apdo. Cuarto) son los del PVPC. La comercializadora puede repercutir otro valor.",
     "IEE: Ley 38/1992, arts. 98 y 99 (5,11269632 %; mínimos 0,5 y 1 €/MWh; reducción del 85 % para usos del art. 98.1).",
     "Peaje+cargo = suma de ambos. Segmentos de cargos: 1=2.0TD, 2=3.0TD, 3=6.1TD, 4=6.2TD, 5=6.3TD, 6=6.4TD; 2VE=3.0TDVE, 3VE=6.1TDVE.",
     "Pagos por capacidad de las tarifas VE: asimilados al segmento de su tensión (3.0TDVE→seg. 2; 6.1TDVE→seg. 3).",
@@ -253,7 +259,7 @@
     "iee_minimo_general": 1.0,
     "iee_minimo_reducido": 0.5,
     "impuesto_municipal": 0.015,
-    "fnee": 2.4374639,
+    "fnee": 2.658,
     "om": 0.0407,
     "os": 0.20332,
     "desvios_coste_ref": 0.441,
