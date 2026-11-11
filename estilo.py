@@ -485,6 +485,39 @@ def borrar_mios(modulo, filas, describir, borrar, clave, que="registros"):
             st.rerun()
 
 
+def casilla_decimal(contenedor, etiqueta, valor, clave, decimales=10, minimo=None, maximo=None,
+                    **kw):
+    """Casilla para un número con decimales en formato español (sustituye a st.number_input,
+    que solo muestra punto): se ve con coma y punto de miles, se escribe con coma o con punto
+    (al salir de la casilla el punto pasa a coma). Devuelve el número; si lo escrito no es un
+    número o se sale de [minimo, maximo], avisa y devuelve el valor anterior."""
+    import numeros
+    if clave not in st.session_state:
+        st.session_state[clave] = numeros.texto(valor, decimales)
+
+    def a_coma():
+        st.session_state[clave] = numeros.con_coma(st.session_state.get(clave))
+
+    escrito = contenedor.text_input(etiqueta, key=clave, on_change=a_coma, **kw)
+    n = numeros.leer(escrito)
+    if n is None:
+        if (escrito or "").strip():
+            contenedor.caption(":red[No es un número: se mantiene el anterior]")
+        return valor
+    if (minimo is not None and n < minimo) or (maximo is not None and n > maximo):
+        contenedor.caption(":red[Fuera de rango (%s a %s): se mantiene el anterior]" % (
+            numeros.texto(minimo) if minimo is not None else "−∞",
+            numeros.texto(maximo) if maximo is not None else "∞"))
+        return valor
+    return n
+
+
+def tabla_es(df, contenedor=None, **kw):
+    """st.dataframe con los decimales en formato español (1.234,5678)."""
+    import numeros
+    return (contenedor or st).dataframe(numeros.tabla(df), **kw)
+
+
 def seccion(numero, titulo, subtitulo=""):
     st.markdown('<div class="gp-seccion"><span class="num">%s</span><span class="tit">%s</span>'
                 '<span class="sub">%s</span></div>' % (numero, titulo, subtitulo),

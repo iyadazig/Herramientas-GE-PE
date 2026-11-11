@@ -77,8 +77,10 @@ class PaginaRegulados(unittest.TestCase):
             at = AppTest.from_function(app, default_timeout=60).run()
             self.assertFalse(at.exception)
             self.assertIn("semilla", at.info[0].value)
-            at.number_input(key=[k for k in at.session_state.filtered_state
-                                 if k.endswith("_g_fnee")][0]).set_value(2.5).run()
+            clave = [k for k in at.session_state.filtered_state if k.endswith("_gt_fnee")][0]
+            self.assertEqual(at.text_input(key=clave).value, "2,658")    # con coma decimal
+            at.text_input(key=clave).input("2.5").run()                  # escrito con punto
+            self.assertEqual(at.text_input(key=clave).value, "2,5")      # se ve con coma
             at.button[0].click().run()
             self.assertFalse(at.exception)
         self.assertEqual(almacen.datos_regulados_guardados()[2026]["generales"]["fnee"], 2.5)

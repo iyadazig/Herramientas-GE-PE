@@ -1810,7 +1810,7 @@ def pagina_analisis_guardados():
         tablas = parametros.tablas_estudio(e)
         for nombre, df in tablas.items():
             st.markdown(f"**{nombre}**")
-            st.dataframe(df, hide_index=True, use_container_width=True)
+            estilo.tabla_es(df, hide_index=True, use_container_width=True)
         estilo.boton_descarga(MODULO, st, "Descargar parámetros (Excel)", parametros.excel(tablas),
                               f"parametros_analisis_{an['id']}.xlsx", XLSX)
     b1, b2, b3 = st.columns(3)
@@ -1850,4 +1850,4 @@ def pagina_parametros():
                 df = df[(df["Año"] == anio) & (df["Tarifa"] == tarifa)]
             if nombre == "Carga pico":
                 st.caption(parametros.EXPLICACION_PICO)
-            st.dataframe(df, hide_index=True, use_container_width=True)
+            estilo.tabla_es(df, hide_index=True, use_container_width=True)

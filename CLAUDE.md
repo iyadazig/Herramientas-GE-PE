@@ -321,6 +321,15 @@ colores, Arial, el logo en «Resumen» y páginas ajustadas al ancho. Toda la in
 español: si se añade un widget con textos propios de Streamlit, añadirlos a
 `estilo.TRADUCCIONES` (solo se sustituyen textos que coinciden exactamente).
 
+**Números en formato español en todo el programa** (`numeros.py`): los decimales se ven con
+coma y los miles con punto (1.234,5678), y lo que se escribe o se pega se entiende con coma o
+con punto decimal (un único punto es decimal; el punto escrito pasa a coma al salir de la
+casilla). Para mostrar tablas: `estilo.tabla_es(df)` (no `st.dataframe` con floats, que salen
+con punto). Para escribir un número con decimales: `estilo.casilla_decimal(...)` (no
+`st.number_input`, que solo muestra punto; los enteros —años, meses, ids— sí pueden usar
+number_input). En tablas editables con decimales, columnas de texto leídas con `numeros.leer`
+(como `analisis_ofertas.paginas.editor`), no `NumberColumn` (al pegar «16,56» da 1656).
+
 ## Datos
 
 Lee, sin modificarlos, los Excel históricos del proyecto hermano

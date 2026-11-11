@@ -133,30 +133,31 @@ def pagina_datos_regulados():
         for c, nombre, unidad in dr.CONCEPTOS:
             st.markdown(f"**{nombre}** ({unidad})")
             editadas[c] = editor(tabla_concepto(d, c), f"ao_{clave}_{c}", PERIODOS,
-                                 hide_index=True, use_container_width=True,
-                                 disabled=["Tarifa"])
+                                 {p: 10 for p in PERIODOS}, hide_index=True,
+                                 use_container_width=True, disabled=["Tarifa"])
     with t_sis:
         st.caption("La Circular 3/2020 (art. 11) fija los mismos coeficientes en todo el "
                    "territorio. Rellena una fila solo si quieres usar otras pérdidas en un sistema "
                    "(por ejemplo, las publicadas por REE); vacía = las de la tarifa.")
         sistemas = editor(tabla_perdidas_sistema(d), f"ao_{clave}_sis", PERIODOS,
-                          hide_index=True, use_container_width=True,
-                          disabled=["Sistema", "Tarifa"])
+                          {p: 10 for p in PERIODOS}, hide_index=True,
+                          use_container_width=True, disabled=["Sistema", "Tarifa"])
     with t_gen:
         gen = {}
         c1, c2 = st.columns(2)
+        # casillas con coma decimal (estilo.casilla_decimal): se escribe con coma o punto
         for n, (c, nombre, unidad) in enumerate(dr.GENERALES):
-            gen[c] = (c1 if n % 2 == 0 else c2).number_input(
-                f"{nombre} ({unidad})", min_value=0.0, value=float(d["generales"][c]),
-                format="%.10f" if c == "iee" else "%.7f", key=f"{clave}_g_{c}")
+            gen[c] = estilo.casilla_decimal(
+                c1 if n % 2 == 0 else c2, f"{nombre} ({unidad})", float(d["generales"][c]),
+                f"{clave}_gt_{c}", minimo=0.0)
         st.markdown("**Desvíos de referencia**")
         st.caption("Media de los 12 últimos meses con liquidación C2 (coste + saldo = neto). "
                    "Solo informativo: aparece como ayuda en el campo «Desvíos» de las ofertas.")
         c1, c2 = st.columns(2)
         for n, (c, nombre, unidad) in enumerate(dr.DESVIOS):
-            gen[c] = (c1 if n % 2 == 0 else c2).number_input(
-                f"{nombre} ({unidad})", value=float(d["generales"].get(c) or 0.0),
-                format="%.3f", key=f"{clave}_g_{c}")
+            gen[c] = estilo.casilla_decimal(
+                c1 if n % 2 == 0 else c2, f"{nombre} ({unidad})",
+                float(d["generales"].get(c) or 0.0), f"{clave}_gt_{c}")
         gen["desvios_fuente"] = st.text_input(
             "Periodo y fuente de los desvíos", d["generales"].get("desvios_fuente", ""),
             key=f"{clave}_g_desvios_fuente")
@@ -164,9 +165,9 @@ def pagina_datos_regulados():
         st.caption("Precio previsto de cada mes = % OMIP × cotización OMIP + (1 − % OMIP) × media "
                    "del precio OMIE de ese mes en los últimos años.")
         m1, m2 = st.columns(2)
-        pct = m1.number_input("Ponderación de OMIP (tanto por uno)", min_value=0.0, max_value=1.0,
-                              value=float(d["mercado"]["pct_omip"]), step=0.05,
-                              key=f"{clave}_m_pct")
+        pct = estilo.casilla_decimal(m1, "Ponderación de OMIP (tanto por uno)",
+                                     float(d["mercado"]["pct_omip"]), f"{clave}_m_pct_t",
+                                     minimo=0.0, maximo=1.0)
         anios_omie = m2.number_input("Años de la media de OMIE", min_value=1, max_value=10,
                                      value=int(d["mercado"]["anios_media_omie"]), step=1,
                                      key=f"{clave}_m_anios")
