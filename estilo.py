@@ -512,10 +512,11 @@ def casilla_decimal(contenedor, etiqueta, valor, clave, decimales=10, minimo=Non
     return n
 
 
-def tabla_es(df, contenedor=None, **kw):
-    """st.dataframe con los decimales en formato español (1.234,5678)."""
+def tabla_es(df, contenedor=None, formatos=None, **kw):
+    """st.dataframe con los decimales en formato español (1.234,5678). formatos: como en
+    numeros.tabla ({columna: decimales fijos o función})."""
     import numeros
-    return (contenedor or st).dataframe(numeros.tabla(df), **kw)
+    return (contenedor or st).dataframe(numeros.tabla(df, formatos=formatos), **kw)
 
 
 def seccion(numero, titulo, subtitulo=""):

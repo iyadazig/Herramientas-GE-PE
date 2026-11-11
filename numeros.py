@@ -90,12 +90,41 @@ def _es_decimal(serie) -> bool:
     return False
 
 
-def tabla(df, decimales: int = DECIMALES, sin_miles=("Año", "Mes", "Periodo", "Nº", "ID")):
+def porcentaje(v, decimales: int = 2, signo: bool = False) -> str:
+    """12.345 (ya en %) → «12,35 %»; con signo, «+12,35 %» / «−3,10 %»."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return ""
+    t = texto(v, decimales)
+    if "," in t:                                 # decimales fijos: 12,3 → 12,30
+        ent, dec = t.split(",")
+        t = f"{ent},{dec.ljust(decimales, '0')}"
+    elif decimales:
+        t += "," + "0" * decimales
+    if signo and float(v) > 0:
+        t = "+" + t
+    return t.replace("-", "−") + " %"
+
+
+def fijo(v, decimales: int) -> str:
+    """Con un número fijo de decimales: 0.2 con 4 → «0,2000»; 691346.158 con 0 → «691.346»."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return ""
+    return f"{float(v):,.{decimales}f}".replace(",", "\0").replace(".", ",").replace("\0", ".")
+
+
+def tabla(df, decimales: int = DECIMALES, sin_miles=("Año", "Mes", "Periodo", "Nº", "ID"),
+          formatos: dict = None):
     """Copia del DataFrame para mostrarlo: las columnas con decimales pasan a texto español
-    (1.234,5678); las de años, meses, números de orden e ids no llevan punto de miles."""
+    (1.234,5678); las de años, meses, números de orden e ids no llevan punto de miles.
+    formatos: {columna: nº de decimales fijo, o función valor → texto} para las que necesitan
+    otro formato (euros sin decimales, porcentajes…)."""
     salida = df.copy()
+    formatos = formatos or {}
     for c in salida.columns:
-        if _es_decimal(salida[c]):
+        f = formatos.get(c)
+        if f is not None and c in salida:
+            salida[c] = [f(v) if callable(f) else fijo(v, f) for v in salida[c]]
+        elif _es_decimal(salida[c]):
             miles = not any(str(c).startswith(x) for x in sin_miles)
             salida[c] = [texto(v, decimales, miles) for v in salida[c]]
     return salida

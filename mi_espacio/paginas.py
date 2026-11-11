@@ -21,6 +21,7 @@ import streamlit as st
 
 import almacen
 import estilo
+import numeros
 from mi_espacio import datos as P
 
 MODULO = "Mi espacio"
@@ -154,7 +155,7 @@ def _visible(df: pd.DataFrame) -> pd.DataFrame:
     df = df[[c for c in df.columns if not str(c).startswith("_")]].copy()
     if "Semáforo" in df.columns:
         df["Semáforo"] = [f"{P.ICONO.get(v, '')} {v}" for v in df["Semáforo"]]
-    return df
+    return numeros.tabla(df)                     # decimales con coma y miles con punto
 
 
 # =================================================================== contador del menú
@@ -462,7 +463,8 @@ def pagina_ficha():
                 "Periodicidad": P._texto(s["datos"].get("Cadencia informe")),
                 "Técnico": P._texto(s["datos"].get(P.TECNICO)),
                 "Auxiliar": P._texto(s["datos"].get(P.AUXILIAR))} for s in sums])
-            st.dataframe(df, hide_index=True, use_container_width=True)
+            df["Consumo (kWh)"] = [numeros.leer(v) for v in df["Consumo (kWh)"]]
+            estilo.tabla_es(df, hide_index=True, use_container_width=True)
         else:
             st.caption("No está en Seguimiento y Control.")
         cups = sorted({P._texto(s["datos"].get(P.CUPS)) for s in sums} - {""}) or \
@@ -487,7 +489,7 @@ def pagina_ficha():
                 continue
             origen, cols = columnas[nombre]
             df = pd.DataFrame(filas)[[c for c in cols if c in pd.DataFrame(filas).columns]]
-            sel = st.dataframe(df, hide_index=True, use_container_width=True,
+            sel = st.dataframe(numeros.tabla(df), hide_index=True, use_container_width=True,
                                on_select="rerun", selection_mode="single-row",
                                key=f"ficha_{origen}")
             elegidas = sel.selection.rows if sel and sel.selection else []

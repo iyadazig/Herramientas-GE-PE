@@ -56,6 +56,19 @@ class Numeros(unittest.TestCase):
         self.assertEqual(list(t["Mezcla"]), ["1,5", ""])
         self.assertEqual(df["Valor"][0], 2.658)                      # el original no cambia
 
+    def test_formatos_fijos(self):
+        self.assertEqual(N.fijo(691346.158, 0), "691.346")
+        self.assertEqual(N.fijo(0.2, 4), "0,2000")
+        self.assertEqual(N.fijo(None, 2), "")
+        self.assertEqual(N.porcentaje(12.3), "12,30 %")
+        self.assertEqual(N.porcentaje(-3.1, signo=True), "−3,10 %")
+        self.assertEqual(N.porcentaje(5, signo=True), "+5,00 %")
+        self.assertEqual(N.porcentaje(1234.5, 1), "1.234,5 %")
+        df = pd.DataFrame({"€/año": [262194.3], "€/kWh": [0.15], "Variación": [-4.256]})
+        t = N.tabla(df, formatos={"€/año": 0, "€/kWh": 4,
+                                  "Variación": lambda v: N.porcentaje(v, 2, signo=True)})
+        self.assertEqual(t.iloc[0].tolist(), ["262.194", "0,1500", "−4,26 %"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,7 @@ import almacen
 import datos_mercado as dm
 import datos_regulados as dr
 import estilo
+import numeros
 from analisis_ofertas import apuntamientos as ap
 from analisis_ofertas import calculo, correo, informes, parametros, resultados, servicio
 from analisis_ofertas import comercializadoras as coms
@@ -1492,7 +1493,7 @@ def pagina_catalogo():
                       for v in getattr(pa, campo))]
     if precios:
         st.markdown("**Precios**")
-        st.dataframe(pd.DataFrame(precios), hide_index=True, use_container_width=True)
+        estilo.tabla_es(pd.DataFrame(precios), hide_index=True, use_container_width=True)
     condiciones = {k: v for k, v in (o.condiciones or {}).items() if v}
     if condiciones or o.notas:
         st.markdown("**Condiciones**")
@@ -1574,12 +1575,10 @@ def _resultados(e: mo.Estudio, res: dict):
         c2.metric("€/kWh", informes.ekwh(p["total"] / p["consumo"] if p["consumo"] else None))
         c3.metric("Consumo anual", f"{informes.eur(p['consumo'] / 1000)} MWh")
     st.caption("€/año: coste medio anual en la duración de cada oferta. " + AY["mismo_periodo"])
-    st.dataframe(tabla_comparativa(filas), hide_index=True, use_container_width=True,
-                 column_config={c: st.column_config.NumberColumn(format="localized")
-                                for c in ("€/año", "Actual mismo periodo (€/año)",
-                                          "Ahorro (€/año)")}
-                 | {"€/kWh": st.column_config.NumberColumn(format="%.4f"),
-                    "Variación": st.column_config.NumberColumn(format="%+.2f %%")})
+    estilo.tabla_es(tabla_comparativa(filas), hide_index=True, use_container_width=True,
+                    formatos={"€/año": 0, "Actual mismo periodo (€/año)": 0,
+                              "Ahorro (€/año)": 0, "€/kWh": 4,
+                              "Variación": lambda v: numeros.porcentaje(v, 2, signo=True)})
     for t, f in resultados.mejores(filas).items():
         st.markdown(f"**Mejor oferta ({t.lower()}):** {f['comercializadora']} "
                     f"{f['duracion']} meses · {informes.eur(f['media_anual'])} €/año "
@@ -1588,8 +1587,8 @@ def _resultados(e: mo.Estudio, res: dict):
         ["Mercado previsto", "Escenarios OMIP", "Apuntamiento estimado / cliente", "Rondas",
          "Coste por CUPS"])
     with t_merc:
-        st.dataframe(pd.DataFrame(resultados.cuadro_mercado(e)).drop(columns=["anio", "q"]),
-                     hide_index=True)
+        estilo.tabla_es(pd.DataFrame(resultados.cuadro_mercado(e)).drop(columns=["anio", "q"]),
+                        hide_index=True)
     with t_esc:
         pasos = st.slider("Variación de OMIP (±%)", 5, 50, 20, 5, key="ao_esc")
         if st.button("Calcular escenarios", help=AY["escenarios"]):
@@ -1600,26 +1599,32 @@ def _resultados(e: mo.Estudio, res: dict):
                                    **{f"Variación con OMIP {x['variacion_omip'] * 100:+.0f} %":
                                       (x["filas"][i]["variacion"] or 0) * 100 for x in esc}}
                                   for i, f in enumerate(esc[1]["filas"])])
-            st.dataframe(tabla, hide_index=True, use_container_width=True)
+            estilo.tabla_es(tabla, hide_index=True, use_container_width=True, formatos={
+                c: (0 if "€/año" in c else (lambda v: numeros.porcentaje(v, 2, signo=True)))
+                for c in tabla.columns if c.startswith(("OMIP", "Variación"))})
     with t_ap:
         comp = resultados.apuntamientos(e)
         if not comp:
             st.caption("Ningún CUPS tiene curva de un año completo (sección 3, «Curvas del "
                        "cliente»).")
         else:
-            st.dataframe(pd.DataFrame(comp), hide_index=True, use_container_width=True)
+            estilo.tabla_es(pd.DataFrame(comp), hide_index=True, use_container_width=True)
     with t_rondas:
         rondas = resultados.rondas(filas)
         if not rondas:
             st.caption("Ninguna comercializadora tiene más de una ronda.")
         for r in rondas:
             st.markdown(f"**{r['comercializadora']}**")
-            st.dataframe(pd.DataFrame([{"Ronda": f["ronda"], "Meses": f["duracion"],
-                                        "€/año": f["media_anual"],
-                                        "Variación (%)": (f["variacion"] or 0) * 100}
-                                       for f in r["rondas"]]), hide_index=True)
+            estilo.tabla_es(pd.DataFrame([{"Ronda": f["ronda"], "Meses": f["duracion"],
+                                           "€/año": f["media_anual"],
+                                           "Variación": (f["variacion"] or 0) * 100}
+                                          for f in r["rondas"]]), hide_index=True,
+                            formatos={"€/año": 0, "Variación": lambda v: numeros.porcentaje(
+                                v, 2, signo=True)})
     with t_cups:
-        st.dataframe(informes.coste_por_cups(res), hide_index=True, use_container_width=True)
+        cpc = informes.coste_por_cups(res)
+        estilo.tabla_es(cpc, hide_index=True, use_container_width=True,
+                        formatos={c: 0 for c in cpc.columns if c != "CUPS"})
     return filas
 
 
@@ -1777,15 +1782,14 @@ def pagina_analisis_guardados():
     filtrados = [a for a in lista if (not estados or a["estado"] in estados)
                  and (not buscar or buscar in " ".join(str(a.get(k) or "") for k in (
                      "cliente", "cups", "ref", "comercializadoras")).lower())]
-    st.dataframe(pd.DataFrame([{
+    estilo.tabla_es(pd.DataFrame([{
         "Nº": a["id"], "Guardado": _fecha_hora(a["fecha"]),
         "Usuario": nombres.get(a["usuario"], a["usuario"]), "Ref.": a["ref"],
         "Cliente": a["cliente"], "Suministros": a["suministros"], "Ofertas": a["ofertas"],
         "Ronda": a["ronda"], "Mejor": a["mejor"], "Ahorro (€/año)": a["ahorro"],
         "Estado": a["estado"], "Solicitud": a["id_solicitud"],
         "Actualizado": _fecha_hora(a["actualizado"])} for a in filtrados]),
-        hide_index=True, use_container_width=True,
-        column_config={"Ahorro (€/año)": st.column_config.NumberColumn(format="localized")})
+        hide_index=True, use_container_width=True, formatos={"Ahorro (€/año)": 0})
     estilo.borrar_mios(MODULO, filtrados, lambda a: "Nº %d · %s · %s" % (
         a["id"], _fecha_hora(a["fecha"]), a["cliente"] or a["ref"] or "—"),
         almacen.borrar_analisis, "ao_borrar", que="análisis")
