@@ -512,6 +512,46 @@ def casilla_decimal(contenedor, etiqueta, valor, clave, decimales=10, minimo=Non
     return n
 
 
+def casilla_decimal_ss(contenedor, etiqueta, clave, decimales=10, minimo=None, maximo=None,
+                       vacio=False, **kw):
+    """Como casilla_decimal, pero el número vive en st.session_state[clave] (float): lo pueden
+    leer y cambiar otras partes de la página como cuando era un st.number_input. La casilla
+    de texto usa la clave «_txt_<clave>» y se pone al día si el número cambia por otro lado.
+    vacio: dejarla vacía guarda None (si no, se mantiene el número anterior)."""
+    import numeros
+    ss = st.session_state
+    k_txt, k_sync, k_err = "_txt_" + clave, "_sync_" + clave, "_err_" + clave
+    actual = ss.get(clave)
+    if k_txt not in ss or ss.get(k_sync) != actual:
+        ss[k_txt] = numeros.texto(actual, decimales)
+        ss[k_sync] = actual
+
+    def cambio():
+        t = numeros.con_coma(ss.get(k_txt))
+        ss[k_txt] = t
+        n = numeros.leer(t)
+        ss[k_err] = None
+        if n is None:
+            if (t or "").strip():
+                ss[k_err] = "No es un número: se mantiene el anterior"
+                return
+            if not vacio:
+                ss[k_err] = "Vacía: se mantiene el anterior"
+                return
+        elif (minimo is not None and n < minimo) or (maximo is not None and n > maximo):
+            ss[k_err] = "Fuera de rango (%s a %s): se mantiene el anterior" % (
+                numeros.texto(minimo) if minimo is not None else "−∞",
+                numeros.texto(maximo) if maximo is not None else "∞")
+            return
+        ss[clave] = n
+        ss[k_sync] = n
+
+    contenedor.text_input(etiqueta, key=k_txt, on_change=cambio, **kw)
+    if ss.get(k_err):
+        contenedor.caption(":red[%s]" % ss[k_err])
+    return ss.get(clave)
+
+
 def tabla_es(df, contenedor=None, formatos=None, **kw):
     """st.dataframe con los decimales en formato español (1.234,5678). formatos: como en
     numeros.tabla ({columna: decimales fijos o función})."""

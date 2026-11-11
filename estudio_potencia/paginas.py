@@ -22,6 +22,7 @@ import streamlit as st
 
 import almacen
 import estilo
+import numeros
 import gemweb
 from estudio_potencia import servicio as sv
 from gemweb_extractor import paginas as gw
@@ -334,8 +335,8 @@ def _paso_datos(pot) -> dict:
                                     "Dirección": s.direccion, "Tarifa": s.tarifa, "Zona": s.zona,
                                     "Origen de la zona": s.zona_origen},
                                    **dict(zip(PERIODOS, s.actual))) for s in sums])
-        for p in PERIODOS:
-            tabla[p] = pd.to_numeric(tabla[p])
+        for p in PERIODOS:                      # kW con coma decimal (texto)
+            tabla[p] = [_editable(x) for x in tabla[p]]
         return tabla
     editada = st.data_editor(
         _base(pot, "datos_%d" % v, construir), hide_index=True, use_container_width=True,
@@ -345,7 +346,8 @@ def _paso_datos(pot) -> dict:
         column_config={"Tarifa": st.column_config.SelectboxColumn(options=sv.TARIFAS,
                                                                   required=True),
                        "Zona": st.column_config.SelectboxColumn(options=ZONAS, required=True),
-                       **{p: st.column_config.NumberColumn(f"{p} (kW)", min_value=0, format="%g")
+                       **{p: st.column_config.TextColumn(f"{p} (kW)",
+                                                         help="kW, con coma decimal")
                           for p in PERIODOS}})
     for s, (_, fila) in zip(sums, editada.iterrows()):
         cups = "" if pd.isna(fila["CUPS"]) else str(fila["CUPS"]).strip().upper()
@@ -362,12 +364,17 @@ def _paso_datos(pot) -> dict:
         if fila["Zona"] != s.zona:
             s.zona, s.zona_manual, s.zona_origen = fila["Zona"], True, "elegida a mano"
             _leer(pot, s)
-        s.actual = [None if pd.isna(fila[p]) else float(fila[p]) for p in PERIODOS]
+        s.actual = [numeros.leer(fila[p]) for p in PERIODOS]
     if not multipunto:
         s = sums[0]
         datos.update(cups=s.cups, instalacion=s.denominacion.strip(),
                      direccion=s.direccion.strip())
     return datos
+
+
+def _editable(v):
+    """kW de una celda editable como texto con coma (sin punto de miles); None si vacía."""
+    return numeros.texto(v, miles=False) or None
 
 
 def _paso_curvas(pot):
@@ -443,7 +450,8 @@ def _interpretacion(pot):
         for aviso in s.curva.avisos:
             st.warning(aviso)
         st.caption("Primeros registros interpretados")
-        st.dataframe(sv.primeros_registros(s.curva), hide_index=True, use_container_width=True)
+        estilo.tabla_es(sv.primeros_registros(s.curva), hide_index=True,
+                        use_container_width=True)
 
 
 def _propuestas(pot, s, i):
@@ -469,16 +477,17 @@ def _propuestas(pot, s, i):
     clave = f"pot_prop_{v}_{i}_{ed}_{abs(hash(tuple(optimo)))}"     # otra optima: de nuevo
     editada = st.data_editor(
         _base(pot, clave, lambda: pd.DataFrame([
-            dict({"Propuesta": f"Propuesta {k}"}, **dict(zip(PERIODOS, p["pc"] or optimo)))
+            dict({"Propuesta": f"Propuesta {k}"},
+                 **dict(zip(PERIODOS, [_editable(x) for x in (p["pc"] or optimo)])))
             for k, p in enumerate(s.propuestas[1:], start=2)])),
         hide_index=True, key=clave, disabled=["Propuesta"],
-        column_config={p: st.column_config.NumberColumn(f"{p} (kW)", min_value=0, format="%g")
+        column_config={p: st.column_config.TextColumn(f"{p} (kW)", help="kW, con coma decimal")
                        for p in PERIODOS})
     st.caption("La Propuesta 1 es la potencia óptima. Las demás se pueden cambiar; si se dejan "
                "igual que la óptima, se recalculan con ella.")
     for p, (_, fila) in zip(s.propuestas[1:], editada.iterrows()):
-        pc = [None if pd.isna(fila[q]) else float(fila[q]) for q in PERIODOS]
-        p["pc"] = None if pc == optimo else pc
+        pc = [numeros.leer(fila[q]) for q in PERIODOS]
+        p["pc"] = None if pc == [numeros.leer(_editable(x)) for x in optimo] else pc
     # inversion: por defecto, todos los derechos si se amplia la potencia maxima
     defecto = []
     for k, p in enumerate(s.propuestas, start=1):
@@ -831,15 +840,14 @@ def pagina_estudios_guardados():
     filtrados = [e for e in estudios if not buscar or buscar in " ".join(
         str(e.get(k) or "") for k in ("titular", "cups", "usuario")).lower()
         or buscar in nombres.get(e["usuario"], "").lower()]
-    st.dataframe(pd.DataFrame([{
+    estilo.tabla_es(pd.DataFrame([{
         "Nº": e["id"], "Guardado": _fecha_hora(e["fecha"]),
         "Usuario": nombres.get(e["usuario"], e["usuario"]),
         "Tipo": "Multipunto" if e["tipo"] == MULTIPUNTO else "Individual",
         "Titular": e["titular"], "CUPS": e["cups"], "Tarifa": e["tarifa"],
         "Ahorro anual (€)": e["ahorro"], "Inversión (€)": e["inversion"]} for e in filtrados]),
         hide_index=True, use_container_width=True,
-        column_config={c: st.column_config.NumberColumn(format="localized")
-                       for c in ("Ahorro anual (€)", "Inversión (€)")})
+        formatos={"Ahorro anual (€)": 0, "Inversión (€)": 2})
     estilo.borrar_mios("Estudio de potencia", filtrados, lambda e: "Nº %d · %s · %s" % (
         e["id"], _fecha_hora(e["fecha"]), e["titular"] or e["cups"] or "—"),
         almacen.borrar_estudio_potencia, "ep_borrar", que="estudios")

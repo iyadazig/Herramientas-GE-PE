@@ -178,11 +178,10 @@ def pagina_historial():
         "periodo": "Periodo", "clausula": "Cláusula", "lineas": "Líneas",
         "facturado": "Facturado €", "recalculado": "Recalculado €", "diferencia": "Diferencia €",
         "veredicto": "Veredicto"})
-    st.dataframe(vista, hide_index=True, use_container_width=True,
-                 column_config={"Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm"),
-                                "Facturado €": st.column_config.NumberColumn(format="%.2f"),
-                                "Recalculado €": st.column_config.NumberColumn(format="%.2f"),
-                                "Diferencia €": st.column_config.NumberColumn(format="%.2f")})
+    estilo.tabla_es(vista, hide_index=True, use_container_width=True,
+                    formatos={"Facturado €": 2, "Recalculado €": 2, "Diferencia €": 2},
+                    column_config={"Fecha": st.column_config.DatetimeColumn(
+                        format="DD/MM/YYYY HH:mm")})
     if len(df):
         opciones = {int(r["id"]): "Nº %d · %s · %s · %s" % (
             r["id"], r["fecha"].strftime("%d/%m/%Y %H:%M"),
@@ -237,8 +236,8 @@ def pagina_fichas():
     if not filas:
         st.info("Ninguna ficha coincide con la búsqueda.")
         return
-    st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
-                 column_config={"Última modificación": st.column_config.DatetimeColumn(
+    estilo.tabla_es(pd.DataFrame(filas), hide_index=True, use_container_width=True,
+                    column_config={"Última modificación": st.column_config.DatetimeColumn(
                      format="DD/MM/YYYY HH:mm")})
     etiquetas = {f["CUPS"]: "%s (%s)" % (f["Denominación suministro"] or "Sin denominación",
                                          f["CUPS"]) for f in filas}
@@ -252,8 +251,9 @@ def pagina_fichas():
                         "Referencias €/MWh": _referencias(c),
                         "Pérdidas": motor.PERDIDAS.get(c.perdidas, c.perdidas),
                         "Factor": c.factor})
-    st.dataframe(pd.DataFrame(cambios), hide_index=True, use_container_width=True,
-                 column_config={"Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+    estilo.tabla_es(pd.DataFrame(cambios), hide_index=True, use_container_width=True,
+                    column_config={"Fecha": st.column_config.DatetimeColumn(
+                        format="DD/MM/YYYY HH:mm")})
 
 
 def _referencias(c):

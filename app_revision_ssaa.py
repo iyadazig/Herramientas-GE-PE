@@ -19,6 +19,7 @@ import estilo
 import gemweb
 import graficos
 import informe
+import numeros
 import ssaa_datos_esios as esios
 import paginas
 import ssaa_motor as motor
@@ -46,8 +47,9 @@ with st.sidebar:
     st.code(str(config.CARPETA_ESIOS), language=None)
     if not config.CARPETA_ESIOS.exists():
         st.error("No existe la carpeta de datos de ESIOS.")
-    tolerancia = st.number_input("Tolerancia para dar por correcta (%)", 0.0, 10.0,
-                                 config.TOLERANCIA_PCT, 0.1)
+    tolerancia = estilo.casilla_decimal(st, "Tolerancia para dar por correcta (%)",
+                                        config.TOLERANCIA_PCT, "rev_tolerancia", minimo=0,
+                                        maximo=10)
     st.caption("Se compara siempre con el último dato publicado que haya en los Excel. "
                "Si falta un periodo, actualízalo con los scripts de Descarga_datos_ESIOS:")
     st.code("python descarga_PVPC_diario_excel.py AAAA-MM-DD AAAA-MM-DD\n"
@@ -73,9 +75,15 @@ if "c_tarifa" not in ss:
 COLS_LINEAS = ["Concepto", "Inicio", "Fin", "kWh", "Precio €/kWh", "Importe €"]
 
 
+def _editable(v):
+    """Número de una celda editable como texto con coma (sin punto de miles); None si vacía."""
+    return numeros.texto(v, miles=False) or None
+
+
 def tabla_lineas(lineas):
     return pd.DataFrame([{"Concepto": l.concepto, "Inicio": l.inicio, "Fin": l.fin,
-                          "kWh": l.kwh, "Precio €/kWh": l.precio, "Importe €": l.importe}
+                          "kWh": _editable(l.kwh), "Precio €/kWh": _editable(l.precio),
+                          "Importe €": _editable(l.importe)}
                          for l in lineas], columns=COLS_LINEAS)
 
 
@@ -123,8 +131,8 @@ with c2:
     st.date_input("Fin del periodo facturado (incluido)", key="f_fin", format="DD/MM/YYYY")
 with c3:
     st.selectbox("Tarifa de acceso", motor.TARIFAS, key="f_tarifa")
-    st.number_input("Energía activa facturada (kWh)", min_value=0.0, format="%.3f",
-                    key="f_consumo")
+    estilo.casilla_decimal_ss(st, "Energía activa facturada (kWh)", "f_consumo", minimo=0,
+                              vacio=True)
 
 st.subheader("Líneas de SSAA")
 st.caption("Una fila por cada concepto de SSAA de la factura, con **su** periodo (las "
@@ -138,9 +146,9 @@ lineas_df = st.data_editor(
         "Concepto": st.column_config.TextColumn(width="large"),
         "Inicio": st.column_config.DateColumn(format="DD/MM/YYYY"),
         "Fin": st.column_config.DateColumn(format="DD/MM/YYYY"),
-        "kWh": st.column_config.NumberColumn(format="%.3f"),
-        "Precio €/kWh": st.column_config.NumberColumn(format="%.8f"),
-        "Importe €": st.column_config.NumberColumn(format="%.2f")})
+        **{c: st.column_config.TextColumn(help="Con coma decimal (un punto se toma como "
+                                                "coma)")
+           for c in ("kWh", "Precio €/kWh", "Importe €")}})
 
 
 def _valor(v):
@@ -163,8 +171,7 @@ def lineas_actuales():
             if isinstance(d[c], (pd.Timestamp, dt.datetime)):
                 d[c] = d[c].date()
         for c in ("kWh", "Precio €/kWh", "Importe €"):
-            if d[c] is not None:
-                d[c] = float(d[c])
+            d[c] = numeros.leer(d[c])
         d["Inicio"] = d["Inicio"] or ss.get("f_inicio")
         d["Fin"] = d["Fin"] or ss.get("f_fin")
         d["Concepto"] = d["Concepto"] or "Servicios de ajuste"
@@ -177,7 +184,7 @@ def lineas_actuales():
 lineas = lineas_actuales()
 if lineas:
     total = sum(l["Importe €"] or 0 for l in lineas)
-    st.caption("Total SSAA facturado en las líneas: **%.2f €**" % total)
+    st.caption("Total SSAA facturado en las líneas: **%s €**" % numeros.fijo(total, 2))
 elif ss.get("f_inicio") and ss.get("f_fin"):
     # sin cargo de SSAA en la factura: se calcula lo que corresponderia al periodo facturado
     # y se compara con 0 EUR (puede faltar un cargo o un abono)
@@ -265,28 +272,27 @@ with k1:
 with k2:
     mec = ss.c_mecanismo
     if mec == "techo":
-        st.number_input("Referencia de SSAA (techo) €/MWh", format="%.3f", key="c_techo")
+        estilo.casilla_decimal_ss(st, "Referencia de SSAA (techo) €/MWh", "c_techo")
     if mec == "banda":
-        st.number_input("Referencia superior €/MWh", format="%.3f", key="c_ref_superior")
-        st.number_input("Referencia inferior €/MWh", format="%.3f", key="c_ref_inferior")
+        estilo.casilla_decimal_ss(st, "Referencia superior €/MWh", "c_ref_superior")
+        estilo.casilla_decimal_ss(st, "Referencia inferior €/MWh", "c_ref_inferior")
     if mec in ("indexado_techo", "indexado_suelo_techo"):
-        st.number_input("Precio máximo €/MWh", format="%.3f", key="c_techo")
+        estilo.casilla_decimal_ss(st, "Precio máximo €/MWh", "c_techo")
     if mec == "indexado_suelo_techo":
-        st.number_input("Precio mínimo €/MWh", format="%.3f", key="c_suelo")
+        estilo.casilla_decimal_ss(st, "Precio mínimo €/MWh", "c_suelo")
     if mec == "fijo":
-        st.number_input("Precio fijo €/MWh", format="%.3f", key="c_precio_fijo")
+        estilo.casilla_decimal_ss(st, "Precio fijo €/MWh", "c_precio_fijo")
     if mec in ("indexado", "indexado_techo", "indexado_suelo_techo"):
-        st.number_input("Prima / fee €/MWh (opcional)", format="%.3f", key="c_prima",
+        estilo.casilla_decimal_ss(st, "Prima / fee €/MWh (opcional)", "c_prima",
                         help="Margen fijo que algunos contratos suman al índice. Déjalo en 0 "
                              "si el contrato traslada el coste real sin prima.")
-    st.number_input("Apuntamiento Ap (1 si el contrato no lo tiene)", format="%.4f",
-                    step=0.01, key="c_apuntamiento")
-    st.number_input("Factor final (1,015 = impuesto municipal / HL)", format="%.4f",
-                    step=0.001, key="c_factor")
+    estilo.casilla_decimal_ss(st, "Apuntamiento Ap (1 si el contrato no lo tiene)",
+                              "c_apuntamiento")
+    estilo.casilla_decimal_ss(st, "Factor final (1,015 = impuesto municipal / HL)", "c_factor")
 with k3:
     opciones(motor.PERDIDAS, ("c_perdidas", "Pérdidas"))
     if ss.c_perdidas == "fijo":
-        st.number_input("Coeficiente de pérdidas %", format="%.3f", key="c_perd_fijo")
+        estilo.casilla_decimal_ss(st, "Coeficiente de pérdidas %", "c_perd_fijo")
     elif ss.c_perdidas != "ninguna" and ss.c_agregacion != "horaria":
         opciones(motor.PERD_AGREGACIONES, ("c_perd_agregacion", "Cómo se agregan las pérdidas"))
     st.selectbox("Tarifa para las pérdidas", motor.TARIFAS, key="c_tarifa")
@@ -337,7 +343,7 @@ elif ss.c_mecanismo == "techo":
 guardados = informe.cargar_contratos()
 if guardados:
     with st.expander("Fichas de contrato guardadas (%d)" % len(guardados)):
-        st.dataframe(pd.DataFrame([{
+        estilo.tabla_es(pd.DataFrame([{
             "CUPS": c.cups, "Comercializadora": c.comercializadora,
             "Cláusula tipo": c.plantilla or "personalizada",
             "Descripción": c.descripcion, "Tarifa": c.tarifa,
@@ -371,9 +377,10 @@ if origen == "Subir fichero":
         except curva_consumo.ErrorCurva as e:
             st.error(str(e))
         if curva is not None:
-            st.write("Leída: **%s**, %d registros, %s a %s, total **%.1f kWh**. Columnas: %s"
+            st.write("Leída: **%s**, %s registros, %s a %s, total **%s kWh**. Columnas: %s"
                      % ("cuartohoraria" if curva.resolucion == "qh" else "horaria",
-                        len(curva.valores), curva.inicio, curva.fin, curva.total_kwh,
+                        numeros.fijo(len(curva.valores), 0), curva.inicio, curva.fin,
+                        numeros.fijo(curva.total_kwh, 1),
                         curva.columnas))
             for a in curva.avisos[:10]:
                 st.warning(a)
@@ -406,10 +413,11 @@ elif origen == "Gemweb (API)":
     if ss.get("curva_gemweb") and ss.curva_gemweb[0] == clave_g:
         _clave, curva, sum_g = ss.curva_gemweb
         st.write("Suministro en Gemweb: tarifa **%s**, alta %s. Curva **cuartohoraria**, "
-                 "%d cuartos, %s a %s, total **%.1f kWh**."
+                 "%s cuartos, %s a %s, total **%s kWh**."
                  % (sum_g.get("tarifa_acces") or sum_g.get("tarifa") or "—",
                     sum_g.get("data_alta") or "—",
-                    len(curva.valores), curva.inicio, curva.fin, curva.total_kwh))
+                    numeros.fijo(len(curva.valores), 0), curva.inicio, curva.fin,
+                    numeros.fijo(curva.total_kwh, 1)))
         for a in curva.avisos[:10]:
             st.warning(a)
 
@@ -538,10 +546,11 @@ if ss.get("resultados"):
         tot_f = sum(r.facturado or 0 for _l, r, _d in validos)
         tot_r = sum(r.importe for _l, r, _d in validos)
         m = st.columns(3)
-        m[0].metric("Total facturado", "%.2f €" % tot_f)
-        m[1].metric("Total recalculado", "%.2f €" % tot_r)
-        m[2].metric("Diferencia (facturado − recalculado)", "%+.2f €" % (tot_f - tot_r))
-        st.dataframe(pd.DataFrame(resumen), hide_index=True, use_container_width=True)
+        m[0].metric("Total facturado", "%s €" % numeros.fijo(tot_f, 2))
+        m[1].metric("Total recalculado", "%s €" % numeros.fijo(tot_r, 2))
+        m[2].metric("Diferencia (facturado − recalculado)", "%s%s €" % (
+            "+" if tot_f - tot_r > 0 else "", numeros.fijo(tot_f - tot_r, 2)))
+        estilo.tabla_es(pd.DataFrame(resumen), hide_index=True, use_container_width=True)
         if len(validos) > 1:
             st.markdown("**Evolución de los SSAA en todo el periodo revisado**")
             st.caption("Serie horaria de todas las líneas seguidas. Los tramos negros son los SSAA "
@@ -553,7 +562,7 @@ if ss.get("resultados"):
         filas_tot = totales(validos, validos[0][1].contrato)
         if filas_tot:
             st.markdown("**Totales**")
-            st.dataframe(pd.DataFrame(filas_tot), hide_index=True, use_container_width=True)
+            estilo.tabla_es(pd.DataFrame(filas_tot), hide_index=True, use_container_width=True)
         comp = ss.get("componentes") or []
         if comp:
             c0 = validos[0][1].contrato
@@ -564,25 +573,25 @@ if ss.get("resultados"):
             if not c0.componentes_pfm_contrato:
                 st.caption("El contrato no especifica la suma: el veredicto de arriba usa "
                            "%s." % " + ".join(c0.componentes_pfm))
-            st.dataframe(pd.DataFrame(motor.tabla_componentes(comp)), hide_index=True,
+            estilo.tabla_es(pd.DataFrame(motor.tabla_componentes(comp)), hide_index=True,
                          use_container_width=True)
 
     for i, (l, r, diag) in enumerate(validos, 1):
         with st.expander("%d. %s — :%s[%s]" % (i, l["Concepto"], colores.get(r.veredicto, "gray"),
                                                r.veredicto), expanded=len(validos) == 1):
             m = st.columns(4)
-            m[0].metric("Índice medio aritmético", "%.6f €/MWh" % r.indice_medio)
-            m[1].metric("Índice ponderado", "%.6f €/MWh" % r.indice_ponderado
+            m[0].metric("Índice medio aritmético", "%s €/MWh" % numeros.fijo(r.indice_medio, 6))
+            m[1].metric("Índice ponderado", "%s €/MWh" % numeros.fijo(r.indice_ponderado, 6)
                         if r.indice_ponderado is not None else "—")
-            m[2].metric("Precio aplicado", "%.6f €/MWh" % r.precio_aplicado)
-            m[3].metric("Pérdidas aplicadas", "%.4f %%" % r.perd_aplicada)
+            m[2].metric("Precio aplicado", "%s €/MWh" % numeros.fijo(r.precio_aplicado, 6))
+            m[3].metric("Pérdidas aplicadas", "%s %%" % numeros.fijo(r.perd_aplicada, 4))
             for a in r.avisos:
                 st.warning(a)
             st.caption("Datos ESIOS: " + "; ".join("%s: %s" % kv for kv in r.liquidaciones.items()))
             st.markdown("**Fórmulas aplicadas**")
             st.code("\n".join(motor.formula_clausula(r.contrato)), language=None)
             st.markdown("**Cálculo paso a paso**")
-            st.dataframe(pd.DataFrame([{
+            estilo.tabla_es(pd.DataFrame([{
                 "Paso": p["paso"], "Concepto": p["concepto"], "Fórmula": p["formula"],
                 "Sustitución": p["sustitucion"],
                 "Resultado": p["valor"] if isinstance(p["valor"], str) else
@@ -604,7 +613,7 @@ if ss.get("resultados"):
                 st.markdown("**Diagnóstico**: variantes de cálculo más cercanas a lo facturado. "
                             "Si una distinta del contrato cuadra, probablemente es la que ha "
                             "usado la comercializadora.")
-                st.dataframe(pd.DataFrame(diag), hide_index=True, use_container_width=True)
+                estilo.tabla_es(pd.DataFrame(diag), hide_index=True, use_container_width=True)
 
     if validos:
         datos_factura = {"Comercializadora": ss.get("f_comercializadora"),

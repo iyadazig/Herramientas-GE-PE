@@ -97,7 +97,7 @@ def mostrar_resultado(df: pd.DataFrame, nombre_descarga: str) -> None:
                     help=f"Suma total · Media: {_num(df[nombre_col].mean())}",
                 )
 
-    st.dataframe(df, use_container_width=True, height=400)
+    estilo.tabla_es(df, use_container_width=True, height=400)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -438,7 +438,7 @@ def pagina_coste_consumo():
                         "unidades": "Unidades",
                         "completitud_%": "Completitud (%)",
                     })
-                    st.dataframe(df_vista, use_container_width=True, height=400)
+                    estilo.tabla_es(df_vista, use_container_width=True, height=400)
 
                     # Descargas (con columnas ya renombradas)
                     nombre_archivo = f"analisis_{tipo}_{id_sum}_{f_ini}_{f_fin}"
@@ -530,9 +530,8 @@ def pagina_incoherencias():
         columnas = st.columns(min(len(tipos), 4))
         for n, tipo in enumerate(tipos):
             with columnas[n % len(columnas)]:
-                porcentajes.append(st.number_input(
-                    tipo, min_value=0.0, value=None, step=1.0, format="%g",
-                    placeholder="vacío", key=f"pct_{tipo}"))
+                porcentajes.append(estilo.casilla_decimal(
+                    st, tipo, None, f"pct_{tipo}", minimo=0, placeholder="vacío"))
 
     if st.button("Ejecutar consulta", type="primary"):
         registrar_consulta("Incoherencias en facturas", "%s %d" % (category, id_elemento))
@@ -681,10 +680,10 @@ def pagina_simulacion_contrato():
     columnas = st.columns(6)
     for col, p in zip(columnas, PERIODOS_TARIFA):
         with col:
-            precios_ene[p] = st.number_input(f"Energía {p.upper()}", min_value=0.0, value=None,
-                                             format="%.6f", placeholder="vacío", key=f"ene_{p}")
-            precios_pot[p] = st.number_input(f"Potencia {p.upper()}", min_value=0.0, value=None,
-                                             format="%.6f", placeholder="vacío", key=f"pot_{p}")
+            precios_ene[p] = estilo.casilla_decimal(st, f"Energía {p.upper()}", None,
+                                                    f"ene_{p}", minimo=0, placeholder="vacío")
+            precios_pot[p] = estilo.casilla_decimal(st, f"Potencia {p.upper()}", None,
+                                                    f"pot_{p}", minimo=0, placeholder="vacío")
     campos, valores = campos_simulacion(precios_ene, precios_pot)
 
     if st.button("Simular", type="primary", disabled=not campos):
@@ -1117,20 +1116,20 @@ def mostrar_consumo_periodos(res: dict) -> None:
     c1.metric("CUPS con facturas", int((df_resumen["Facturas"] > 0).sum()))
     c2.metric("Facturas", len(df_fact))
     c3.metric("Con problemas", int((df_resumen["Estado"] != "OK").sum()))
-    st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+    estilo.tabla_es(df_resumen, use_container_width=True, hide_index=True)
     if df_fact.empty and df_mes.empty:
         st.warning("No se ha descargado ningún dato. Revisa el resumen para ver los errores.")
         return
     t1, t2, t3 = st.tabs(["Facturas por periodo", "Telelecturas por mes", "Diferencias"])
     with t1:
-        st.dataframe(df_fact, use_container_width=True, hide_index=True, height=350)
+        estilo.tabla_es(df_fact, use_container_width=True, hide_index=True, height=350)
     with t2:
-        st.dataframe(df_mes, use_container_width=True, hide_index=True, height=350)
+        estilo.tabla_es(df_mes, use_container_width=True, hide_index=True, height=350)
     with t3:
         st.caption("Cada factura cuenta en el mes de su fecha de fin. Si el periodo facturado no "
                    "coincide con el mes natural, parte de la diferencia es solo de calendario. "
                    "Los meses con telelecturas incompletas no se comparan (ver «Nota»).")
-        st.dataframe(df_dif, use_container_width=True, hide_index=True, height=350)
+        estilo.tabla_es(df_dif, use_container_width=True, hide_index=True, height=350)
     estilo.boton_descarga("API de Gemweb", st, "Descargar Excel",
                           data=excel_consumo_periodos(df_fact, df_mes, df_resumen, df_dif),
                           file_name=res["nombre"],
@@ -1212,8 +1211,8 @@ def pedir_cups() -> list:
     if cups_list:
         st.success(f"{len(cups_list)} CUPS únicos preparados para descarga")
         with st.expander(f"Ver los {len(cups_list)} CUPS"):
-            st.dataframe(datos_de_cups(cups_list[:150]), hide_index=True,
-                         use_container_width=True)
+            estilo.tabla_es(datos_de_cups(cups_list[:150]), hide_index=True,
+                            use_container_width=True)
 
         if len(cups_list) > 150:
             st.error(
@@ -1392,13 +1391,13 @@ def pagina_descarga_masiva():
         with c3:
             total_filas = sum(len(d) for d in df_global)
             st.metric("Filas totales", f"{_num(total_filas, 0)}")
-        st.dataframe(df_resumen, use_container_width=True)
+        estilo.tabla_es(df_resumen, use_container_width=True)
 
         # --- 6. Resultado final y descarga ---
         if df_global:
             st.subheader("Datos descargados")
             df_final = pd.concat(df_global, ignore_index=True)
-            st.dataframe(df_final.head(500), use_container_width=True, height=300)
+            estilo.tabla_es(df_final.head(500), use_container_width=True, height=300)
             if len(df_final) > 500:
                 st.caption(f"Mostrando 500 de {_num(len(df_final), 0)} filas. La descarga incluye todo.")
 
