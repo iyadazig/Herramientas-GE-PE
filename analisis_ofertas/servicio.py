@@ -109,6 +109,38 @@ def anios_horizonte(e: mo.Estudio) -> list:
     return sorted({mo.sumar_meses(e.inicio, k).year for k in range(n)})
 
 
+def _fmt_regulado(v, unidad):
+    if not isinstance(v, (int, float)):
+        return str(v)
+    if unidad == "tanto por uno":
+        return f"{v * 100:.4f}".rstrip("0").rstrip(".").replace(".", ",") + " %"
+    return f"{v:.7f}".rstrip("0").rstrip(".").replace(".", ",") + f" {unidad}"
+
+
+def diferencias_regulados(e: mo.Estudio, guardados: dict = None) -> list:
+    """Lo que ha cambiado en Administración → Datos regulados desde que se congelaron en el
+    análisis, año a año del horizonte: textos «FNEE 2027: 2,4374639 €/MWh → 2,658 €/MWh» (y uno
+    por año si cambian peajes, cargos, pagos por capacidad, pérdidas o SRAD de alguna tarifa)."""
+    salida = []
+    for a in anios_horizonte(e):
+        congelado = e.regulados.get(a)
+        if congelado is None:
+            continue
+        actual = dr.datos_anio(a, guardados)
+        g0, g1 = congelado.get("generales") or {}, actual.get("generales") or {}
+        for clave, nombre, unidad in dr.GENERALES:
+            v0, v1 = g0.get(clave), g1.get(clave)
+            iguales = v0 == v1 or (isinstance(v0, (int, float)) and isinstance(v1, (int, float))
+                                   and abs(v0 - v1) < 1e-12)
+            if not iguales:
+                salida.append(f"{nombre} {a}: {_fmt_regulado(v0, unidad)} → "
+                              f"{_fmt_regulado(v1, unidad)}")
+        if (congelado.get("tarifas") or {}) != (actual.get("tarifas") or {}):
+            salida.append(f"Peajes, cargos, pagos por capacidad, pérdidas o SRAD de alguna "
+                          f"tarifa en {a}")
+    return salida
+
+
 def congelar_regulados(e: mo.Estudio, guardados: dict = None, todos: bool = False) -> None:
     """Datos regulados de los años del horizonte (los que falten; todos=True los vuelve a
     tomar de Administración)."""

@@ -199,6 +199,30 @@ class TablasAnalisis(unittest.TestCase):
         self.assertEqual(mo.SISTEMA_PH, "Canarias Ph")
 
 
+class RegaladosCongelados(unittest.TestCase):
+    def test_avisa_si_un_anio_se_congelo_antes_de_cambiar_y_se_actualiza(self):
+        """Un análisis congela cada año la primera vez que lo necesita: 2027 con el FNEE de
+        antes y 2028-2029 con el nuevo. Se avisa de la diferencia y «actualizar» la corrige."""
+        import datetime as dt
+        from analisis_ofertas import modelo as mo
+        from analisis_ofertas import servicio
+        e = mo.Estudio(inicio=dt.date(2027, 1, 1))
+        e.ofertas = [mo.Oferta(nombre="36 M", duracion=36)]
+        servicio.congelar_regulados(e, guardados={})
+        self.assertEqual(sorted(e.regulados), [2027, 2028, 2029])
+        self.assertEqual(servicio.diferencias_regulados(e, guardados={}), [])
+        e.regulados[2027]["generales"]["fnee"] = 2.4374639           # congelado antes
+        cambios = servicio.diferencias_regulados(e, guardados={})
+        self.assertEqual(cambios, ["FNEE 2027: 2,4374639 €/MWh → 2,658 €/MWh"])
+        e.regulados[2028]["tarifas"]["6.1TD"]["peajes_energia"][0] += 0.001
+        self.assertTrue(any("tarifa en 2028" in x for x in
+                            servicio.diferencias_regulados(e, guardados={})))
+        servicio.congelar_regulados(e, guardados={}, todos=True)
+        self.assertEqual(servicio.diferencias_regulados(e, guardados={}), [])
+        self.assertEqual({a: r["generales"]["fnee"] for a, r in e.regulados.items()},
+                         {2027: 2.658, 2028: 2.658, 2029: 2.658})
+
+
 class Formato(unittest.TestCase):
     def test_numeros_pegados_de_excel(self):
         from analisis_ofertas import paginas as ap_

@@ -651,6 +651,31 @@ def _suministros(e: mo.Estudio):
 
 
 # =================================================================== 3. mercado
+def _avisar_regulados(e: mo.Estudio):
+    """Si los datos regulados congelados en el análisis ya no coinciden con los de
+    Administración (p. ej. un año se congeló antes de cambiar el FNEE), avisa de qué cambia y
+    deja actualizarlos."""
+    try:
+        cambios = servicio.diferencias_regulados(e)
+    except Exception:                                       # noqa: BLE001
+        return
+    if not cambios:
+        return
+    c1, c2 = st.columns([3, 1], vertical_alignment="center")
+    c1.warning("Los datos regulados de este análisis no coinciden con los de Administración → "
+               "Datos regulados (se congelaron antes de cambiarlos):  \n"
+               + "  \n".join("- " + x for x in cambios[:10])
+               + ("  \n- …" if len(cambios) > 10 else ""), icon=":material/warning:")
+    if c2.button("Actualizar datos regulados", type="primary", key=f"ao_reg_act_{_v()}",
+                 help="Vuelve a tomar todos los años de Administración → Datos regulados. "
+                      "Recuerda guardar el análisis después."):
+        servicio.congelar_regulados(e, todos=True)
+        almacen.registrar_actividad(_usuario(), MODULO, "Actualizar datos regulados",
+                                    "; ".join(cambios)[:300])
+        _subir_version()
+        st.rerun()
+
+
 def _mercado(e: mo.Estudio):
     estilo.seccion(3, "Mercado, SSAA y apuntamientos",
                    f"OMIP sesión {e.sesion_omip or '—'} · {e.pct_omip * 100:.0f} % OMIP")
@@ -666,6 +691,7 @@ def _mercado(e: mo.Estudio):
         st.session_state.ao_avisos = servicio.congelar_mercado(e)
         _subir_version()
         st.rerun()
+    _avisar_regulados(e)
     t_merc, t_ssaa, t_ap, t_curvas = st.tabs(["Precio de mercado", "SSAA", "Apuntamientos",
                                               "Curvas del cliente"])
     with t_merc:
