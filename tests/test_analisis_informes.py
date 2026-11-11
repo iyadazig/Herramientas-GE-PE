@@ -126,6 +126,55 @@ class Pdf(unittest.TestCase):
         self.assertEqual(informe_pdf.cabecera_oferta(f), "ENDESA<br/>(SSAA incluidos)")
 
 
+class Rondas(unittest.TestCase):
+    """Informe de una ronda: sus ofertas (y las que se añadan a mano), la ronda en el título y
+    la fila opcional de mejora frente a la ronda anterior."""
+
+    def setUp(self):
+        from analisis_ofertas import resultados
+        self.R = resultados
+        self.e = _ofertas(estudio(n_cups=2))                 # Fijo 0, Fijo 1, Index PP 0, Index PP 1
+        r2 = mo.duplicar(self.e.ofertas[0], nombre="Fijo 0 R2", nueva_ronda=True)
+        r2.precios["6.1TD"] = [mo.PreciosAnio(energia=[0.09] * 6)]   # baja el precio
+        self.e.ofertas.append(r2)
+        self.res = calculo.calcular(self.e)
+
+    def test_rondas_filtro_y_mejora(self):
+        self.assertEqual(self.R.rondas_con_ofertas(self.res), [1, 2])
+        self.assertEqual(self.R.ofertas_de_ronda(self.res, 2), ["Fijo 0 R2"])
+        sub = self.R.solo_ofertas(self.res, ["Fijo 0 R2", "Index PP 1"])
+        self.assertEqual([r.oferta.nombre for r in sub["ofertas"]], ["Index PP 1", "Fijo 0 R2"])
+        self.assertIs(sub["actual"], self.res["actual"])
+        m = self.R.mejora_ronda_anterior(self.res, ["Fijo 0 R2", "Index PP 1"])
+        self.assertEqual(list(m), ["Fijo 0 R2"])            # Index PP 1 no tiene ronda anterior
+        self.assertEqual((m["Fijo 0 R2"]["anterior"], m["Fijo 0 R2"]["ronda_anterior"]),
+                         ("Fijo 0", 1))
+        self.assertLess(m["Fijo 0 R2"]["variacion"], 0)       # ha bajado
+        self.assertAlmostEqual(m["Fijo 0 R2"]["dif"],
+                               m["Fijo 0 R2"]["variacion"] * m["Fijo 0 R2"]["anio1_anterior"])
+
+    def test_pdf_y_excel_de_la_segunda_ronda(self):
+        nombres = self.R.ofertas_de_ronda(self.res, 2)
+        sub = self.R.solo_ofertas(self.res, nombres)
+        mejora = self.R.mejora_ronda_anterior(self.res, nombres)
+        texto = " ".join(" ".join(p[2] for p in _paginas(
+            informes.pdf(self.e, sub, ronda=2, mejora=mejora))).split())  # sin saltos de línea
+        self.assertIn("RESUMEN DEL ESTUDIO DE OFERTAS DE RENOVACIÓN · 2ª RONDA", texto)
+        self.assertIn("CONDICIONES DE LAS OFERTAS · 2ª RONDA", texto)
+        self.assertIn("Mejora frente a la ronda anterior", texto)
+        self.assertIn("vs 1ª ronda", texto)
+        self.assertNotIn("Index PP 0", texto)                 # solo las ofertas del informe
+        sin = " ".join(" ".join(p[2] for p in _paginas(informes.pdf(self.e, sub, ronda=2))).split())
+        self.assertNotIn("Mejora frente a la ronda anterior", sin)   # sin la fila si no se pide
+        wb = openpyxl.load_workbook(io.BytesIO(informes.excel(self.e, sub, ronda=2, mejora=mejora)))
+        ws = wb["Resumen"]
+        self.assertIn("2ª RONDA", ws["B5"].value)
+        valores = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+        self.assertIn("Mejora frente a la ronda anterior (primer año)", valores)
+        self.assertTrue(any("vs 1ª ronda" in v for v in valores))
+        self.assertEqual(len(wb.sheetnames), 4 + 1)            # solo la oferta de la 2ª ronda
+
+
 class Excel(unittest.TestCase):
     def setUp(self):
         self.e = _ofertas(estudio(n_cups=2))

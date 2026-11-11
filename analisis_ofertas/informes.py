@@ -92,14 +92,19 @@ def coste_por_cups(res: dict) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------- Excel
-def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None) -> bytes:
-    """Excel de cálculo con fórmulas vivas (ver informe_excel)."""
+def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: int = None,
+          mejora: dict = None) -> bytes:
+    """Excel de cálculo con fórmulas vivas (ver informe_excel). ronda: la del título (informe
+    de una ronda); mejora: fila «Mejora frente a la ronda anterior»
+    (resultados.mejora_ronda_anterior)."""
     from analisis_ofertas import informe_excel
-    return informe_excel.excel(e, res, ref, tecnico)
+    return informe_excel.excel(e, res, ref, tecnico, ronda=ronda, mejora=mejora)
 
 
 # ------------------------------------------------------------------- PDF
-def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None) -> bytes:
-    """Informe PDF con el formato de la plantilla (ver informe_pdf)."""
+def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: int = None,
+        mejora: dict = None) -> bytes:
+    """Informe PDF con el formato de la plantilla (ver informe_pdf); ronda y mejora como en
+    excel()."""
     from analisis_ofertas import informe_pdf
-    return informe_pdf.pdf(e, res, ref, tecnico)
+    return informe_pdf.pdf(e, res, ref, tecnico, ronda=ronda, mejora=mejora)

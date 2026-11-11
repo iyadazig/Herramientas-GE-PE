@@ -1623,19 +1623,61 @@ def _resultados(e: mo.Estudio, res: dict):
     return filas
 
 
+def _ronda_del_informe(res: dict) -> tuple:
+    """(resultado con las ofertas del informe, ronda o None, mejora frente a la ronda anterior o
+    None). Con ofertas de más de una ronda se elige la ronda (se cargan sus ofertas y se pueden
+    añadir o quitar otras) y si se añade la fila de mejora frente a la ronda anterior."""
+    rondas_ = resultados.rondas_con_ofertas(res)
+    if len(rondas_) < 2:
+        return res, None, None
+    todas = [r.oferta.nombre for r in res["ofertas"]]
+    ronda_de = {r.oferta.nombre: int(r.oferta.ronda or 1) for r in res["ofertas"]}
+    c1, c2 = st.columns([1, 3])
+    opciones = rondas_ + ["Todas"]
+    ronda = c1.selectbox("Ronda del informe", opciones, index=len(rondas_) - 1,
+                         key="ao_inf_ronda",
+                         format_func=lambda r: "Todas las ofertas" if r == "Todas" else f"{r}ª ronda",
+                         help="El PDF y el Excel salen solo con las ofertas de esa ronda (puedes "
+                              "añadir o quitar otras al lado). El título y el nombre del fichero "
+                              "llevan la ronda.")
+    defecto = todas if ronda == "Todas" else resultados.ofertas_de_ronda(res, ronda)
+    elegidas = c2.multiselect("Ofertas que entran en el informe", todas, default=defecto,
+                              key=f"ao_inf_ofertas_{ronda}",
+                              format_func=lambda n: f"{n} · {ronda_de[n]}ª ronda",
+                              help="Se cargan las de la ronda elegida; añade o quita las que "
+                                   "necesites.")
+    if not elegidas:
+        st.warning("Elige al menos una oferta para el informe.")
+    mejora = None
+    if ronda != "Todas" and ronda > 1:
+        if st.checkbox("Añadir la fila «Mejora frente a la ronda anterior»",
+                       key=f"ao_inf_mejora_{ronda}",
+                       help="Una fila más en el resumen con lo que ha mejorado el coste del primer "
+                            "año de cada oferta frente a la de la misma comercializadora en la "
+                            "ronda anterior (misma modalidad y duración si la hay)."):
+            mejora = resultados.mejora_ronda_anterior(res, elegidas)
+    return resultados.solo_ofertas(res, elegidas), (None if ronda == "Todas" else ronda), mejora
+
+
 def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
     st.markdown("#### Informes y correo")
     ref = st.text_input("Referencia del estudio", st.session_state.get("ao_ref", ""),
                         key="ao_ref_txt", help=AY["referencia"])
     st.session_state.ao_ref = ref
-    if st.button("Preparar informes (Excel y PDF) y borrador del correo"):
+    res_inf, ronda_inf, mejora = _ronda_del_informe(res)
+    if st.button("Preparar informes (Excel y PDF) y borrador del correo",
+                 disabled=not res_inf["ofertas"]):
         with st.spinner("Generando…"):
             from analisis_ofertas import informe_pdf
             tecnico = informe_pdf.tecnico_de(_usuario())
-            st.session_state.ao_excel = informes.excel(e, res, ref, tecnico)
-            st.session_state.ao_pdf = informes.pdf(e, res, ref, tecnico)
-            st.session_state.ao_correo = correo.borrador(e, res, ref)
-    nombre = re.sub(r"[^\w-]", "_", ref or e.cliente or "analisis")[:40]
+            st.session_state.ao_excel = informes.excel(e, res_inf, ref, tecnico, ronda=ronda_inf,
+                                                       mejora=mejora)
+            st.session_state.ao_pdf = informes.pdf(e, res_inf, ref, tecnico, ronda=ronda_inf,
+                                                   mejora=mejora)
+            st.session_state.ao_correo = correo.borrador(e, res_inf, ref)
+            st.session_state.ao_inf_sufijo = f"_ronda{ronda_inf}" if ronda_inf else ""
+    nombre = re.sub(r"[^\w-]", "_", ref or e.cliente or "analisis")[:40] + \
+        st.session_state.get("ao_inf_sufijo", "")
     if st.session_state.get("ao_excel"):
         c1, c2, c3 = st.columns(3)
         estilo.boton_descarga(MODULO, c1, "Informe Excel", st.session_state.ao_excel,

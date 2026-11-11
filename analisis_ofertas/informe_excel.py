@@ -37,7 +37,7 @@ import config
 import datos_regulados as dr
 from analisis_ofertas import calculo, resultados
 from analisis_ofertas import modelo as mo
-from analisis_ofertas.informe_pdf import cabecera_oferta, nombre_corto
+from analisis_ofertas.informe_pdf import cabecera_oferta, nombre_corto, texto_mejora
 
 LOGO = config.RECURSOS / "assets" / "logo_geype.png"
 PAR, INFO, RES = "Parámetros utilizados", "Info suministro", "Resumen"
@@ -866,7 +866,7 @@ class HojaOferta:
 
 
 # ------------------------------------------------------------------- Resumen (formato Informe)
-def _resumen(wb, e, res, hojas, actual_h, ref):
+def _resumen(wb, e, res, hojas, actual_h, ref, ronda=None, mejora=None):
     ws = wb.create_sheet(RES, 0)
     ws.sheet_view.showGridLines = False
     filas = resultados.comparativa(res)
@@ -877,7 +877,8 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
         img.height, img.width = 60, int(60 * 700 / 352)
         ws.add_image(img, "B1")
     ws.merge_cells(f"B5:{MC}5")
-    _put(ws, "B5", "RESUMEN DEL ESTUDIO DE OFERTAS DE RENOVACIÓN", b=True, color="FFFFFF", fill="navy",
+    _put(ws, "B5", "RESUMEN DEL ESTUDIO DE OFERTAS DE RENOVACIÓN" + (f" · {ronda}ª RONDA" if ronda else ""),
+         b=True, color="FFFFFF", fill="navy",
          size=12, al="center")
     ws.row_dimensions[5].height = 26
     ws.merge_cells(f"B7:{MC}7")
@@ -952,6 +953,19 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
              al="center", wrap=True, borde=True, size=8)
         ws.row_dimensions[rn].height = 30
         fila = gn + 3
+        if mejora is not None:
+            # mejora del primer año frente a la ronda anterior (dato de la aplicación: la
+            # oferta anterior no está en este libro)
+            gm = gn + 1
+            _put(ws, f"B{gm}", "Mejora frente a la ronda anterior (primer año)", it=True,
+                 color="7F7F7F", size=8, wrap=True)
+            ws.row_dimensions[gm].height = 30
+            for i in range(n):
+                col = CL(3 + i)
+                m = mejora.get(de_tipo[i][0]["nombre"]) if i < len(de_tipo) else None
+                _put(ws, f"{col}{gm}", texto_mejora(m), wrap=True, **GRIS)
+            _put(ws, f"{MC}{gm}", f"=INDEX({rng(gm)},{pos})", wrap=True, **GRIS)
+            fila = gm + 3
     # notas
     _put(ws, f"B{fila}", "Notas:", b=True)
     sesion = dt.date.fromisoformat(e.sesion_omip).strftime("%d/%m/%Y") if e.sesion_omip else "-"
@@ -981,7 +995,8 @@ def _resumen(wb, e, res, hojas, actual_h, ref):
 
 
 # ------------------------------------------------------------------- libro
-def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None) -> bytes:
+def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: int = None,
+          mejora: dict = None) -> bytes:
     tecnico = tecnico or {}
     ctx = calculo.Contexto(e)
     wb = Workbook()
@@ -1002,7 +1017,7 @@ def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None) -> byte
             h.comparar_con_actual(actual_h)
         hojas[r.oferta.nombre] = h
     if actual_h:
-        _resumen(wb, e, res, hojas, actual_h, ref)
+        _resumen(wb, e, res, hojas, actual_h, ref, ronda, mejora)
     orden = [RES, INFO, PAR] + ([actual_h.nombre] if actual_h else []) + [h.nombre for h in hojas.values()]
     wb._sheets = [wb[n] for n in orden if n in wb.sheetnames]
     salida = io.BytesIO()

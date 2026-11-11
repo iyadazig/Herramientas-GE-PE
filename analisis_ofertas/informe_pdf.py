@@ -150,7 +150,15 @@ def _realizado(tecnico: dict, fecha: dt.date, ancho: float) -> Table:
 
 
 # ------------------------------------------------------------------- resumen de ofertas
-def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: float) -> Table:
+def texto_mejora(m: dict) -> str:
+    """«−3,20 % · −12.345 € vs 1ª ronda» (mejora del coste del primer año)."""
+    if not m:
+        return "-"
+    return f"{_pct(m['variacion'])} · {_eur(m['dif'], ' €')} vs {m['ronda_anterior']}ª ronda"
+
+
+def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: float,
+                   mejora: dict = None) -> Table:
     """Tabla como la de la hoja «Informe» (contrato actual · ofertas · mejor oferta)."""
     s_cab = _st("cab", 7.5, True, alin=1)
     s_val = _st("val", 8)
@@ -211,9 +219,15 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
                     if f["actual_mismo_periodo"] else "-"),
         [Paragraph("Ranking en su periodo total", s_gris)]
         + gris(lambda f: str(rankp[f["nombre"]]))]
-    t = Table(datos, colWidths=[COL_ETIQ] + [ancho_of] * n_cols + [COL_MIN],
-              rowHeights=[6.5 * mm, 11.5 * mm, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, 8 * mm,
-                          8.5 * mm, 6 * mm, 4.4 * mm, 4.4 * mm, 4.8 * mm])
+    altos = [6.5 * mm, 11.5 * mm, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, 8 * mm,
+             8.5 * mm, 6 * mm, 4.4 * mm, 4.4 * mm, 4.8 * mm]
+    if mejora is not None:
+        # mejora del primer año frente a la oferta de la misma comercializadora en la ronda
+        # anterior (en gris, como el periodo total)
+        datos.append([Paragraph("Mejora frente a la ronda anterior (primer año)", s_gris)]
+                     + gris(lambda f: texto_mejora(mejora.get(f["nombre"]))))
+        altos.append(8 * mm)
+    t = Table(datos, colWidths=[COL_ETIQ] + [ancho_of] * n_cols + [COL_MIN], rowHeights=altos)
     ult = n_cols + 1
     est = [("SPAN", (0, 0), (0, 1)), ("SPAN", (1, 0), (n_cols, 0)), ("SPAN", (ult, 0), (ult, 1)),
            ("SPAN", (0, 4), (0, 5)), ("SPAN", (0, 9), (0, 10)),
@@ -301,18 +315,21 @@ def _notas(e: mo.Estudio, anios: list, medias: list) -> list:
         "diferencia. Las ofertas con cabecera naranja duran más de 12 meses."]
 
 
-def _pagina_informe(e, res, ref, n_cols, ancho_of, ancho_util, con_logo=True) -> list:
+def _pagina_informe(e, res, ref, n_cols, ancho_of, ancho_util, con_logo=True, sufijo="",
+                    mejora=None) -> list:
     filas = resultados.comparativa(res)
     actual = res.get("actual")
     act = {"nombre": (nombre_corto(actual.oferta.comercializadora, "") +
                       ("" if actual.oferta.modalidad == mo.FIJO else " index.")) if actual else "",
            **resultados.actual_primer_anio(res)}
-    h = _cabecera(e, ancho_util, "RESUMEN DEL ESTUDIO DE OFERTAS DE RENOVACIÓN", ref, con_logo)
+    h = _cabecera(e, ancho_util, "RESUMEN DEL ESTUDIO DE OFERTAS DE RENOVACIÓN" + sufijo, ref,
+                  con_logo)
     for tipo, titulo in (("Fijo", "Estimación facturación ofertas a precio fijo (€/año)"),
                          ("Indexado", "Estimación facturación ofertas indexadas (€/año)")):
         de_tipo = [f for f in filas if f["tipo"] == tipo]
         if de_tipo:
-            h += [_tabla_ofertas(titulo, de_tipo, act, n_cols, ancho_of), Spacer(1, 3 * mm)]
+            h += [_tabla_ofertas(titulo, de_tipo, act, n_cols, ancho_of, mejora),
+                  Spacer(1, 3 * mm)]
     n_meses = max((r.n_meses for r in res["ofertas"]), default=12)
     cuadro, anios, medias = _cuadro_mercado(e, n_meses)
     sesion = dt.date.fromisoformat(e.sesion_omip).strftime("%d/%m/%Y") if e.sesion_omip else "-"
@@ -754,10 +771,14 @@ def _alto(flujos, ancho) -> float:
     return total
 
 
-def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None) -> bytes:
+def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: int = None,
+        mejora: dict = None) -> bytes:
     """Ficha del suministro (o relación de suministros con gráficas) → resumen de ofertas →
-    condiciones. Cada página lleva debajo el papel con la marca de agua de GE&PE."""
+    condiciones. Cada página lleva debajo el papel con la marca de agua de GE&PE. ronda: informe
+    de una ronda (va en el título del resumen y de las condiciones); mejora: fila «Mejora frente
+    a la ronda anterior» (resultados.mejora_ronda_anterior)."""
     tecnico = tecnico or {}
+    sufijo = f" · {ronda}ª RONDA" if ronda else ""
     filas = resultados.comparativa(res)
     n_cols = max(1, max(sum(f["tipo"] == "Fijo" for f in filas),
                         sum(f["tipo"] != "Fijo" for f in filas)))
@@ -789,10 +810,10 @@ def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None) -> bytes:
         return h + _graficas_cartera(e, activos, ancho, extra)
 
     def informe(ancho, con_logo, extra=0):
-        return _pagina_informe(e, res, ref, n_cols, ancho_of, ancho, con_logo)
+        return _pagina_informe(e, res, ref, n_cols, ancho_of, ancho, con_logo, sufijo, mejora)
 
     def condiciones(ancho, con_logo, extra=0):
-        return _cabecera(e, ancho, "CONDICIONES DE LAS OFERTAS", ref, con_logo) + \
+        return _cabecera(e, ancho, "CONDICIONES DE LAS OFERTAS" + sufijo, ref, con_logo) + \
             [_condiciones(e, res, ancho)]
 
     # ---- tamaño y papel de cada bloque: el primero en el que los datos caben en una hoja
