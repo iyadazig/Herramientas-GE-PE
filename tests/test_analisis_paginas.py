@@ -98,7 +98,7 @@ class TablasAnalisis(unittest.TestCase):
         from analisis_ofertas import paginas as ap_
         t = ap_.tabla_suministros(self.e)
         t.loc[1, "Sistema"] = "Canarias"
-        t.loc[1, "Reducción IEE"] = 0.85
+        t.loc[1, "Reducción IEE (%)"] = 85.0
         t.loc[0, "Incluir"] = False
         t.loc[0, "Apuntamiento"] = "Del cliente (curva)"     # sin curva: se queda el estimado
         ap_.aplicar_suministros(self.e, t)

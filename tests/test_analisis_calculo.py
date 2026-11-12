@@ -8,6 +8,7 @@ import copy
 import datetime as dt
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -373,6 +374,36 @@ class Duraciones(unittest.TestCase):
         self.assertAlmostEqual(anios[0]["energia"], 2400)
         self.assertAlmostEqual(anios[1]["energia"], 4800)
         self.assertAlmostEqual(anios[2]["energia"], 2400)  # año 3 parcial: precio del año 2
+
+    def test_exencion_de_la_solicitud(self):
+        """La exención del impuesto eléctrico de cada suministro de la solicitud pasa al
+        análisis: % consumo × % exención; marcada sin porcentajes, aviso en Controles."""
+        from analisis_ofertas import servicio
+        cons = lambda **c: {"exencion": True, **c}
+        self.assertEqual(servicio.reduccion_de_solicitud({"exencion": False}), (0.0, None))
+        self.assertAlmostEqual(servicio.reduccion_de_solicitud(
+            cons(pct_consumo_exento=100.0, pct_tipo_exencion=85.0))[0], 0.85)
+        self.assertAlmostEqual(servicio.reduccion_de_solicitud(
+            cons(pct_consumo_exento="60", pct_tipo_exencion="85"))[0], 0.51)
+        red, aviso = servicio.reduccion_de_solicitud(cons(pct_consumo_exento=None))
+        self.assertEqual(red, 0.0)
+        self.assertIn("sin el % de consumo", aviso)
+        fichas = [{"cups": "ES1", "tarifa": "6.1TD", "direccion": "Sevilla",
+                   "consideraciones": cons(pct_consumo_exento=100, pct_tipo_exencion=100)},
+                  {"cups": "ES2", "tarifa": "6.1TD", "direccion": "Sevilla",
+                   "consideraciones": cons()},
+                  {"cups": "ES3", "tarifa": "6.1TD", "direccion": "Sevilla"}]
+        sol = {"id": 7, "cliente": "X", "datos": {"suministros": fichas}}
+        e = servicio.estudio_desde_solicitud(sol)
+        self.assertEqual([s.reduccion_iee for s in e.suministros], [1.0, 0.0, 0.0])
+        # análisis guardado antes (reducción a 0): aviso en Controles
+        e.suministros[0].reduccion_iee = 0.0
+        original = servicio.exenciones_solicitud
+        with mock.patch.object(servicio, "exenciones_solicitud", lambda e_: original(e_, sol)):
+            textos = [t for _, t in servicio.controles(e)]
+        self.assertTrue(any(t.startswith("ES1: la solicitud indica una reducción") for t in textos))
+        self.assertTrue(any(t.startswith("ES2: la solicitud marca exención") for t in textos))
+        self.assertFalse(any(t.startswith("ES3") and "exención" in t for t in textos))
 
     def test_actual_en_los_mismos_meses(self):
         e = estudio()

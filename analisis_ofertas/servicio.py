@@ -50,6 +50,22 @@ def sistema_de(direccion: str) -> str:
     return {"Illes Balears": "Baleares"}.get(zona, zona) or "Península"
 
 
+def reduccion_de_solicitud(c: dict) -> tuple:
+    """(reducción del impuesto eléctrico en tanto por uno, aviso) a partir de las
+    consideraciones de un suministro de la solicitud: % del consumo sujeto a exención × % del
+    tipo de exención (60 % × 85 % = 0,51). Sin exención, (0, None); con la exención marcada pero
+    sin los dos porcentajes, (0, aviso) para que se rellene a mano."""
+    import numeros
+    if not c or not c.get("exencion"):
+        return 0.0, None
+    pc, pt = numeros.leer(c.get("pct_consumo_exento")), numeros.leer(c.get("pct_tipo_exencion"))
+    if pc is None or pt is None:
+        return 0.0, ("la solicitud marca exención del impuesto eléctrico, pero sin el % de "
+                     "consumo o el % de exención: pon la reducción a mano en la tabla de "
+                     "suministros.")
+    return min(1.0, max(0.0, pc / 100 * pt / 100)), None
+
+
 def suministros_de_fichas(fichas: list) -> list:
     """Fichas de la solicitud (electricidad) → [Suministro]."""
     salida = []
@@ -64,7 +80,27 @@ def suministros_de_fichas(fichas: list) -> list:
             alias=f.get("alias") or "", razon=f.get("razon") or "",
             direccion=f.get("direccion") or "",
             potencias=[float(v or 0) for v in mo.seis(f.get("potencias"), 0.0)],
-            consumo=perfil))
+            consumo=perfil,
+            reduccion_iee=reduccion_de_solicitud(f.get("consideraciones") or {})[0]))
+    return salida
+
+
+def exenciones_solicitud(e: mo.Estudio, sol: dict = None) -> dict:
+    """{cups: (reducción, aviso)} de los suministros con exención en la solicitud de la que
+    viene el estudio ({} si no viene de una solicitud o no se puede leer)."""
+    if sol is None:
+        if not e.id_solicitud:
+            return {}
+        try:
+            import almacen
+            sol = almacen.solicitud(e.id_solicitud)
+        except Exception:                                   # noqa: BLE001
+            return {}
+    salida = {}
+    for f in ((sol or {}).get("datos") or {}).get("suministros") or []:
+        c = f.get("consideraciones") or {}
+        if c.get("exencion") and f.get("cups"):
+            salida[f["cups"]] = reduccion_de_solicitud(c)
     return salida
 
 
@@ -398,6 +434,19 @@ def elegir_apuntamiento(e: mo.Estudio, usar: dict) -> list:
 def controles(e: mo.Estudio, res: dict = None) -> list:
     """[(nivel, texto)] con nivel 'error' (el resultado no es fiable) o 'aviso'."""
     salida = []
+    # exención del impuesto eléctrico de la solicitud que no está en el análisis (análisis
+    # creados antes de copiarla, o con los porcentajes sin rellenar)
+    for cups, (red, aviso) in exenciones_solicitud(e).items():
+        s = e.suministro(cups)
+        if not s or not s.activo or s.reduccion_iee:
+            continue
+        if aviso:
+            salida.append(("aviso", f"{cups}: {aviso}"))
+        elif red:
+            salida.append(("aviso", f"{cups}: la solicitud indica una reducción del impuesto "
+                                    f"eléctrico del {red * 100:g} %".replace(".", ",")
+                           + " y el análisis la tiene a 0. Ponla en la columna «Reducción IEE "
+                             "(%)» de la tabla de suministros."))
     for s in e.suministros:
         if not s.activo:
             continue

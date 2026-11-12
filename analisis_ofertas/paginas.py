@@ -161,7 +161,8 @@ def contrato_es(texto) -> str:
 def tabla_suministros(e: mo.Estudio) -> pd.DataFrame:
     return pd.DataFrame([{
         "Incluir": s.activo, "CUPS": s.cups, "Alias": s.alias, "Tarifa": s.tarifa,
-        "Sistema": s.sistema, "Reducción IEE": s.reduccion_iee, "Alquiler (€/mes)": s.alquiler,
+        "Sistema": s.sistema, "Reducción IEE (%)": round((s.reduccion_iee or 0) * 100, 6),
+        "Alquiler (€/mes)": s.alquiler,
         "Consumo anual (kWh)": round(s.consumo_anual()),
         **{f"Pot. {p} (kW)": s.potencias[i] for i, p in enumerate(PER)},
         "Apuntamiento": s.apuntamiento if e.ap_cliente.get(s.cups) else mo.ESTIMADO}
@@ -177,7 +178,7 @@ def aplicar_suministros(e: mo.Estudio, df: pd.DataFrame) -> None:
         s.alias = str(f["Alias"] or "")
         s.tarifa = f["Tarifa"] or s.tarifa
         s.sistema = f["Sistema"] or s.sistema
-        s.reduccion_iee = _num(f["Reducción IEE"], 0.0)
+        s.reduccion_iee = min(1.0, max(0.0, _num(f["Reducción IEE (%)"], 0.0) / 100))
         s.alquiler = _num(f["Alquiler (€/mes)"], 0.0)
         s.potencias = [_num(f[f"Pot. {p} (kW)"], 0.0) for p in PER]
         s.apuntamiento = (f["Apuntamiento"] if e.ap_cliente.get(s.cups) else mo.ESTIMADO)
@@ -633,17 +634,17 @@ def _suministros(e: mo.Estudio):
         c2.error("Escribe porcentajes separados por comas.")
     e.cliente = c3.text_input("Cliente", value=e.cliente, key=f"ao_cliente_{_v()}")
     st.caption("Sistema eléctrico propuesto por la dirección (revísalo). Reducción del impuesto "
-               "eléctrico: 0, 0,85 (usos del art. 98.1) o 1 (exento). Apuntamiento: «Del "
+               "eléctrico en %: 85 (usos del art. 98.1), 100 (exento) o, si solo una parte del "
+               "consumo tiene derecho, % consumo × % exención (60 % × 85 % = 51). Desde una "
+               "solicitud se toma de ella. Apuntamiento: «Del "
                "cliente» solo en los CUPS con curva de un año completo (sección 3).")
     editada = editor(
         tabla_suministros(e), f"ao_sum_{_v()}",
-        ["Alquiler (€/mes)"] + [f"Pot. {p} (kW)" for p in PER],
+        ["Reducción IEE (%)", "Alquiler (€/mes)"] + [f"Pot. {p} (kW)" for p in PER],
         hide_index=True, use_container_width=True, disabled=["CUPS", "Consumo anual (kWh)"],
         column_config={
             "Tarifa": st.column_config.SelectboxColumn(options=mo.TARIFAS, required=True),
             "Sistema": st.column_config.SelectboxColumn(options=mo.SISTEMAS, required=True),
-            "Reducción IEE": st.column_config.SelectboxColumn(options=mo.REDUCCIONES_IEE,
-                                                              required=True),
             "Apuntamiento": st.column_config.SelectboxColumn(options=[mo.ESTIMADO, mo.CLIENTE],
                                                              required=True),
             "Consumo anual (kWh)": st.column_config.NumberColumn(format="localized"),
