@@ -31,6 +31,13 @@ def tipo(o: mo.Oferta) -> str:
     return "Fijo" if o.modalidad == mo.FIJO else "Indexado"
 
 
+def clave(o: mo.Oferta) -> int:
+    """Identificador de una oferta dentro de un cálculo. No se usa el nombre porque dos ofertas
+    pueden llamarse igual (p. ej. «EDP» a 36 y a 60 meses) y se pisarían en los rankings, las
+    hojas del Excel o la selección del informe."""
+    return id(o)
+
+
 def comparativa(res: dict) -> list:
     """Una fila por oferta (en el orden del estudio)."""
     actual = res.get("actual")
@@ -50,6 +57,8 @@ def comparativa(res: dict) -> list:
             "actual_anio1": act1,
             "dif_anio1": (anio1 - act1) if act1 else None,
             "variacion_anio1": (anio1 / act1 - 1) if act1 else None,
+            # clave: identifica la oferta aunque dos se llamen igual (no usar el nombre)
+            "clave": clave(o),
             "nombre": o.nombre, "comercializadora": o.comercializadora, "producto": o.producto,
             "gestor": o.gestor, "email_gestor": o.email_gestor, "ronda": o.ronda,
             "modalidad": o.modalidad, "tipo": tipo(o), "ssaa": o.resumen_ssaa(),
@@ -177,32 +186,33 @@ def rondas_con_ofertas(res: dict) -> list:
 
 
 def ofertas_de_ronda(res: dict, ronda: int) -> list:
-    """Nombres de las ofertas de esa ronda (en el orden del estudio)."""
-    return [r.oferta.nombre for r in res["ofertas"] if int(r.oferta.ronda or 1) == int(ronda)]
+    """Posiciones (en res["ofertas"]) de las ofertas de esa ronda, en el orden del estudio."""
+    return [i for i, r in enumerate(res["ofertas"]) if int(r.oferta.ronda or 1) == int(ronda)]
 
 
-def solo_ofertas(res: dict, nombres: list) -> dict:
-    """El resultado del cálculo con solo esas ofertas (y el contrato actual), en su orden."""
-    elegidas = set(nombres)
-    return dict(res, ofertas=[r for r in res["ofertas"] if r.oferta.nombre in elegidas])
+def solo_ofertas(res: dict, posiciones: list) -> dict:
+    """El resultado del cálculo con solo esas ofertas (posiciones en res["ofertas"]) y el
+    contrato actual, en el orden del estudio."""
+    elegidas = set(posiciones)
+    return dict(res, ofertas=[r for i, r in enumerate(res["ofertas"]) if i in elegidas])
 
 
 def _clave_com(o) -> str:
     return (o.comercializadora or "").strip().upper()
 
 
-def mejora_ronda_anterior(res: dict, nombres: list) -> dict:
-    """{nombre: {"anterior", "ronda_anterior", "anio1_anterior", "dif", "variacion"}} de las
-    ofertas elegidas que tienen una oferta anterior de la misma comercializadora en una ronda
-    previa: la más reciente de las rondas anteriores, preferiblemente con la misma modalidad y
-    duración. Compara el coste del primer año (anualizado)."""
-    filas = {f["nombre"]: f for f in comparativa(res)}
-    por_nombre = {r.oferta.nombre: r for r in res["ofertas"]}
+def mejora_ronda_anterior(res: dict, posiciones: list) -> dict:
+    """{clave: {"anterior", "ronda_anterior", "anio1_anterior", "dif", "variacion"}} de las
+    ofertas elegidas (posiciones en res["ofertas"]) que tienen una oferta anterior de la misma
+    comercializadora en una ronda previa: la más reciente de las rondas anteriores,
+    preferiblemente con la misma modalidad y duración. Compara el coste del primer año
+    (anualizado)."""
+    filas = {f["clave"]: f for f in comparativa(res)}
     salida = {}
-    for nombre in nombres:
-        r = por_nombre.get(nombre)
-        if r is None:
+    for i in posiciones:
+        if not 0 <= i < len(res["ofertas"]):
             continue
+        r = res["ofertas"][i]
         o = r.oferta
         ronda = int(o.ronda or 1)
         previas = [x for x in res["ofertas"] if _clave_com(x.oferta) == _clave_com(o)
@@ -215,10 +225,10 @@ def mejora_ronda_anterior(res: dict, nombres: list) -> dict:
                     x.n_meses == r.n_meses, x.oferta.modalidad == o.modalidad,
                     int(x.oferta.ronda or 1))
         previa = max(previas, key=afinidad)
-        ahora, antes = filas[nombre]["anio1"], filas[previa.oferta.nombre]["anio1"]
+        ahora, antes = filas[clave(o)]["anio1"], filas[clave(previa.oferta)]["anio1"]
         if not antes:
             continue
-        salida[nombre] = {"anterior": previa.oferta.nombre,
+        salida[clave(o)] = {"anterior": previa.oferta.nombre,
                           "ronda_anterior": int(previa.oferta.ronda or 1),
                           "anio1_anterior": antes, "dif": ahora - antes,
                           "variacion": ahora / antes - 1}

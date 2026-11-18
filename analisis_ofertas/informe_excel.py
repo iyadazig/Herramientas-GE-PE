@@ -892,7 +892,7 @@ def _resumen(wb, e, res, hojas, actual_h, ref, ronda=None, mejora=None):
     fila = 9
     for tipo, titulo in (("Fijo", "Estimación facturación ofertas a precio fijo (€/año)"),
                          ("Indexado", "Estimación facturación ofertas indexadas (€/año)")):
-        de_tipo = [(f, hojas[f["nombre"]]) for f in filas if (f["tipo"] == "Fijo") == (tipo == "Fijo")]
+        de_tipo = [(f, hojas[f["clave"]]) for f in filas if (f["tipo"] == "Fijo") == (tipo == "Fijo")]
         if not de_tipo:
             continue
         t = fila
@@ -965,7 +965,7 @@ def _resumen(wb, e, res, hojas, actual_h, ref, ronda=None, mejora=None):
             ws.row_dimensions[gm].height = 30
             for i in range(n):
                 col = CL(3 + i)
-                m = mejora.get(de_tipo[i][0]["nombre"]) if i < len(de_tipo) else None
+                m = mejora.get(de_tipo[i][0]["clave"]) if i < len(de_tipo) else None
                 _put(ws, f"{col}{gm}", texto_mejora(m), wrap=True, **GRIS)
             _put(ws, f"{MC}{gm}", f"=INDEX({rng(gm)},{pos})", wrap=True, **GRIS)
             fila = gm + 3
@@ -1018,7 +1018,7 @@ def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: 
         h = HojaOferta(wb, _nombre_hoja(r.oferta.nombre, usados), e, r.oferta, r, par, info, ctx)
         if actual_h:
             h.comparar_con_actual(actual_h)
-        hojas[r.oferta.nombre] = h
+        hojas[resultados.clave(r.oferta)] = h          # no por nombre: puede repetirse
     if actual_h:
         _resumen(wb, e, res, hojas, actual_h, ref, ronda, mejora)
     orden = [RES, INFO, PAR] + ([actual_h.nombre] if actual_h else []) + [h.nombre for h in hojas.values()]

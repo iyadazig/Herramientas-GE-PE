@@ -144,7 +144,7 @@ def borrador(e: mo.Estudio, res: dict, ref: str = "", adjuntos=("resumen de ofer
             t.append(f"  • {nombre} – {_modalidad(f)}: {informes.eur(f['media_anual'])} €/año "
                      f"frente a {informes.eur(f['actual_mismo_periodo'])} €/año del contrato "
                      f"actual ({dif}).")
-            destacado = any(m["nombre"] == f["nombre"] for m in mejores.values())
+            destacado = any(m["clave"] == f["clave"] for m in mejores.values())
             color = "#00703C" if (f["variacion"] or 0) < 0 else "#C00000"
             h.append("<tr>" + f'<td style="{celda}font-weight:bold;">{escape(nombre)}</td>'
                      f'<td style="{celda}text-align:center;">{escape(_modalidad(f))}</td>'

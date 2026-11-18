@@ -169,8 +169,9 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
     # bloque principal: primer año frente al contrato actual en esos meses (ranking y mejor
     # oferta); bloque gris: periodo total de cada oferta con su propio ranking
     minimo = min(validas, key=resultados.orden_anio1) if validas else None
-    rank1 = {f["nombre"]: i for i, f in enumerate(sorted(validas, key=resultados.orden_anio1), 1)}
-    rankp = {f["nombre"]: i for i, f in enumerate(sorted(validas, key=resultados.orden), 1)}
+    # por clave, no por nombre: dos ofertas pueden llamarse igual (EDP a 36 y a 60 meses)
+    rank1 = {f["clave"]: i for i, f in enumerate(sorted(validas, key=resultados.orden_anio1), 1)}
+    rankp = {f["clave"]: i for i, f in enumerate(sorted(validas, key=resultados.orden), 1)}
     rojo = lambda v: C["rojo"] if (v or 0) < 0 else colors.black
 
     def celda(f, texto, estilo):
@@ -205,7 +206,7 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
         + [Paragraph(_eur(minimo["dif_anio1"], " €") if minimo and minimo["dif_anio1"] is not None
                      else "-", _st("md", 8, True, rojo(minimo and minimo["dif_anio1"])))],
         [Paragraph("Ranking de oferta", s_lbl)]
-        + [Paragraph(str(rank1[f["nombre"]]), _st("rk", 9, True)) if f else "-" for f in filas]
+        + [Paragraph(str(rank1[f["clave"]]), _st("rk", 9, True)) if f else "-" for f in filas]
         + [Paragraph(cabecera_oferta(minimo).replace("<br/>", " ") if minimo else "-",
                      _st("mn", 7, True))],
         # periodo total de cada oferta (en gris)
@@ -218,14 +219,14 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
         [""] + gris(lambda f: _eur(f["media_anual"] - f["actual_mismo_periodo"], " €")
                     if f["actual_mismo_periodo"] else "-"),
         [Paragraph("Ranking en su periodo total", s_gris)]
-        + gris(lambda f: str(rankp[f["nombre"]]))]
+        + gris(lambda f: str(rankp[f["clave"]]))]
     altos = [6.5 * mm, 11.5 * mm, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, 8 * mm,
              8.5 * mm, 6 * mm, 4.4 * mm, 4.4 * mm, 4.8 * mm]
     if mejora is not None:
         # mejora del primer año frente a la oferta de la misma comercializadora en la ronda
         # anterior (en gris, como el periodo total)
         datos.append([Paragraph("Mejora frente a la ronda anterior (primer año)", s_gris)]
-                     + gris(lambda f: texto_mejora(mejora.get(f["nombre"]))))
+                     + gris(lambda f: texto_mejora(mejora.get(f["clave"]))))
         altos.append(8 * mm)
     t = Table(datos, colWidths=[COL_ETIQ] + [ancho_of] * n_cols + [COL_MIN], rowHeights=altos)
     ult = n_cols + 1
@@ -246,7 +247,7 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
     for i, f in enumerate(filas, start=1):
         if f and f["duracion"] > 12:
             est.append(("BACKGROUND", (i, 1), (i, 1), C["orange"]))
-        if f and minimo and f["nombre"] == minimo["nombre"]:
+        if f and minimo and f["clave"] == minimo["clave"]:
             est.append(("BACKGROUND", (i, 2), (i, 2), C["verde"]))
     t.setStyle(TableStyle(est))
     return t

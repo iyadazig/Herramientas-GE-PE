@@ -141,17 +141,17 @@ class Rondas(unittest.TestCase):
 
     def test_rondas_filtro_y_mejora(self):
         self.assertEqual(self.R.rondas_con_ofertas(self.res), [1, 2])
-        self.assertEqual(self.R.ofertas_de_ronda(self.res, 2), ["Fijo 0 R2"])
-        sub = self.R.solo_ofertas(self.res, ["Fijo 0 R2", "Index PP 1"])
+        # posiciones: Fijo 0, Fijo 1, Index PP 0, Index PP 1, Fijo 0 R2
+        self.assertEqual(self.R.ofertas_de_ronda(self.res, 2), [4])
+        sub = self.R.solo_ofertas(self.res, [4, 3])
         self.assertEqual([r.oferta.nombre for r in sub["ofertas"]], ["Index PP 1", "Fijo 0 R2"])
         self.assertIs(sub["actual"], self.res["actual"])
-        m = self.R.mejora_ronda_anterior(self.res, ["Fijo 0 R2", "Index PP 1"])
-        self.assertEqual(list(m), ["Fijo 0 R2"])            # Index PP 1 no tiene ronda anterior
-        self.assertEqual((m["Fijo 0 R2"]["anterior"], m["Fijo 0 R2"]["ronda_anterior"]),
-                         ("Fijo 0", 1))
-        self.assertLess(m["Fijo 0 R2"]["variacion"], 0)       # ha bajado
-        self.assertAlmostEqual(m["Fijo 0 R2"]["dif"],
-                               m["Fijo 0 R2"]["variacion"] * m["Fijo 0 R2"]["anio1_anterior"])
+        m = self.R.mejora_ronda_anterior(self.res, [4, 3])
+        k = self.R.clave(self.e.ofertas[4])
+        self.assertEqual(list(m), [k])                       # Index PP 1 no tiene ronda anterior
+        self.assertEqual((m[k]["anterior"], m[k]["ronda_anterior"]), ("Fijo 0", 1))
+        self.assertLess(m[k]["variacion"], 0)                # ha bajado
+        self.assertAlmostEqual(m[k]["dif"], m[k]["variacion"] * m[k]["anio1_anterior"])
 
     def test_pdf_y_excel_de_la_segunda_ronda(self):
         nombres = self.R.ofertas_de_ronda(self.res, 2)
@@ -173,6 +173,47 @@ class Rondas(unittest.TestCase):
         self.assertIn("Mejora frente a la ronda anterior (primer año)", valores)
         self.assertTrue(any("vs 1ª ronda" in v for v in valores))
         self.assertEqual(len(wb.sheetnames), 4 + 1)            # solo la oferta de la 2ª ronda
+
+
+class OfertasConElMismoNombre(unittest.TestCase):
+    """Dos ofertas pueden llamarse igual (p. ej. «EDP» a 36 y a 60 meses): cada una tiene su
+    ranking, su hoja del Excel y su fila de mejora (antes se pisaban por el nombre)."""
+
+    def setUp(self):
+        from analisis_ofertas import resultados
+        self.R = resultados
+        self.e = _ofertas(estudio(n_cups=1), n_fijas=0, n_index=0)
+        for precio, meses, nombre in ((0.12, 12, "EDP"), (0.10, 24, "EDP"), (0.11, 12, "Endesa")):
+            self.e.ofertas.append(fijo(precio, nombre=nombre, duracion=meses,
+                                       comercializadora=nombre.upper()))
+        self.res = calculo.calcular(self.e)
+
+    def test_ranking_del_pdf(self):
+        filas = self.R.comparativa(self.res)
+        act = {"nombre": "ELEIA", "total": 1.0, "eur_mwh": 1.0}
+        t = informe_pdf._tabla_ofertas("Fijo", filas, act, 3, 30)
+        rank1 = [c.text for c in t._cellvalues[6][1:4]]
+        rankp = [c.text for c in t._cellvalues[11][1:4]]
+        # el más barato (EDP 24 m, 0,10) primero, luego Endesa (0,11) y EDP 12 m (0,12)
+        self.assertEqual(rank1, ["3", "1", "2"])
+        self.assertEqual(sorted(rankp), ["1", "2", "3"])
+        esperado = {f["clave"]: i for i, f in enumerate(sorted(filas, key=self.R.orden), 1)}
+        self.assertEqual(rankp, [str(esperado[f["clave"]]) for f in filas])
+
+    def test_excel_una_hoja_por_oferta(self):
+        wb = openpyxl.load_workbook(io.BytesIO(informes.excel(self.e, self.res)))
+        self.assertEqual(len(wb.sheetnames), 4 + 3)          # las dos EDP tienen su hoja
+        # el resumen enlaza cada columna con su propia hoja
+        ws = wb["Resumen"]
+        refs = {re.search(r"'?([^'!=]+)'?!", c.value).group(1) for row in ws.iter_rows()
+                for c in row if isinstance(c.value, str) and c.value.startswith("=")
+                and "!" in c.value and "Contrato" not in c.value
+                and "Información" not in c.value and "Parámetros" not in c.value}
+        self.assertEqual(len(refs), 3)
+
+    def test_seleccion_de_ronda_por_posicion(self):
+        sub = self.R.solo_ofertas(self.res, [0])
+        self.assertEqual([(r.oferta.nombre, r.n_meses) for r in sub["ofertas"]], [("EDP", 12)])
 
 
 class Excel(unittest.TestCase):

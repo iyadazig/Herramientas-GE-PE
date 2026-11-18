@@ -1639,8 +1639,10 @@ def _ronda_del_informe(res: dict) -> tuple:
     rondas_ = resultados.rondas_con_ofertas(res)
     if len(rondas_) < 2:
         return res, None, None
-    todas = [r.oferta.nombre for r in res["ofertas"]]
-    ronda_de = {r.oferta.nombre: int(r.oferta.ronda or 1) for r in res["ofertas"]}
+    # posiciones en res["ofertas"] (dos ofertas pueden llamarse igual)
+    todas = list(range(len(res["ofertas"])))
+    nombre_de = {i: f"{r.oferta.nombre} · {r.n_meses} M · {int(r.oferta.ronda or 1)}ª ronda"
+                 for i, r in enumerate(res["ofertas"])}
     c1, c2 = st.columns([1, 3])
     opciones = rondas_ + ["Todas"]
     ronda = c1.selectbox("Ronda del informe", opciones, index=len(rondas_) - 1,
@@ -1652,7 +1654,7 @@ def _ronda_del_informe(res: dict) -> tuple:
     defecto = todas if ronda == "Todas" else resultados.ofertas_de_ronda(res, ronda)
     elegidas = c2.multiselect("Ofertas que entran en el informe", todas, default=defecto,
                               key=f"ao_inf_ofertas_{ronda}",
-                              format_func=lambda n: f"{n} · {ronda_de[n]}ª ronda",
+                              format_func=nombre_de.get,
                               help="Se cargan las de la ronda elegida; añade o quita las que "
                                    "necesites.")
     if not elegidas:
@@ -1705,18 +1707,20 @@ def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
                                                                            "En curso")))
     adjudicada = None
     if estado == "Adjudicada" and filas:
-        por_nombre = {f["nombre"]: f for f in filas}
-        adjudicada = st.selectbox("Oferta adjudicada", list(por_nombre), key="ao_adjudicada",
-                                  help=AY["adjudicada"],
-                                  format_func=lambda n: f"{por_nombre[n]['comercializadora']} "
-                                                        f"{por_nombre[n]['duracion']} m ({n})")
+        # por posición: dos ofertas pueden llamarse igual
+        n_adj = st.selectbox("Oferta adjudicada", list(range(len(filas))), key="ao_adjudicada_n",
+                             help=AY["adjudicada"],
+                             format_func=lambda i: f"{filas[i]['comercializadora']} "
+                                                   f"{filas[i]['duracion']} m ({filas[i]['nombre']})")
+        adjudicada = filas[n_adj]
     c1, c2 = st.columns(2)
     id_actual = st.session_state.get("ao_id")
     if c1.button("Guardar el análisis" if not id_actual else f"Guardar los cambios (nº {id_actual})",
                  type="primary"):
         resumen = servicio.resumen(e, res, estado, ref)
         if adjudicada:
-            resumen["mejor"] = f"Adjudicada: {adjudicada}"
+            resumen["mejor"] = (f"Adjudicada: {adjudicada['nombre']} "
+                                f"({adjudicada['duracion']} m)")
         datos = servicio.datos(e, ref)
         curvas = servicio.empaquetar_curvas(st.session_state.get("ao_curvas"))
         excel = st.session_state.get("ao_excel")
@@ -1728,8 +1732,8 @@ def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
             st.session_state.ao_id = id_actual
         st.session_state.ao_estado = estado
         if adjudicada and e.id_solicitud:
-            com = next((o.comercializadora for o in e.ofertas if o.nombre == adjudicada), "")
-            servicio.adjudicar_solicitud(e.id_solicitud, com, _usuario())
+            servicio.adjudicar_solicitud(e.id_solicitud, adjudicada["comercializadora"] or "",
+                                         _usuario())
         st.session_state.pop("ao_contactos", None)
         st.success(f"Análisis guardado con el nº {id_actual}."
                    + (" La solicitud queda «Adjudicada»." if adjudicada and e.id_solicitud else ""))
