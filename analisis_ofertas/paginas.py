@@ -245,13 +245,14 @@ def aplicar_ap(e: mo.Estudio, clave: str, df: pd.DataFrame) -> None:
             e.ap_origen.setdefault(clave, {})[m] = "manual"
 
 
-CONCEPTOS_PRECIO = {"energia": "Energía", "termino_b": "Término B (€/MWh)",
+CONCEPTOS_PRECIO = {"energia": "Energía", "termino_b": "Término B",
                     "ci": "Coeficiente Ci", "potencia": "Potencia propia (€/kW·año)"}
 
 
 def conceptos_precio(o: mo.Oferta) -> list:
     salida = ["energia"] if o.modalidad == mo.FIJO else (
-        ["termino_b", "ci"] if o.modalidad == mo.PASS_POOL else ["termino_b"])
+        ["termino_b", "ci"] if o.modalidad == mo.PASS_POOL or o.ssaa_modo == mo.SSAA_CI
+        else ["termino_b"])
     if o.potencia == mo.POT_PROPIA:
         salida.append("potencia")
     return salida
@@ -514,7 +515,7 @@ def editor(df: pd.DataFrame, clave: str, numeros=(), decimales: dict = None, **k
 
 
 def _fecha_hora(iso: str) -> str:
-    return dt.datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M") if iso else ""
+    return dt.datetime.fromisoformat(iso).strftime("%d-%m-%Y %H:%M") if iso else ""
 
 
 # =================================================================== 1. origen
@@ -592,7 +593,7 @@ def _origen():
                               "plantilla_suministros.xlsx", XLSX, key="ao_pl_descargar")
         c1, c2 = st.columns(2)
         cliente = c1.text_input("Cliente", key="ao_pl_cliente")
-        inicio = c2.date_input("Inicio de suministro", format="DD/MM/YYYY", key="ao_pl_inicio",
+        inicio = c2.date_input("Inicio de suministro", format="DD-MM-YYYY", key="ao_pl_inicio",
                                value=mo.sumar_meses(dt.date.today().replace(day=1), 1))
         subida = st.file_uploader("Plantilla rellena", type=["xlsx"], key="ao_pl_fichero")
         if subida and st.button("Crear el análisis", type="primary"):
@@ -613,26 +614,34 @@ def _origen():
 def _suministros(e: mo.Estudio):
     estilo.seccion(2, "Suministros", f"{len(e.suministros)} CUPS")
     c1, c2, c3 = st.columns([1, 1, 2])
-    inicio = c1.date_input("Inicio de suministro", value=e.inicio, format="DD/MM/YYYY",
-                           key=f"ao_inicio_{_v()}")
-    if inicio and inicio.replace(day=1) != e.inicio:
-        e.inicio = inicio.replace(day=1)
-        servicio.congelar_regulados(e)
-        st.session_state.ao_avisos = servicio.congelar_mercado(e)
+    real = e.fecha_inicio or e.inicio
+    inicio = _dia(c1, "Inicio de suministro", real, f"ao_inicio_{_v()}", format="DD-MM-YYYY",
+                  help="Cualquier día del mes. El cálculo va por meses de contrato completos: "
+                       "cada uno cuenta en el mes natural en el que tiene más días (si empieza "
+                       "el 10/01, enero; si empieza el 20/12, enero).")
+    if inicio and inicio != real:
+        e.fecha_inicio = inicio if inicio.day != 1 else None
+        nuevo = mo.mes_de_calculo(inicio)
+        if nuevo != e.inicio:
+            e.inicio = nuevo
+            servicio.congelar_regulados(e)
+            st.session_state.ao_avisos = servicio.congelar_mercado(e)
         _subir_version()
         st.rerun()
+    if e.fecha_inicio:
+        c1.caption(f"Se calcula desde {MESES[e.inicio.month - 1].lower()} de {e.inicio.year}.")
     n_anios = max(1, math.ceil(e.horizonte() / 12))
-    crec = c2.text_input("Crecimiento del consumo por año (%)",
-                         value=", ".join(f"{g * 100:g}" for g in e.crecimiento),
-                         key=f"ao_crec_{_v()}",
-                         help=AY["crecimiento"] + f" Separados por comas (el horizonte tiene "
-                              f"{n_anios} años). Vacío = mismo consumo todos los años.")
+    crec = _txt(c2, "Crecimiento del consumo por año (%)",
+                ", ".join(f"{g * 100:g}" for g in e.crecimiento), f"ao_crec_{_v()}",
+                help=AY["crecimiento"] + " Separados por comas, uno por año a partir del "
+                                         "segundo. Vacío = mismo consumo todos los años.")
+    c2.caption(f"El horizonte tiene {n_anios} años.")
     try:
         e.crecimiento = [float(x.replace(",", ".")) / 100
                          for x in re.split(r"[;\s]+|,\s+", crec.strip()) if x]
     except ValueError:
         c2.error("Escribe porcentajes separados por comas.")
-    e.cliente = c3.text_input("Cliente", value=e.cliente, key=f"ao_cliente_{_v()}")
+    e.cliente = _txt(c3, "Cliente", e.cliente, f"ao_cliente_{_v()}")
     st.caption("Sistema eléctrico propuesto por la dirección (revísalo). Reducción del impuesto "
                "eléctrico en %: 85 (usos del art. 98.1), 100 (exento) o, si solo una parte del "
                "consumo tiene derecho, % consumo × % exención (60 % × 85 % = 51). Desde una "
@@ -650,6 +659,31 @@ def _suministros(e: mo.Estudio):
             "Consumo anual (kWh)": st.column_config.NumberColumn(format="localized"),
             "Incluir": st.column_config.CheckboxColumn()})
     aplicar_suministros(e, editada)
+    hay = any(any((s.excedentes or {}).values()) for s in e.suministros)
+    with st.expander("Autoconsumo: excedentes vertidos a la red (kWh por mes)", expanded=hay,
+                     icon=":material/solar_power:"):
+        st.caption("Solo los CUPS con autoconsumo. Cada oferta valora los excedentes con su "
+                   "precio de compensación (ficha de la oferta, «Otros conceptos»), como mucho "
+                   "hasta el término de energía del mes (compensación simplificada).")
+        aplicar_excedentes(e, editor(tabla_excedentes(e), f"ao_exc_{_v()}",
+                                     [MESES[m][:3] for m in range(12)],
+                                     {MESES[m][:3]: 0 for m in range(12)},
+                                     hide_index=True, use_container_width=True,
+                                     disabled=["CUPS", "Alias"]))
+
+
+def tabla_excedentes(e: mo.Estudio) -> pd.DataFrame:
+    return pd.DataFrame([{"CUPS": s.cups, "Alias": s.alias,
+                          **{MESES[m - 1][:3]: (s.excedentes or {}).get(m) for m in range(1, 13)}}
+                         for s in e.suministros if s.activo])
+
+
+def aplicar_excedentes(e: mo.Estudio, df: pd.DataFrame) -> None:
+    for _, f in df.iterrows():
+        s = e.suministro(f["CUPS"])
+        if s:
+            s.excedentes = {m: float(v) for m in range(1, 13)
+                            if (v := _num(f[MESES[m - 1][:3]])) not in (None, 0.0)}
 
 
 # =================================================================== 3. mercado
@@ -828,8 +862,8 @@ def _curvas(e: mo.Estudio):
         with st.spinner("Calculando con los precios horarios del mercado…"):
             r = servicio.apuntamientos_cliente(e, {cups: valores})
         if r[cups]["valida"]:
-            st.success(f"{cups}: apuntamiento calculado ({r[cups]['cobertura']['desde']:%d/%m/%Y} – "
-                       f"{r[cups]['cobertura']['hasta']:%d/%m/%Y}).")
+            st.success(f"{cups}: apuntamiento calculado ({r[cups]['cobertura']['desde']:%d-%m-%Y} – "
+                       f"{r[cups]['cobertura']['hasta']:%d-%m-%Y}).")
         else:
             st.warning(f"{cups}: {r[cups]['motivo']} Se usará el estimado.")
         _subir_version()
@@ -896,7 +930,7 @@ def _comprobar_gemweb(e: mo.Estudio, curvas: dict):
     st.markdown(f"{validas} de {len(filas)} suministros con un año completo de curva. Marca "
                 "«Usar su curva» en los que quieras usar su apuntamiento (solo en los que se "
                 "puede) y pulsa «Guardar la elección».")
-    fechas = {c: st.column_config.DateColumn(format="DD/MM/YYYY") for c in (
+    fechas = {c: st.column_config.DateColumn(format="DD-MM-YYYY") for c in (
         "Datos desde", "Datos hasta", "Año usado desde", "Año usado hasta")}
     elegida = editor(tabla_eleccion(e, filas), f"ao_gemweb_tabla_{_v()}", hide_index=True,
                      use_container_width=True,
@@ -929,6 +963,76 @@ def _chk(contenedor, etiqueta, valor, clave, **kw) -> bool:
     if clave not in st.session_state:
         st.session_state[clave] = bool(valor)
     return contenedor.checkbox(etiqueta, key=clave, **kw)
+
+
+# Los controles con «value=» y «key» cambian de identidad cuando cambia el valor guardado:
+# Streamlit los rehace y se pierde lo que se acaba de escribir (había que escribirlo dos
+# veces). Estos ponen el valor inicial en session_state y no pasan «value».
+def _txt(contenedor, etiqueta, valor, clave, **kw) -> str:
+    if clave not in st.session_state:
+        st.session_state[clave] = valor or ""
+    return contenedor.text_input(etiqueta, key=clave, **kw)
+
+
+def _area(contenedor, etiqueta, valor, clave, **kw) -> str:
+    if clave not in st.session_state:
+        st.session_state[clave] = valor or ""
+    return contenedor.text_area(etiqueta, key=clave, **kw)
+
+
+def _entero(contenedor, etiqueta, minimo, maximo, valor, clave, **kw) -> int:
+    if clave not in st.session_state:
+        st.session_state[clave] = min(maximo, max(minimo, int(valor or minimo)))
+    return int(contenedor.number_input(etiqueta, minimo, maximo, key=clave, **kw))
+
+
+def _dia(contenedor, etiqueta, valor, clave, **kw):
+    if clave not in st.session_state:
+        st.session_state[clave] = valor
+    return contenedor.date_input(etiqueta, key=clave, **kw)
+
+
+NUEVO_GESTOR = "➕ Nuevo gestor…"
+
+
+def _gestor(o: mo.Oferta, c2, c3, k: str):
+    """Gestor de la comercializadora: desplegable con los gestores de ESA comercializadora en
+    la base de datos de gestores (escribiendo se busca) que rellena su email; «Nuevo gestor…» para escribir uno nuevo (se
+    guarda en la base de datos al guardar el análisis)."""
+    try:
+        lista = almacen.listar_gestores()
+    except Exception:                                       # noqa: BLE001
+        lista = []
+    por_nombre = {g["nombre"]: g for g in lista}
+    # solo los gestores de la comercializadora elegida (todos si aún no hay comercializadora)
+    nombres = sorted((g["nombre"] for g in servicio.gestores_de(lista, o.comercializadora)),
+                     key=str.lower)
+    if o.comercializadora and not nombres:
+        c2.caption(f"Aún no hay gestores de {o.comercializadora}: elige «Nuevo gestor…».")
+    if o.gestor and o.gestor not in nombres:
+        nombres.insert(0, o.gestor)
+    opciones = [""] + nombres + [NUEVO_GESTOR]
+
+    def ver(n):
+        if n == "":
+            return "— Elige (escribe para buscar) —"
+        g = por_nombre.get(n)
+        return n + (f" · {g['comercializadora']}" if g and g.get("comercializadora") else "")
+    anterior = st.session_state.get(k + "gestor_prev")
+    elegido = _sel(c2, "Gestor de la comercializadora", opciones, o.gestor or "", k + "gestor",
+                   format_func=ver, help="Escribe para buscar. Se rellena su email. Los "
+                                         "gestores se gestionan en Ofertas → Gestores "
+                                         "comerciales.")
+    if elegido == NUEVO_GESTOR:
+        o.gestor = _txt(c2, "Nombre del nuevo gestor", "", k + "gestor_nuevo").strip()
+    else:
+        o.gestor = elegido
+        if anterior is not None and elegido != anterior and elegido in por_nombre:
+            st.session_state[k + "email"] = por_nombre[elegido].get("email") or ""
+    st.session_state[k + "gestor_prev"] = elegido
+    o.email_gestor = _txt(c3, "Email del gestor", o.email_gestor, k + "email").strip()
+    if o.email_gestor and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", o.email_gestor):
+        c3.caption(":red[Email no válido]")
 
 
 def _pegar_precios(o: mo.Oferta, concepto: str, tabla: pd.DataFrame, clave: str):
@@ -993,27 +1097,31 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
         o.comercializadora = _sel(c1, "Comercializadora", opciones, o.comercializadora,
                                   k + "com", format_func=lambda c: c or "— Elige —",
                                   help="Escribe para buscar en la lista.")
-        # el gestor y su email se escriben en cada oferta: no se copian de otras ofertas (un
-        # mismo gestor no lleva a todos los clientes de la comercializadora)
-        o.gestor = c2.text_input("Gestor de la comercializadora", o.gestor, key=k + "gestor")
-        o.email_gestor = c3.text_input("Email del gestor", o.email_gestor, key=k + "email").strip()
-        if o.email_gestor and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", o.email_gestor):
-            c3.caption(":red[Email no válido]")
+        # gestor: de la base de datos de gestores comerciales (rellena el email)
+        _gestor(o, c2, c3, k)
         c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-        o.producto = c1.text_input("Producto / descripción", o.producto, key=k + "prod")
+        o.producto = _txt(c1, "Producto / descripción", o.producto, k + "prod")
         o.modalidad = _sel(c2, "Modalidad", mo.MODALIDADES, o.modalidad, k + "mod",
                            help=AY["modalidad"])
-        o.duracion = int(c3.number_input("Duración (meses)", 1, 240, int(o.duracion or 12),
-                                         key=k + "dur", help=AY["duracion"]))
+        # al pasar a indexado: sin peajes en el precio; Pass-Through: SSAA por periodo
+        anterior = st.session_state.get(k + "mod_prev")
+        if anterior is not None and anterior != o.modalidad:
+            if o.modalidad != mo.FIJO:
+                o.atr_incluido = False
+                st.session_state[k + "atr"] = False
+            if o.modalidad == mo.PASS_THROUGH:
+                o.ssaa_modo = mo.SSAA_PERIODO
+                st.session_state[k + "ssm"] = mo.SSAA_PERIODO
+        st.session_state[k + "mod_prev"] = o.modalidad
+        o.duracion = _entero(c3, "Duración (meses)", 1, 240, o.duracion or 12, k + "dur",
+                             help=AY["duracion"])
         if not o.es_actual:
-            o.ronda = int(c4.number_input("Ronda", 1, 20, int(o.ronda or 1), key=k + "ronda",
-                                          help=AY["ronda"]))
+            o.ronda = _entero(c4, "Ronda", 1, 20, o.ronda or 1, k + "ronda", help=AY["ronda"])
         c1, c2, c3, c4 = st.columns(4)
         propio = _chk(c1, "Inicio distinto al del estudio", bool(o.inicio), k + "inip",
                       help=AY["inicio"])
         if propio:
-            ini = c1.date_input("Inicio", o.inicio or e.inicio, format="DD/MM/YYYY",
-                                key=k + "ini")
+            ini = _dia(c1, "Inicio", o.inicio or e.inicio, k + "ini", format="DD-MM-YYYY")
             o.inicio = ini.replace(day=1) if ini else None
         else:
             o.inicio = None
@@ -1027,6 +1135,14 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
                           o.potencia, k + "pot", help=AY["potencia"])
         o.atr_incluido = _chk(c1, "El precio incluye peajes y cargos", o.atr_incluido,
                               k + "atr", help=AY["atr"])
+        if o.modalidad == mo.FIJO:
+            c1, c2, c3, c4 = st.columns(4)
+            _importe(c1, "Incremento IPC cada enero (%)", o, "ipc", k + "ipc", 100,
+                     help="Subida del precio cada 1 de enero desde el inicio del contrato "
+                          "(acumulada: el segundo enero, (1 + IPC)², …). 0 = sin IPC.")
+            o.ipc_aplica = _sel(c2, "IPC sobre", mo.IPC_APLICA, o.ipc_aplica, k + "ipca",
+                                help="Energía: todo el término de energía (precio y peajes y "
+                                     "cargos de energía). Potencia: todo el término de potencia.")
         # Ph de Canarias: de momento no se usa
         if not MOSTRAR_PH:
             o.indice_ph = False
@@ -1041,19 +1157,21 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             ref = referencia_desvios(e)
             _importe(c5, "Desvíos (€/MWh, en barras)", o, "desvios", k + "desv",
                      help=AY["desvios"] + ("  \n" + ref if ref else ""))
-            c1, c2 = st.columns(2)
-            o.base_b = _sel(c1, "Base del término B (si lo hay)", mo.BASES, o.base_b, k + "bb",
-                            help=AY["base_b"])
+            o.base_b = mo.NETO                 # en Pass-Through el término B va sobre el neto
+            o.unidad_b = "€/MWh"
         elif o.modalidad == mo.PASS_POOL:
             # Pass-Pool: Ci × OMIE + término B (que ya lleva capacidad, OS, OM, SRAD y desvíos)
             o.pagos_capacidad = o.os = o.om = o.srad = False
             o.desvios = 0.0
             st.markdown("**Precio Pass-Pool: Ci × OMIE + término B** (capacidad, OS, OM, SRAD y "
                         "desvíos van dentro del término B)")
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             o.base_b = _sel(c1, "Base del término B", mo.BASES, o.base_b, k + "bb",
                             help=AY["base_b"])
-            o.ci_media_mensual = _chk(c2, "El Ci se aplica a la media mensual de OMIE",
+            o.unidad_b = _sel(c2, "Unidad del término B", list(mo.UNIDADES), o.unidad_b,
+                              k + "unib", help="Unidad en la que están los precios del término B "
+                                               "de la pestaña Precios.")
+            o.ci_media_mensual = _chk(c3, "El Ci se aplica a la media mensual de OMIE",
                                       o.ci_media_mensual, k + "cimm", help=AY["cimm"])
         if MOSTRAR_PH and o.modalidad != mo.FIJO:
             o.indice_ph = _chk(st, "Canarias indexado al Ph demanda", o.indice_ph, k + "ph",
@@ -1064,9 +1182,23 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
         o.base_fee = _sel(c2, "Base del fee", mo.BASES, o.base_fee, k + "bfee",
                           help=AY["base_fee"])
         _importe(c3, "Garantías de origen (€/MWh)", o, "gdo", k + "gdo", help=AY["gdo"])
+        if any(any((s.excedentes or {}).values()) for s in e.suministros):
+            st.markdown("**Compensación de excedentes (autoconsumo)**")
+            x1, x2, _x3 = st.columns(3)
+            o.exc_modo = _sel(x1, "Precio de los excedentes", ["Precio fijo", "OMIE × coeficiente"],
+                              o.exc_modo, k + "excm",
+                              help="Precio fijo en €/kWh, o el precio previsto del mes × un "
+                                   "coeficiente (p. ej. 0,9) si la oferta los paga a mercado.")
+            if o.exc_modo == "Precio fijo":
+                _importe(x2, "Precio (€/kWh)", o, "exc_precio", k + "excp")
+            else:
+                _importe(x2, "Coeficiente × previsto", o, "exc_coef", k + "excc")
         o.fnee = _sel(c4, "FNEE", mo.MODOS_FNEE, o.fnee, k + "fnee", help=AY["fnee"])
         c1, c2, c3, c4 = st.columns(4)
         _importe(c1, "K / impuesto municipal (%)", o, "k", k + "k", 100, help=AY["k"])
+        o.k_fee = _chk(c1, "El fee lleva la K / IM", o.k_fee, k + "kfee",
+                       help="Márcalo si la K / impuesto municipal se aplica también al coste de "
+                            "gestión (fee). Si no, el fee queda fuera de la base de la K.")
         o.k_ssaa = _chk(c2, "La K se aplica a los SSAA", o.k_ssaa, k + "kss",
                         help=AY["k_ssaa"])
         if o.k_ssaa:
@@ -1086,7 +1218,11 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
         if o.ssaa_modo in (mo.SSAA_BANDA, mo.SSAA_TECHO):
             o.ssaa_perfil = _chk(c4, "Aplicar perfil por periodo", o.ssaa_perfil, k + "sperf",
                                  help=AY["ssaa_perfil"])
-        if o.ssaa_modo != mo.SSAA_INCLUIDOS:
+        if o.ssaa_modo == mo.SSAA_CI:
+            st.caption("SSAA horarios de la liquidación C2 × el coeficiente Ci de cada periodo "
+                       "(pestaña Precios), como en «P = F + K × (OMIE + SS.AA.)». No se elevan a "
+                       "pérdidas: el Ci ya las lleva.")
+        if o.ssaa_modo not in (mo.SSAA_INCLUIDOS, mo.SSAA_CI):
             c1, c2, c3, c4 = st.columns(4)
             o.ssaa_perdidas = _sel(c1, "Elevación a pérdidas", mo.PERDIDAS_SSAA,
                                    o.ssaa_perdidas, k + "sloss", help=AY["ssaa_perdidas"])
@@ -1116,15 +1252,18 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
             st.warning(aviso)
     with t_precios:
         unidad = o.unidad if o.modalidad == mo.FIJO else ""
+        unidad_b = o.unidad_b if o.modalidad == mo.PASS_POOL else "€/MWh"
         st.caption("Una fila por grupo (tarifa y sistema, o grupo propio) y año de contrato. "
                    "Los grupos de Baleares, Canarias, Ceuta y Melilla sin precios usan los de su "
                    "tarifa; un año sin precios, los del anterior.")
         for concepto in conceptos_precio(o):
-            st.markdown(f"**{CONCEPTOS_PRECIO[concepto]}**" + (f" ({unidad})" if concepto ==
-                                                                "energia" else ""))
+            st.markdown(f"**{CONCEPTOS_PRECIO[concepto]}**" + (
+                f" ({unidad})" if concepto == "energia" else
+                f" ({unidad_b})" if concepto == "termino_b" else ""))
             tabla = tabla_precios(e, o, concepto)
             _pegar_precios(o, concepto, tabla, f"{k}pg_{concepto}")
-            editada = editor(tabla, f"{k}pr_{concepto}_{len(tabla)}_{o.modalidad}_{o.unidad}",
+            editada = editor(tabla, f"{k}pr_{concepto}_{len(tabla)}_{o.modalidad}_{o.unidad}"
+                                    f"_{o.unidad_b}",
                              PER, hide_index=True, use_container_width=True,
                              disabled=["Grupo", "Año"])
             aplicar_precios(o, concepto, editada)
@@ -1179,9 +1318,9 @@ def formulario_oferta(e: mo.Estudio, o: mo.Oferta, k: str):
                                              ("banda", "Banda de volumen / penalizaciones"),
                                              ("rescision", "Rescisión / permanencia"),
                                              ("gdo", "Garantías de origen"))):
-            o.condiciones[clave] = (c1 if n % 2 == 0 else c2).text_input(
-                nombre, o.condiciones.get(clave, ""), key=k + "cond_" + clave)
-        o.notas = st.text_area("Notas", o.notas, key=k + "notas")
+            o.condiciones[clave] = _txt(c1 if n % 2 == 0 else c2, nombre,
+                                        o.condiciones.get(clave, ""), k + "cond_" + clave)
+        o.notas = _area(st, "Notas", o.notas, k + "notas")
 
 
 def _contrato_actual(e: mo.Estudio):
@@ -1234,7 +1373,7 @@ def _ofertas(e: mo.Estudio):
         _subir_version()
         st.rerun()
     _origen_catalogo(e, o, f"ao_of{i}_{_v()}")
-    o.nombre = st.text_input("Nombre de la oferta", o.nombre, key=f"ao_of{i}_{_v()}_nombre")
+    o.nombre = _txt(st, "Nombre de la oferta", o.nombre, f"ao_of{i}_{_v()}_nombre")
     formulario_oferta(e, o, f"of{i}")
     _guardar_catalogo(e, o, i)
 
@@ -1250,7 +1389,7 @@ def _es_admin() -> bool:
 
 
 def _f(v) -> str:
-    return dt.date.fromisoformat(str(v)[:10]).strftime("%d/%m/%Y") if v else ""
+    return dt.date.fromisoformat(str(v)[:10]).strftime("%d-%m-%Y") if v else ""
 
 
 def tabla_catalogo(filas: list, e: mo.Estudio = None, nombres: dict = None) -> pd.DataFrame:
@@ -1336,9 +1475,9 @@ def _cargar_catalogo(e: mo.Estudio):
         modal = c2.selectbox("Modalidad", ["Todas"] + mo.MODALIDADES, key="ao_cat_mod")
         fecha = e.inicio or dt.date.today()
         vigentes = c3.checkbox("Solo vigentes", True, key="ao_cat_vig",
-                               help=f"Que se puedan contratar hoy ({dt.date.today():%d/%m/%Y}) y "
+                               help=f"Que se puedan contratar hoy ({dt.date.today():%d-%m-%Y}) y "
                                     f"cuya ventana de inicio incluya el inicio del análisis "
-                                    f"({fecha:%d/%m/%Y}).")
+                                    f"({fecha:%d-%m-%Y}).")
         cubren = c4.checkbox("Solo las que cubren mis tarifas", False, key="ao_cat_cub")
         filas = [r for r in todas
                  if (com == "Todas" or r["comercializadora"] == com)
@@ -1416,17 +1555,17 @@ def _guardar_catalogo(e: mo.Estudio, o: mo.Oferta, i: int):
                                key=k + "nombre", help=AY["cat_nombre"])
         c1, c2, c3, c4 = st.columns(4)
         fechas = {
-            "vigencia_desde": c1.date_input("Vigencia desde", hoy, format="DD/MM/YYYY",
+            "vigencia_desde": c1.date_input("Vigencia desde", hoy, format="DD-MM-YYYY",
                                             key=k + "vd", help=AY["cat_vigencia"]),
             "vigencia_hasta": c2.date_input("Vigencia hasta", hoy + dt.timedelta(days=30),
-                                            format="DD/MM/YYYY", key=k + "vh",
+                                            format="DD-MM-YYYY", key=k + "vh",
                                             help=AY["cat_vigencia"]),
             "inicio_desde": c3.date_input("Inicio de suministro desde", e.inicio or hoy,
-                                          format="DD/MM/YYYY", key=k + "id",
+                                          format="DD-MM-YYYY", key=k + "id",
                                           help=AY["cat_inicio"]),
             "inicio_hasta": c4.date_input("Inicio de suministro hasta",
                                           mo.sumar_meses((e.inicio or hoy).replace(day=1), 3),
-                                          format="DD/MM/YYYY", key=k + "ih",
+                                          format="DD-MM-YYYY", key=k + "ih",
                                           help=AY["cat_inicio"])}
         como_version = False
         origenes = [x for x in ofertas if (x.origen_catalogo or {}).get("id")]
@@ -1515,13 +1654,13 @@ def pagina_catalogo():
         c1, c2, c3, c4 = st.columns(4)
         ficha = dict(r, nombre=nombre,
                      vigencia_desde=c1.date_input("Vigencia desde", _fecha_iso(r["vigencia_desde"]),
-                                                  format="DD/MM/YYYY", key=k + "vd"),
+                                                  format="DD-MM-YYYY", key=k + "vd"),
                      vigencia_hasta=c2.date_input("Vigencia hasta", _fecha_iso(r["vigencia_hasta"]),
-                                                  format="DD/MM/YYYY", key=k + "vh"),
+                                                  format="DD-MM-YYYY", key=k + "vh"),
                      inicio_desde=c3.date_input("Inicio desde", _fecha_iso(r["inicio_desde"]),
-                                                format="DD/MM/YYYY", key=k + "id"),
+                                                format="DD-MM-YYYY", key=k + "id"),
                      inicio_hasta=c4.date_input("Inicio hasta", _fecha_iso(r["inicio_hasta"]),
-                                                format="DD/MM/YYYY", key=k + "ih"))
+                                                format="DD-MM-YYYY", key=k + "ih"))
         b1, b2, b3 = st.columns(3)
         if b1.button("Guardar cambios", type="primary", key=k + "g"):
             errores = catalogo.validar(ficha, r["datos"])
@@ -1638,7 +1777,16 @@ def _ronda_del_informe(res: dict) -> tuple:
     añadir o quitar otras) y si se añade la fila de mejora frente a la ronda anterior."""
     rondas_ = resultados.rondas_con_ofertas(res)
     if len(rondas_) < 2:
-        return res, None, None
+        # una sola ronda: todas marcadas, y se pueden quitar las que no van al informe
+        todas = list(range(len(res["ofertas"])))
+        nombre_de = {i: f"{r.oferta.nombre} · {r.n_meses} M" for i, r in enumerate(res["ofertas"])}
+        elegidas = st.multiselect("Ofertas que entran en el informe", todas, default=todas,
+                                  key=f"ao_inf_ofertas_unica_{len(todas)}",
+                                  format_func=nombre_de.get,
+                                  help="Quita las que no quieras en el PDF, el Excel y el correo.")
+        if not elegidas:
+            st.warning("Elige al menos una oferta para el informe.")
+        return resultados.solo_ofertas(res, elegidas), None, None
     # posiciones en res["ofertas"] (dos ofertas pueden llamarse igual)
     todas = list(range(len(res["ofertas"])))
     nombre_de = {i: f"{r.oferta.nombre} · {r.n_meses} M · {int(r.oferta.ronda or 1)}ª ronda"
@@ -1672,8 +1820,10 @@ def _ronda_del_informe(res: dict) -> tuple:
 
 def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
     st.markdown("#### Informes y correo")
-    ref = st.text_input("Referencia del estudio", st.session_state.get("ao_ref", ""),
-                        key="ao_ref_txt", help=AY["referencia"])
+    if "ao_ref_pendiente" in st.session_state:          # nombre de la versión recién guardada
+        st.session_state["ao_ref_txt"] = st.session_state.pop("ao_ref_pendiente")
+    ref = _txt(st, "Referencia del estudio", st.session_state.get("ao_ref", ""), "ao_ref_txt",
+               help=AY["referencia"])
     st.session_state.ao_ref = ref
     res_inf, ronda_inf, mejora = _ronda_del_informe(res)
     if st.button("Preparar informes (Excel y PDF) y borrador del correo",
@@ -1713,10 +1863,23 @@ def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
                              format_func=lambda i: f"{filas[i]['comercializadora']} "
                                                    f"{filas[i]['duracion']} m ({filas[i]['nombre']})")
         adjudicada = filas[n_adj]
-    c1, c2 = st.columns(2)
     id_actual = st.session_state.get("ao_id")
-    if c1.button("Guardar el análisis" if not id_actual else f"Guardar los cambios (nº {id_actual})",
-                 type="primary"):
+    nueva = None
+    if id_actual:
+        como = st.radio("Al guardar", [f"Sobrescribir el análisis nº {id_actual}",
+                                       "Guardar como una versión nueva"],
+                        key="ao_como_guardar", horizontal=True)
+        if como.startswith("Guardar como"):
+            nueva = _txt(st, "Nombre (referencia) de la versión nueva",
+                         f"{ref} (v2)" if ref else "", "ao_ref_version").strip()
+    c1, c2 = st.columns(2)
+    if c1.button("Guardar el análisis" if not id_actual else
+                 (f"Guardar los cambios (nº {id_actual})" if nueva is None else
+                  "Guardar la versión nueva"), type="primary"):
+        if nueva is not None:
+            ref, id_actual = nueva, None
+            st.session_state.ao_ref = nueva
+            st.session_state.ao_ref_pendiente = nueva
         resumen = servicio.resumen(e, res, estado, ref)
         if adjudicada:
             resumen["mejor"] = (f"Adjudicada: {adjudicada['nombre']} "
@@ -1725,6 +1888,12 @@ def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
         curvas = servicio.empaquetar_curvas(st.session_state.get("ao_curvas"))
         excel = st.session_state.get("ao_excel")
         pdf = st.session_state.get("ao_pdf")
+        for o in [x for x in [e.actual] + e.ofertas if x and x.gestor]:
+            try:
+                almacen.registrar_gestor(o.gestor, o.email_gestor, o.comercializadora,
+                                         _usuario())
+            except Exception:                               # noqa: BLE001
+                pass
         if id_actual:
             almacen.actualizar_analisis(id_actual, _usuario(), resumen, datos, curvas, excel, pdf)
         else:
@@ -1778,6 +1947,62 @@ def pagina_nuevo_analisis():
     _guardar_y_descargas(e, res, filas)
 
 
+def tabla_gestores(lista: list) -> pd.DataFrame:
+    return pd.DataFrame([{"id": g["id"], "Nombre": g["nombre"], "Email": g.get("email") or "",
+                          "Comercializadora": g.get("comercializadora") or "",
+                          "Teléfono": g.get("telefono") or "", "Notas": g.get("notas") or ""}
+                         for g in lista],
+                        columns=["id", "Nombre", "Email", "Comercializadora", "Teléfono", "Notas"])
+
+
+def aplicar_gestores(antes: pd.DataFrame, despues: pd.DataFrame, usuario: str) -> list:
+    """Guarda las altas, cambios y bajas de la tabla de gestores. Devuelve los errores."""
+    errores = []
+    ids_antes = {int(i) for i in antes["id"] if pd.notna(i)}
+    ids_despues = set()
+    for _, f in despues.iterrows():
+        nombre = str(f.get("Nombre") or "").strip()
+        id_ = int(f["id"]) if pd.notna(f.get("id")) else None
+        if not nombre:
+            continue
+        if id_ is not None:
+            ids_despues.add(id_)
+        try:
+            almacen.guardar_gestor(nombre, f.get("Email"), f.get("Comercializadora"),
+                                   f.get("Teléfono"), f.get("Notas"), id_=id_, usuario=usuario)
+        except ValueError as err:
+            errores.append(f"{nombre}: {err}")
+    for id_ in ids_antes - ids_despues:
+        almacen.borrar_gestor(id_)
+    return errores
+
+
+def pagina_gestores():
+    st.caption("Gestores comerciales de las comercializadoras. En la ficha de cada oferta se "
+               "eligen de esta lista (se rellena su email); los nuevos que se escriban en una "
+               "oferta se añaden aquí al guardar el análisis.")
+    lista = almacen.listar_gestores()
+    antes = tabla_gestores(lista)
+    buscar = st.text_input("Buscar por nombre, email o comercializadora").strip().lower()
+    visibles = antes if not buscar else antes[antes.apply(
+        lambda f: buscar in " ".join(str(v) for v in f.values).lower(), axis=1)]
+    editada = st.data_editor(
+        visibles, key=f"ao_gestores_{len(lista)}_{buscar}", hide_index=True,
+        num_rows="dynamic", use_container_width=True,
+        column_config={"id": None,
+                       "Comercializadora": st.column_config.SelectboxColumn(
+                           options=coms.opciones(""))})
+    st.caption("Añade filas al final, edita las celdas o borra filas (selecciónalas y pulsa la "
+               "papelera). Los cambios se guardan con el botón.")
+    if st.button("Guardar cambios", type="primary", icon=":material/save:"):
+        errores = aplicar_gestores(visibles, editada, _usuario())
+        if errores:
+            st.error("No se han guardado:\n" + "\n".join("- " + x for x in errores))
+        else:
+            st.success("Gestores guardados.")
+            st.rerun()
+
+
 def pagina_analisis_guardados():
     lista = almacen.listar_analisis()
     if not lista:
@@ -1790,24 +2015,22 @@ def pagina_analisis_guardados():
     filtrados = [a for a in lista if (not estados or a["estado"] in estados)
                  and (not buscar or buscar in " ".join(str(a.get(k) or "") for k in (
                      "cliente", "cups", "ref", "comercializadoras")).lower())]
-    estilo.tabla_es(pd.DataFrame([{
+    elegido = estilo.tabla_elegir(pd.DataFrame([{
         "Nº": a["id"], "Guardado": _fecha_hora(a["fecha"]),
         "Usuario": nombres.get(a["usuario"], a["usuario"]), "Ref.": a["ref"],
         "Cliente": a["cliente"], "Suministros": a["suministros"], "Ofertas": a["ofertas"],
         "Ronda": a["ronda"], "Mejor": a["mejor"], "Ahorro (€/año)": a["ahorro"],
         "Estado": a["estado"], "Solicitud": a["id_solicitud"],
-        "Actualizado": _fecha_hora(a["actualizado"])} for a in filtrados]),
-        hide_index=True, use_container_width=True, formatos={"Ahorro (€/año)": 0})
+        "Actualizado": _fecha_hora(a["actualizado"])} for a in filtrados],
+        columns=["Nº", "Guardado", "Usuario", "Ref.", "Cliente", "Suministros", "Ofertas",
+                 "Ronda", "Mejor", "Ahorro (€/año)", "Estado", "Solicitud", "Actualizado"]),
+        "ao_lista", formatos={"Ahorro (€/año)": 0})
     estilo.borrar_mios(MODULO, filtrados, lambda a: "Nº %d · %s · %s" % (
         a["id"], _fecha_hora(a["fecha"]), a["cliente"] or a["ref"] or "—"),
         almacen.borrar_analisis, "ao_borrar", que="análisis")
-    if not filtrados:
+    if not filtrados or elegido is None:
         return
-    por_id = {a["id"]: a for a in filtrados}
-    elegido = st.selectbox("Análisis", list(por_id), format_func=lambda i: (
-        f"Nº {i} · {por_id[i]['cliente'] or '—'}"
-        + (f" · Ref. {por_id[i]['ref']}" if por_id[i]["ref"] else "")))
-    an = almacen.analisis(elegido)
+    an = almacen.analisis(int(elegido))
     e = servicio.estudio_de_datos(an["datos"])
     c1, c2, c3 = st.columns(3)
     c1.metric("Ofertas", an["ofertas"] or 0)

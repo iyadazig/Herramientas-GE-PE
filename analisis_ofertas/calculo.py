@@ -42,10 +42,12 @@ import numpy as np
 import datos_regulados as dr
 from analisis_ofertas import modelo as mo
 
-CONCEPTOS = ["potencia", "energia", "peajes", "ssaa", "otros", "k", "iee", "servicios"]
+CONCEPTOS = ["potencia", "energia", "peajes", "ssaa", "otros", "k", "excedentes", "iee",
+             "servicios"]
 NOMBRES = {"potencia": "Término de potencia", "energia": "Energía / mercado",
            "peajes": "Peajes y cargos de energía", "ssaa": "SSAA",
            "otros": "Otros (FNEE, GdO, fee)", "k": "K / impuesto municipal",
+           "excedentes": "Compensación de excedentes",
            "iee": "Impuesto eléctrico", "servicios": "Servicios y alquiler"}
 
 
@@ -345,7 +347,9 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
             ap_om = np.ones_like(ap_om)            # el Ci ya lleva el perfil
         base = base_mercado + (dif_ph if ph else 0.0)
         mercado = base[:, None] * ap_om + (liquidacion + clicks)[:, None]
-        b = tabla("termino_b", 0.0) * ((1 + perd) if o.base_b == mo.BARRAS else 1)
+        # término B en €/MWh (en Pass-Pool se puede escribir en €/kWh, c€/kWh o €/MWh)
+        b = tabla("termino_b", 0.0) * (1000 / mo.UNIDADES.get(o.unidad_b, 1000)) * \
+            ((1 + perd) if o.base_b == mo.BARRAS else 1)
         if o.modalidad == mo.FIJO:
             E = tabla("energia", 0.0) / unidad * (1 - o.descuento)
         elif o.modalidad == mo.PASS_POOL:
@@ -359,6 +363,8 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
             base = np.zeros((D, 6))
         elif o.ssaa_modo == mo.SSAA_PERIODO:
             base = s * ap_ss
+        elif o.ssaa_modo == mo.SSAA_CI:
+            base = s * ap_ss * tabla("ci", 1.0)       # SSAA horario del periodo × Ci
         elif o.ssaa_modo == mo.SSAA_PLANO:
             base = s
         elif o.ssaa_modo == mo.SSAA_BANDA:
@@ -368,14 +374,18 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
             base = np.maximum(0.0, sp - o.techo)
         lf = (1 + perd) if o.ssaa_perdidas == mo.PERD_TARIFA else (
             1 + o.ssaa_pct_perdidas if o.ssaa_perdidas == mo.PERD_FIJO else 1.0)
+        if o.ssaa_modo == mo.SSAA_CI:
+            lf = 1.0                                  # el Ci ya lleva las pérdidas
         S = base * lf * o.ssaa_f1 * o.ssaa_f2 / 1000
         fnee = np.array([g["fnee"] for g in gen])[:, None]
         otros = (0.0 if o.fnee == mo.FNEE_INCLUIDO else
                  fnee * ((1 + perd) if o.fnee == mo.BARRAS else 1.0))
-        otros = otros + o.gdo + o.fee * ((1 + perd) if o.base_fee == mo.BARRAS else 1.0)
+        fee = o.fee * ((1 + perd) if o.base_fee == mo.BARRAS else 1.0)
+        otros = otros + o.gdo + fee
         O = np.broadcast_to(otros / 1000, (D, 6))
+        F = np.broadcast_to(np.asarray(fee, float) / 1000, (D, 6))      # parte del fee
         pot = tabla("potencia", 0.0)
-        return E, A, S, O, pot
+        return E, A, S, O, pot, F
 
     cache = {}
     conceptos = {c: np.zeros(D) for c in CONCEPTOS}
@@ -395,7 +405,7 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
                 cache[gname] = matrices(tar, sis, gname,
                                         *apuntamientos(e, o, sis, cal, meses, ph=ph), ph=ph)
             mats = cache[gname]
-        E, A, S, O, pot_propia = mats
+        E, A, S, O, pot_propia, F = mats
         c = consumo[s.cups]
         kw = np.array([float(v or 0) for v in mo.seis(s.potencias, 0.0)])
         if o.potencia == mo.POT_PROPIA:
@@ -407,13 +417,29 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
         peajes = (c * A).sum(axis=1)
         s_ss = (c * S).sum(axis=1)
         otros = (c * O).sum(axis=1)
-        # K / impuesto municipal sobre energía y otros; la de los SSAA, con su propio valor
-        k_im = o.k * (energia + otros) + (o.k_ssaa_valor * s_ss if o.k_ssaa else 0)
+        # IPC cada enero (precio fijo): (1 + IPC) ^ eneros pasados desde el inicio, sobre todo
+        # el término de energía (precio + peajes y cargos) y/o el de potencia
+        if o.modalidad == mo.FIJO and o.ipc:
+            f_ipc = np.array([(1 + o.ipc) ** (a - meses[0][0]) for a, _ in meses])
+            if o.ipc_aplica in (mo.IPC_ENERGIA, mo.IPC_AMBOS):
+                energia, peajes = energia * f_ipc, peajes * f_ipc
+            if o.ipc_aplica in (mo.IPC_POTENCIA, mo.IPC_AMBOS):
+                potencia = potencia * f_ipc
+        # K / impuesto municipal sobre energía y otros (el fee, si se elige); la de los SSAA,
+        # con su propio valor
+        sin_fee = 0.0 if o.k_fee else (c * F).sum(axis=1)
+        k_im = o.k * (energia + otros - sin_fee) + (o.k_ssaa_valor * s_ss if o.k_ssaa else 0)
+        # autoconsumo: compensación de los excedentes del mes, como mucho el término de
+        # energía (energía + peajes y cargos de energía) de ese mes
+        exc_kwh = np.array([float((s.excedentes or {}).get(m) or 0) for _, m in meses])
+        precio_exc = (np.full(D, o.exc_precio) if o.exc_modo == "Precio fijo"
+                      else o.exc_coef * previsto / 1000)
+        exc = -np.minimum(exc_kwh * precio_exc, np.maximum(energia + peajes, 0.0))
         servicios = np.full(D, o.otros_fijos + float(s.alquiler or 0))
         kwh = c.sum(axis=1)
         # IEE: tipo del año de contrato sobre la base (sin servicios ni alquiler); ya no se
         # aplica el importe mínimo por MWh
-        base = potencia + energia + peajes + s_ss + otros + k_im
+        base = potencia + energia + peajes + s_ss + otros + k_im + exc
         iee = np.zeros(D)
         red = float(s.reduccion_iee or 0)
         for i in range(0, D, 12):
@@ -421,7 +447,8 @@ def calcular_oferta(e: mo.Estudio, o: mo.Oferta, ctx: Contexto = None,
             if red < 1:
                 iee[sl] = base[sl] * (1 - red) * regs[i]["generales"]["iee"]
         filas = {"potencia": potencia, "energia": energia, "peajes": peajes, "ssaa": s_ss,
-                 "otros": otros, "k": k_im, "iee": iee, "servicios": servicios}
+                 "otros": otros, "k": k_im, "excedentes": exc, "iee": iee,
+                 "servicios": servicios}
         for cpt, v in filas.items():
             conceptos[cpt] += v
         consumo_total += kwh

@@ -79,7 +79,10 @@ AYUDA = {
         "**Indexado plano**: el SSAA del mes, igual en todos los periodos.  \n"
         "**Banda**: incluidos entre un mínimo y un máximo; se paga lo que supere el máximo y se "
         "devuelve lo que quede por debajo del mínimo.  \n"
-        "**Techo**: incluidos hasta un umbral; se paga solo lo que lo supere."),
+        "**Techo**: incluidos hasta un umbral; se paga solo lo que lo supere.  \n"
+                 "**Indexado × Ci (SSAA horario C2)**: los SSAA horarios de la liquidación C2 de "
+                 "cada periodo × el coeficiente Ci de la oferta (fórmulas como «P = F + K × (OMIE "
+                 "+ SS.AA.)»); sin elevar a pérdidas, el Ci ya las lleva."),
     "banda_min": "Referencia inferior de la banda (€/MWh). Si el SSAA real baja de aquí, la "
                  "comercializadora devuelve la diferencia.",
     "banda_max": "Referencia superior de la banda (€/MWh). Si el SSAA real la supera, se paga la "
@@ -355,7 +358,8 @@ def resumen_formula(o: mo.Oferta) -> str:
     ss = {mo.SSAA_INCLUIDOS: "SSAA incluidos", mo.SSAA_PERIODO: "SSAA reales por periodo",
           mo.SSAA_PLANO: "SSAA reales planos",
           mo.SSAA_BANDA: f"SSAA en banda {n(o.banda_min)}-{n(o.banda_max)} €/MWh",
-          mo.SSAA_TECHO: f"SSAA con techo {n(o.techo)} €/MWh"}[o.ssaa_modo]
+          mo.SSAA_TECHO: f"SSAA con techo {n(o.techo)} €/MWh",
+          mo.SSAA_CI: "SSAA horarios (C2) × Ci"}[o.ssaa_modo]
     if o.ssaa_modo != mo.SSAA_INCLUIDOS and o.ssaa_perdidas == mo.PERD_TARIFA:
         ss += " con pérdidas"
     partes.append(ss)
@@ -413,20 +417,30 @@ def formula_latex(o: mo.Oferta):
         sin_perdidas.append(_t("Precio fijo") + (r"\times(1-" + _n(o.descuento * 100, 2) + r"\%)"
                                                  if o.descuento else ""))
         ley.append(f"Precio fijo: el de cada periodo de la pestaña Precios ({o.unidad}).")
+        if o.ipc:
+            ley.append(f"IPC: +{o.ipc * 100:g} %".replace(".", ",") + f" cada enero sobre "
+                       f"{o.ipc_aplica.lower()} (acumulado).")
     elif o.modalidad == mo.PASS_POOL:
         merc = _t("OMIE medio del mes") if o.ci_media_mensual and not o.indice_ph else omie
         sin_perdidas.append(_t("Ci") + r"\times" + (r"\left(" + "+".join([merc] + regul) + r"\right)"
                                                     if regul else r"\left(" + merc + r"\right)"))
         (con_perdidas if o.base_b == mo.BARRAS else sin_perdidas).append(_t("B"))
-        ley.append("Ci y B: coeficiente y término fijo de cada periodo (pestaña Precios).")
+        ley.append(f"Ci y B: coeficiente y término fijo de cada periodo (pestaña Precios; B en "
+                   f"{o.unidad_b}).")
     else:
         con_perdidas += [omie] + regul
         if con_b:
             (con_perdidas if o.base_b == mo.BARRAS else sin_perdidas).append(_t("B"))
             ley.append("B: término fijo de cada periodo (pestaña Precios).")
     # --- otros conceptos
+    fee_fuera = ""                               # fee sin K / IM: va fuera del corchete de la K
     if o.fee:
-        (con_perdidas if o.base_fee == mo.BARRAS else sin_perdidas).append(_t("Fee ") + _n(o.fee))
+        if o.k and not o.k_fee:
+            fee_fuera = (r"\left(" + _t("Fee ") + _n(o.fee) + r"\right)\times " + P
+                         if o.base_fee == mo.BARRAS else _t("Fee ") + _n(o.fee))
+            ley.append("Fee: sin K / impuesto municipal.")
+        else:
+            (con_perdidas if o.base_fee == mo.BARRAS else sin_perdidas).append(_t("Fee ") + _n(o.fee))
     if o.fnee == mo.BARRAS:
         con_perdidas.append(_t("FNEE"))
     elif o.fnee == mo.NETO:
@@ -441,11 +455,14 @@ def formula_latex(o: mo.Oferta):
                 mo.SSAA_PLANO: _t("SSAA del mes"),
                 mo.SSAA_BANDA: _t("Ajuste banda") + r"\left(" + sp + r",\ " + _n(o.banda_min)
                 + "-" + _n(o.banda_max) + r"\right)",
-                mo.SSAA_TECHO: r"\max\left(0,\ " + sp + "-" + _n(o.techo) + r"\right)"}[o.ssaa_modo]
+                mo.SSAA_TECHO: r"\max\left(0,\ " + sp + "-" + _n(o.techo) + r"\right)",
+                mo.SSAA_CI: _t("Ci") + r"\times " + _t("SSAA") + r"\times " + _t("Apunt.SSAA")}[o.ssaa_modo]
         for f in (o.ssaa_f1, o.ssaa_f2):
             if f and abs(f - 1) > 1e-9:
                 ssaa += r"\times " + _n(f, 4)
-        if o.ssaa_perdidas == mo.PERD_TARIFA:
+        if o.ssaa_modo == mo.SSAA_CI:
+            pass                                       # el Ci ya lleva las pérdidas
+        elif o.ssaa_perdidas == mo.PERD_TARIFA:
             ssaa_perd = True
         elif o.ssaa_perdidas == mo.PERD_FIJO:
             ssaa += r"\times(1+" + _n(o.ssaa_pct_perdidas * 100, 2) + r"\%)"
@@ -455,7 +472,10 @@ def formula_latex(o: mo.Oferta):
                                    "todos los periodos.",
                     mo.SSAA_BANDA: f"Ajuste banda: se paga lo que pase de {o.banda_max:g} €/MWh y "
                                    f"se descuenta lo que quede por debajo de {o.banda_min:g}.",
-                    mo.SSAA_TECHO: f"Se paga solo lo que pase de {o.techo:g} €/MWh."}[o.ssaa_modo])
+                    mo.SSAA_TECHO: f"Se paga solo lo que pase de {o.techo:g} €/MWh.",
+                    mo.SSAA_CI: "Ci × SSAA × Apunt.SSAA: el coeficiente Ci de cada periodo "
+                                "multiplica a los SSAA horarios de la liquidación C2 (sin "
+                                "elevar a pérdidas: el Ci ya las lleva)."}[o.ssaa_modo])
     else:
         ley.append("SSAA incluidos en el precio: no se suman.")
     k_ss = bool(ssaa and o.k_ssaa and o.k_ssaa_valor)      # K propia de los SSAA
@@ -480,7 +500,7 @@ def formula_latex(o: mo.Oferta):
         lineas[-1] += r"\,\Big]\times(1+" + _n(o.k * 100, 6) + r"\%)"
         ley.append(f"{o.k * 100:g} %".replace(".", ",") + ": K / impuesto municipal "
                    "(energía y otros).")
-    cola = []
+    cola = [fee_fuera] if fee_fuera else []
     if ssaa:
         t = grupo([ssaa]) if ssaa_perd else ssaa
         if k_ss:

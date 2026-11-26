@@ -81,15 +81,8 @@ def nombre_corto(comercializadora: str, nombre: str = "") -> str:
 
 
 def cabecera_oferta(f: dict) -> str:
-    """Como la plantilla: COMERCIALIZADORA [index. PT/PP] [NN M] + (cómo van los SSAA)."""
-    texto = nombre_corto(f["comercializadora"], f["nombre"])
-    if f["tipo"] != "Fijo":
-        marca = f" {(f.get('producto') or '')} {f['nombre']} ".upper()
-        tipo = "PP" if " PP " in marca else "PT" if " PT " in marca else (
-            "PP" if f["modalidad"] == mo.PASS_POOL else "PT")
-        texto += f" index. {tipo}"
-    if f["duracion"] > 12:
-        texto += f" {f['duracion']} M"
+    """Nombre con que se ha guardado la oferta · duración + (cómo van los SSAA)."""
+    texto = f"{(f['nombre'] or f['comercializadora'] or '').strip()} · {f['duracion']} meses"
     extra = f["ssaa"] + (", cierres" if f.get("cierres") else "")
     return f"{texto}<br/>({extra})"
 
@@ -107,7 +100,8 @@ def tecnico_de(usuario: str) -> dict:
 # ------------------------------------------------------------------- piezas comunes
 def _cabecera(e: mo.Estudio, ancho: float, titulo: str, ref: str, con_logo: bool = True) -> list:
     sub = " · ".join(x for x in (f"CIF {e.cif}" if e.cif else "", f"Ref. {ref}" if ref else "",
-                                  f"Inicio de suministro {e.inicio:%d/%m/%Y}" if e.inicio else "")
+                                  f"Inicio de suministro {(e.fecha_inicio or e.inicio):%d/%m/%Y}"
+                                  if e.inicio else "")
                      if x)
     textos = [Paragraph(escape((e.cliente or "").upper()), _st("cli", 12, True, alin=2)),
               Spacer(1, 1 * mm), Paragraph(escape(sub), _st("sub", 8, color=C["gris"], alin=2))]
@@ -220,7 +214,7 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
                     if f["actual_mismo_periodo"] else "-"),
         [Paragraph("Ranking en su periodo total", s_gris)]
         + gris(lambda f: str(rankp[f["clave"]]))]
-    altos = [6.5 * mm, 11.5 * mm, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, 8 * mm,
+    altos = [6.5 * mm, None, 5 * mm, 5 * mm, 4.6 * mm, 4.6 * mm, None,
              8.5 * mm, 6 * mm, 4.4 * mm, 4.4 * mm, 4.8 * mm]
     if mejora is not None:
         # mejora del primer año frente a la oferta de la misma comercializadora en la ronda
@@ -253,32 +247,40 @@ def _tabla_ofertas(titulo: str, filas: list, act: dict, n_cols: int, ancho_of: f
     return t
 
 
+def meses_por_anio(inicio: dt.date, n_meses: int) -> dict:
+    """{año natural: [meses del contrato en ese año]} (un contrato de oct-26 a sep-27 tiene
+    oct-dic de 2026 y ene-sep de 2027)."""
+    salida = {}
+    for k in range(n_meses):
+        f = mo.sumar_meses(inicio, k)
+        salida.setdefault(f.year, []).append(f.month)
+    return salida
+
+
 def _cuadro_mercado(e: mo.Estudio, n_meses: int) -> Table:
+    """Precio previsto por trimestre de cada año natural que cubre el contrato (solo los
+    trimestres con algún mes del contrato) y su media anual (de esos meses)."""
     ctx = calculo.Contexto(e)
-    anios = []
-    for y in range(3):
-        if n_meses > 12 * y:
-            anios.append(y)
+    por_anio = meses_por_anio(e.inicio, n_meses)
+    anios = sorted(por_anio)
     cab = [Paragraph("Trimestre", _st("q0", 8, True))] + [
-        Paragraph(str(mo.sumar_meses(e.inicio, 12 * y).year), _st("qa", 8, True)) for y in anios]
+        Paragraph(str(a), _st("qa", 8, True)) for a in anios]
     datos = [[Paragraph("Precio de mercado estimado (€/MWh)", _st("qt", 8.5, True, colors.white, 0))]
              + [""] * len(anios), cab]
     medias = []
     for q in range(4):
-        fila = [Paragraph(f"Q{(mo.sumar_meses(e.inicio, 3 * q).month - 1) // 3 + 1}",
-                          _st("qq", 8, True))]
-        for y in anios:
-            ks = [12 * y + 3 * q + i for i in range(3) if 12 * y + 3 * q + i < n_meses]
-            if ks:
-                v = [ctx.mercado(f.year, f.month)[0] for f in (mo.sumar_meses(e.inicio, k) for k in ks)]
+        fila = [Paragraph(f"Q{q + 1}", _st("qq", 8, True))]
+        for a in anios:
+            meses = [m for m in por_anio[a] if (m - 1) // 3 == q]
+            if meses:
+                v = [ctx.mercado(a, m)[0] for m in meses]
                 fila.append(Paragraph(_num(sum(v) / len(v)), _st("qv", 8, alin=1)))
             else:
                 fila.append("")
         datos.append(fila)
     fila = [Paragraph("Media anual", _st("qm", 8, True, colors.white, 1))]
-    for y in anios:
-        ks = range(12 * y, min(n_meses, 12 * y + 12))
-        v = [ctx.mercado(f.year, f.month)[0] for f in (mo.sumar_meses(e.inicio, k) for k in ks)]
+    for a in anios:
+        v = [ctx.mercado(a, m)[0] for m in por_anio[a]]
         medias.append(sum(v) / len(v))
         fila.append(Paragraph(_num(medias[-1]), _st("qmv", 8, True, colors.white, 1)))
     datos.append(fila)
@@ -292,7 +294,7 @@ def _cuadro_mercado(e: mo.Estudio, n_meses: int) -> Table:
                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 1), (-1, -1), "CENTER"),
                            ("TOPPADDING", (0, 0), (-1, -1), 1.5),
                            ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5)]))
-    return t, [mo.sumar_meses(e.inicio, 12 * y).year for y in anios], medias
+    return t, anios, medias
 
 
 def _notas(e: mo.Estudio, anios: list, medias: list) -> list:
@@ -502,7 +504,7 @@ def _graficas(s, orden, n, ancho_util, alto=72 * mm) -> Drawing:
 def _condiciones(e: mo.Estudio, res: dict, ancho_util: float) -> Table:
     s_h = _st("ch", 7.5, True, colors.white)
     s_v = _st("cv", 7, alin=0)
-    cab = ["Oferta", "Contacto", "Validez y duración", "Pago y garantías", "Volumen y cierres",
+    cab = ["Oferta", "Comercializadora", "Validez y duración", "Pago y garantías", "Volumen y cierres",
            "Rescisión anticipada", "GdO y otros"]
     datos = [[Paragraph(x, s_h) for x in cab]]
     filas = resultados.comparativa(res)
@@ -514,7 +516,7 @@ def _condiciones(e: mo.Estudio, res: dict, ancho_util: float) -> Table:
             else cabecera_oferta(f)
         juntar = lambda *xs: "<br/>".join(escape(str(x)) for x in xs if x)
         datos.append([Paragraph(nombre, _st("cn", 7, True, alin=0)),
-                      Paragraph(juntar(o.comercializadora, o.gestor, o.email_gestor), s_v),
+                      Paragraph(juntar(o.comercializadora), s_v),
                       Paragraph(juntar(c.get("validez"), f"{o.duracion} meses" if f else ""), s_v),
                       Paragraph(juntar(c.get("pago"), c.get("garantias")), s_v),
                       Paragraph(juntar(c.get("banda"), c.get("cierres")), s_v),
@@ -742,7 +744,8 @@ def _tam_informe(n_cols: int):
         util = _marco(tam, papel("horizontal", 2))[2] - COL_ETIQ - COL_MIN
         ancho = util / max(1, n_cols)
         if ancho >= COL_OF_MIN:
-            return tam, min(COL_OF_MAX, ancho)
+            # al menos 90 mm entre todas las columnas de ofertas (el título de la tabla)
+            return tam, min(max(COL_OF_MAX, 90 * mm / max(1, n_cols)), ancho)
     tam = landscape(A3)
     return tam, (_marco(tam, papel("horizontal", 2))[2] - COL_ETIQ - COL_MIN) / max(1, n_cols)
 

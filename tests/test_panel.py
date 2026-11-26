@@ -64,6 +64,48 @@ class FechaClave(unittest.TestCase):
         self.assertIsNone(P.fecha("NO PRÓRROGA"))
 
 
+class FechaClaveYNombres(unittest.TestCase):
+    def test_fecha_clave_la_mas_temprana_entre_denuncia_y_fin(self):
+        D = dt.date
+        d = {P.F_DENUNCIA: "2026-09-01", P.F_FIN: "2026-10-31"}
+        self.assertEqual(P.fecha_clave(d, margen=3), (D(2026, 7, 31), "Fin de contrato − 3 meses"))
+        d = {P.F_DENUNCIA: "2026-06-01", P.F_FIN: "2026-12-31"}
+        self.assertEqual(P.fecha_clave(d, margen=3), (D(2026, 6, 1), "Denuncia"))
+
+    def test_lanzamiento_posterior_a_la_denuncia_no_vale(self):
+        D = dt.date
+        d = {P.F_LANZAMIENTO: "2027-01-15", P.F_DENUNCIA: "2026-12-10", P.F_FIN: "2026-12-25"}
+        self.assertEqual(P.fecha_clave(d), (D(2026, 12, 10), "Denuncia"))
+        d = {P.F_LANZAMIENTO: "2027-01-15", P.F_FIN: "2026-12-31"}
+        self.assertEqual(P.fecha_clave(d), (D(2026, 12, 31), "Fin de contrato"))
+        d = {P.F_LANZAMIENTO: "2026-10-11", P.F_FIN: "2026-12-31"}
+        self.assertEqual(P.fecha_clave(d), (D(2026, 10, 11), "Lanzamiento"))
+
+    def test_semaforo_por_denuncia_cercana(self):
+        D = dt.date
+        hoy = D(2026, 11, 24)
+        f = P.Fuente(suministros=[{"id": 1, "datos": {
+            P.CLIENTE: "Cliente A", P.CUPS: "ES0000000000000000AA", P.TECNICO: "Noelia",
+            P.F_LANZAMIENTO: "2027-03-01", P.F_DENUNCIA: "2026-12-10",
+            P.F_FIN: "2027-04-30"}}])
+        u = dict(P.DEFECTOS)
+        lic = P.agrupar_licitaciones(P.licitaciones(f, hoy, u), f, u)
+        fila = lic.iloc[0]
+        self.assertEqual(fila["Fecha clave"], D(2026, 12, 10))      # el lanzamiento se pasa de la denuncia
+        self.assertEqual(fila["Denuncia"], D(2026, 12, 10))
+        self.assertEqual(fila["Fin de contrato"], D(2027, 4, 30))
+        self.assertEqual(fila["Semáforo"], P.ROJO)                  # la denuncia está a 16 días
+        filas = P.datos_bloque("licitaciones", f, hoy, u, "x", {"tecnico": {"Noelia"}})
+        self.assertEqual(list(filas[0])[:6], ["Semáforo", P.CLIENTE, "Fecha clave", "Días",
+                                              "Denuncia", "Fin de contrato"])
+
+    def test_nombre_en_el_cuadro(self):
+        n = P.mis_nombres("nlibrero", [], "Noelia")
+        self.assertEqual(n, {"tecnico": {"Noelia"}, "auxiliar": {"Noelia"}})
+        n = P.mis_nombres("nlibrero", [{"usuario": "", "nombre": "Noelia", "tecnico": 1}], "noelia")
+        self.assertEqual(n["tecnico"], {"Noelia"})
+
+
 class Licitaciones(unittest.TestCase):
     def fuente(self):
         return P.Fuente(suministros=[

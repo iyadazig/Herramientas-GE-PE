@@ -111,8 +111,10 @@ def _primero_de_mes(fecha: dt.date) -> dt.date:
 def estudio_desde_fichas(fichas: list, cliente: str = "", inicio: dt.date = None,
                          hoy: dt.date = None) -> mo.Estudio:
     hoy = hoy or dt.date.today()
-    inicio = _primero_de_mes(inicio) if inicio else mo.sumar_meses(_primero_de_mes(hoy), 1)
+    real = inicio
+    inicio = mo.mes_de_calculo(inicio) if inicio else mo.sumar_meses(_primero_de_mes(hoy), 1)
     e = mo.Estudio(cliente=cliente, fecha=hoy, inicio=inicio,
+                   fecha_inicio=real if real and real.day != 1 else None,
                    suministros=suministros_de_fichas(fichas))
     e.cif = next((f.get("cif") for f in fichas if f.get("cif")), "")
     e.actual = mo.Oferta(nombre="Contrato actual", es_actual=True, duracion=12)
@@ -574,3 +576,27 @@ def adjudicar_solicitud(id_solicitud: int, comercializadora: str, usuario: str) 
     if comercializadora and comercializadora.upper() not in {c.upper() for c in previas}:
         previas.append(comercializadora)
     almacen.actualizar_seguimiento(id_solicitud, "Adjudicada", ", ".join(previas), usuario)
+
+
+def _nombre_com(texto) -> str:
+    """Nombre de comercializadora para comparar: sin tildes, mayúsculas, sin puntuación ni
+    formas societarias (S.A., S.L.U., Energía…)."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode()
+    t = re.sub(r"[^A-Z0-9 ]", " ", t.upper())
+    quitar = {"S", "A", "L", "U", "SA", "SL", "SLU", "SAU", "ENERGIA", "ENERGY", "COMERCIALIZADORA",
+              "CLIENTES", "ESPANA", "IBERIA", "DE", "LA", "EL", "Y"}
+    return " ".join(w for w in t.split() if w not in quitar)
+
+
+def gestores_de(lista: list, comercializadora) -> list:
+    """Gestores (dicts de almacen.listar_gestores) de esa comercializadora: mismo nombre
+    normalizado o uno contenido en el otro («EDP» ↔ «EDP Energía»). Sin comercializadora, todos."""
+    com = _nombre_com(comercializadora)
+    if not com:
+        return list(lista)
+
+    def es(g):
+        otra = _nombre_com(g.get("comercializadora"))
+        return bool(otra) and (otra == com or f" {com} " in f" {otra} " or f" {otra} " in f" {com} ")
+    return [g for g in lista if es(g)]

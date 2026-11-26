@@ -64,6 +64,70 @@ def fijo(precio=0.1, **kw):
     return o
 
 
+class MejorasOferta(unittest.TestCase):
+    def test_ipc_cada_enero_solo_en_fijo(self):
+        e = estudio()
+        ctx = calculo.Contexto(e)
+        sin = calculo.calcular_oferta(e, fijo(0.1, duracion=24), ctx).por_anio()
+        con = calculo.calcular_oferta(e, fijo(0.1, duracion=24, ipc=0.03,
+                                               ipc_aplica=mo.IPC_AMBOS), ctx).por_anio()
+        self.assertAlmostEqual(con[0]["energia"], sin[0]["energia"])        # primer año igual
+        self.assertAlmostEqual(con[1]["energia"], sin[1]["energia"] * 1.03)
+        self.assertAlmostEqual(con[1]["potencia"], sin[1]["potencia"] * 1.03)
+        solo_e = calculo.calcular_oferta(e, fijo(0.1, duracion=24, ipc=0.03,
+                                                  ipc_aplica=mo.IPC_ENERGIA), ctx).por_anio()
+        self.assertAlmostEqual(solo_e[1]["potencia"], sin[1]["potencia"])
+
+    def test_fee_con_o_sin_k(self):
+        e = estudio()
+        ctx = calculo.Contexto(e)
+        con = calculo.calcular_oferta(e, fijo(0.1, fee=2.0, k=0.015), ctx).por_anio()[0]
+        sin = calculo.calcular_oferta(e, fijo(0.1, fee=2.0, k=0.015, k_fee=False), ctx).por_anio()[0]
+        self.assertAlmostEqual(con["k"] - sin["k"], 0.015 * con["otros"])  # solo hay fee en otros
+
+    def test_ssaa_por_ci_horario_c2(self):
+        """P = F + K × (OMIE + SS.AA.): los SSAA del periodo × Ci, sin pérdidas."""
+        e = estudio()
+        ctx = calculo.Contexto(e)
+        o = oferta(modalidad=mo.PASS_POOL, ssaa_modo=mo.SSAA_CI, ssaa_perdidas=mo.PERD_TARIFA)
+        o.precios["6.1TD"] = [mo.PreciosAnio(termino_b=[0.0] * 6, ci=[1.1] * 6)]
+        r = calculo.calcular_oferta(e, o, ctx)
+        o2 = oferta(modalidad=mo.PASS_POOL, ssaa_modo=mo.SSAA_PERIODO, ssaa_perdidas=mo.PERD_NO)
+        o2.precios["6.1TD"] = [mo.PreciosAnio(termino_b=[0.0] * 6, ci=[1.1] * 6)]
+        r2 = calculo.calcular_oferta(e, o2, ctx)
+        self.assertAlmostEqual(r.conceptos["ssaa"].sum(), r2.conceptos["ssaa"].sum() * 1.1)
+
+    def test_excedentes_con_tope_del_termino_de_energia(self):
+        e = estudio()
+        ctx = calculo.Contexto(e)
+        e.suministros[0].excedentes = {1: 1000.0, 2: 10 ** 7}
+        r = calculo.calcular_oferta(e, fijo(0.1, exc_precio=0.05), ctx)
+        exc = r.conceptos["excedentes"]
+        self.assertAlmostEqual(exc[0], -50.0)                          # 1.000 kWh × 0,05
+        self.assertAlmostEqual(exc[1], -(r.conceptos["energia"][1] + r.conceptos["peajes"][1]))
+        self.assertTrue(all(v == 0 for v in exc[2:]))
+        sin = calculo.calcular_oferta(e, fijo(0.1), ctx)               # sin precio: nada
+        self.assertEqual(float(sin.conceptos["excedentes"].sum()), 0.0)
+
+    def test_inicio_cualquier_dia(self):
+        D = dt.date
+        self.assertEqual(mo.mes_de_calculo(D(2027, 1, 10)), D(2027, 1, 1))
+        self.assertEqual(mo.mes_de_calculo(D(2026, 12, 20)), D(2027, 1, 1))
+        self.assertEqual(mo.mes_de_calculo(D(2027, 3, 1)), D(2027, 3, 1))
+        self.assertEqual(mo.fin_de_contrato(D(2026, 12, 11), 12), D(2027, 12, 10))
+        self.assertEqual(mo.fin_de_contrato(D(2027, 1, 1), 12), D(2027, 12, 31))
+
+    def test_unidad_del_termino_b(self):
+        e = estudio()
+        ctx = calculo.Contexto(e)
+        def pp(b, unidad):
+            o = oferta(modalidad=mo.PASS_POOL, unidad_b=unidad)
+            o.precios["6.1TD"] = [mo.PreciosAnio(termino_b=[b] * 6)]
+            return calculo.calcular_oferta(e, o, ctx).total
+        self.assertAlmostEqual(pp(20.0, "€/MWh"), pp(2.0, "c€/kWh"))
+        self.assertAlmostEqual(pp(20.0, "€/MWh"), pp(0.02, "€/kWh"))
+
+
 class Fijo(unittest.TestCase):
     def test_con_peajes_incluidos(self):
         e = estudio()
@@ -562,3 +626,17 @@ class Json(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GestoresPorComercializadora(unittest.TestCase):
+    def test_solo_los_de_esa_comercializadora(self):
+        from analisis_ofertas import servicio
+        lista = [{"nombre": "Ana", "comercializadora": "EDP Energía, S.A."},
+                 {"nombre": "Luis", "comercializadora": "Iberdrola Clientes"},
+                 {"nombre": "Eva", "comercializadora": "EDP"},
+                 {"nombre": "Sin", "comercializadora": None}]
+        nombres = lambda com: [g["nombre"] for g in servicio.gestores_de(lista, com)]
+        self.assertEqual(nombres("EDP"), ["Ana", "Eva"])
+        self.assertEqual(nombres("IBERDROLA"), ["Luis"])
+        self.assertEqual(nombres("Axpo"), [])
+        self.assertEqual(len(nombres("")), 4)

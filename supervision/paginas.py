@@ -34,14 +34,14 @@ def _filtros(nombres, k, propio):
     if rango is None:
         hoy = dt.date.today()
         rango = c2.date_input("Desde / hasta", value=(hoy.replace(day=1), hoy),
-                              format="DD/MM/YYYY", key=k + "rango")
+                              format="DD-MM-YYYY", key=k + "rango")
         if len(rango) != 2:
             st.info("Elige la fecha final del periodo.")
             st.stop()
     else:
         c2.text_input("Desde / hasta", disabled=True,
-                      value="%s – %s" % (rango[0].strftime("%d/%m/%Y"),
-                                         rango[1].strftime("%d/%m/%Y")))
+                      value="%s – %s" % (rango[0].strftime("%d-%m-%Y"),
+                                         rango[1].strftime("%d-%m-%Y")))
     if propio:
         usuarios = [propio]
     else:
@@ -74,7 +74,7 @@ def _detalle(fila, nombres, modulo, propio):
     """Ficha del registro elegido con su descarga. En «Mi trabajo», de una ficha de contrato
     solo se ven las versiones del propio usuario."""
     st.markdown("**%s** · %s · %s" % (fila["tipo"], sd.nombre(fila["usuario"], nombres),
-                                       pd.to_datetime(fila["fecha"]).strftime("%d/%m/%Y %H:%M")))
+                                       pd.to_datetime(fila["fecha"]).strftime("%d-%m-%Y %H:%M")))
     if fila["origen"] == "revision":
         informe, cups, factura = almacen.informe_revision(fila["id"])
         st.caption("%s · %s" % (fila["descripcion"] or "—", fila["resultado"] or "—"))
@@ -123,7 +123,7 @@ def _detalle(fila, nombres, modulo, propio):
             "Acción": h["accion"]} for h in almacen.historial_contrato(fila["cups"])
             if not propio or h["usuario"] == propio]),
             hide_index=True, use_container_width=True,
-            column_config={"Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+            column_config={"Fecha": st.column_config.DatetimeColumn(format="DD-MM-YYYY HH:mm")})
 
 
 def _tabla_trabajo(registros, nombres, k, modulo, propio):
@@ -140,7 +140,7 @@ def _tabla_trabajo(registros, nombres, k, modulo, propio):
     sel = st.dataframe(df, hide_index=True, use_container_width=True, on_select="rerun",
                        selection_mode="single-row", key=k + "trabajo",
                        column_config={"Fecha": st.column_config.DatetimeColumn(
-                           format="DD/MM/YYYY HH:mm")})
+                           format="DD-MM-YYYY HH:mm")})
     filas = sel.selection.rows if sel else []
     if filas and filas[0] < len(registros):
         with st.container(border=True):
@@ -160,7 +160,7 @@ def _tabla_actividad(eventos, nombres, k, propio):
         "Módulo": e["modulo"], "Acción": e["accion"], "Detalle": e["detalle"] or ""}
         for e in vista])
     st.dataframe(df.drop(columns="Usuario") if propio else df, hide_index=True, use_container_width=True,
-        column_config={"Fecha": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+        column_config={"Fecha": st.column_config.DatetimeColumn(format="DD-MM-YYYY HH:mm")})
     accesos = [e for e in eventos if e["accion"] == sd.ACCESO]
     if accesos:
         st.markdown("**Inicios de sesión por día**")
@@ -210,7 +210,7 @@ def _panel(propio):
             st.dataframe(pd.DataFrame(filas).assign(**{"Último acceso": lambda d: pd.to_datetime(
                 d["Último acceso"])}), hide_index=True, use_container_width=True,
                 column_config={"Último acceso": st.column_config.DatetimeColumn(
-                    format="DD/MM/YYYY HH:mm")})
+                    format="DD-MM-YYYY HH:mm")})
             g1, g2 = st.columns(2)
             tabla = sd.por_usuario_y_modulo(registros, nombres)
             if not tabla.empty:

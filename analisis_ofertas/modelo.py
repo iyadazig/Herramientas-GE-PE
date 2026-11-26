@@ -30,12 +30,19 @@ FNEE_INCLUIDO = "Incluido"
 MODOS_FNEE = [FNEE_INCLUIDO, NETO, BARRAS]
 SSAA_INCLUIDOS, SSAA_PERIODO, SSAA_PLANO, SSAA_BANDA, SSAA_TECHO = (
     "Incluidos", "Indexado por periodo", "Indexado plano", "Banda", "Techo")
-MODOS_SSAA = [SSAA_INCLUIDOS, SSAA_PERIODO, SSAA_PLANO, SSAA_BANDA, SSAA_TECHO]
+# SSAA horarios de la liquidación C2 × el coeficiente Ci de cada periodo (p. ej. Naturgy:
+# P = F + K × (OMIE + SS.AA.)): sin elevar a pérdidas, el coeficiente ya las lleva
+SSAA_CI = "Indexado × Ci (SSAA horario C2)"
+MODOS_SSAA = [SSAA_INCLUIDOS, SSAA_PERIODO, SSAA_PLANO, SSAA_BANDA, SSAA_TECHO, SSAA_CI]
 PERD_TARIFA, PERD_FIJO, PERD_NO = "Pérdidas tarifa", "% fijo", "No"
 PERDIDAS_SSAA = [PERD_TARIFA, PERD_FIJO, PERD_NO]
 SIN_CIERRES, CIERRE_PCT, CIERRE_MW = "Sin cierres", "Por %", "Por MW (carga base)"
 TIPOS_CIERRE = [SIN_CIERRES, CIERRE_PCT, CIERRE_MW]
 REDUCCIONES_IEE = [0.0, 0.85, 1.0]
+# incremento por IPC cada enero (solo precio fijo): sobre el término de energía, el de potencia
+# o los dos
+IPC_ENERGIA, IPC_POTENCIA, IPC_AMBOS = "Energía", "Potencia", "Energía y potencia"
+IPC_APLICA = [IPC_ENERGIA, IPC_POTENCIA, IPC_AMBOS]
 ESTIMADO, CLIENTE = "Estimado (a mano)", "Del cliente (curva)"
 # Precio horario de adquisición de la demanda en Canarias (Ph demanda, Orden TEC/1172/2018,
 # indicador 573 de ESIOS): sus apuntamientos se guardan con este «sistema» («Canarias Ph|6P»).
@@ -73,6 +80,27 @@ def sumar_meses(fecha: dt.date, meses: int) -> dt.date:
     return dt.date(fecha.year + a, m + 1, 1)
 
 
+def mes_de_calculo(fecha: dt.date) -> dt.date:
+    """Primer día del mes natural con el que se calcula un contrato que empieza en `fecha`
+    (cualquier día): el cálculo va por meses de contrato completos y cada uno se asigna al mes
+    natural en el que tiene más días (empieza el 10/01 → enero; el 20/12 → enero)."""
+    import calendar
+    if fecha is None or fecha.day == 1:
+        return fecha
+    dias_mes = calendar.monthrange(fecha.year, fecha.month)[1]
+    primero = dt.date(fecha.year, fecha.month, 1)
+    return primero if dias_mes - fecha.day + 1 >= fecha.day - 1 else sumar_meses(primero, 1)
+
+
+def fin_de_contrato(inicio: dt.date, meses: int) -> dt.date:
+    """Último día del contrato que empieza en `inicio` (cualquier día) y dura `meses`."""
+    import calendar
+    a, m = divmod(inicio.month - 1 + meses, 12)
+    a, m = inicio.year + a, m + 1
+    dia = min(inicio.day, calendar.monthrange(a, m)[1])
+    return dt.date(a, m, dia) - dt.timedelta(days=1)
+
+
 # ------------------------------------------------------------------- suministros
 @dataclass
 class Suministro:
@@ -88,6 +116,7 @@ class Suministro:
     alquiler: float = 0.0                              # €/mes (equipo de medida, servicios)
     activo: bool = True                                # entra en el estudio
     apuntamiento: str = ESTIMADO                       # para los indexados, si tiene curva
+    excedentes: dict = field(default_factory=dict)    # autoconsumo: {mes natural: kWh vertidos}
 
     def consumo_mes(self, mes: int) -> list:
         return [float(v or 0) for v in seis(self.consumo.get(mes) or self.consumo.get(str(mes)),
@@ -156,6 +185,15 @@ class Oferta:
     k: float = 0.0                         # K / impuesto municipal (energía y otros)
     k_ssaa: bool = False                   # hay una K que se aplica a los SSAA
     k_ssaa_valor: float = 0.0              # esa K (solo sobre los SSAA)
+    k_fee: bool = True                     # la K / IM se aplica también al fee
+    unidad_b: str = "€/MWh"                # unidad del término B (Pass-Pool)
+    ipc: float = 0.0                       # incremento anual por IPC cada enero (precio fijo)
+    ipc_aplica: str = IPC_ENERGIA          # sobre la energía, la potencia o las dos
+    # autoconsumo: compensación de los excedentes (simplificada: como mucho el término de
+    # energía del mes)
+    exc_modo: str = "Precio fijo"          # «Precio fijo» (€/kWh) u «OMIE × coeficiente»
+    exc_precio: float = 0.0                # €/kWh
+    exc_coef: float = 0.0                  # × precio previsto del mes
     gdo: float = 0.0                       # €/MWh
     fnee: str = FNEE_INCLUIDO
     otros_fijos: float = 0.0               # €/CUPS·mes
@@ -208,7 +246,7 @@ class Oferta:
     def resumen_ssaa(self) -> str:
         return {SSAA_INCLUIDOS: "SSAA incluidos", SSAA_PERIODO: "SSAA index.",
                 SSAA_PLANO: "SSAA index. plano", SSAA_BANDA: "SSAA banda",
-                SSAA_TECHO: "SSAA techo"}.get(self.ssaa_modo, self.ssaa_modo)
+                SSAA_TECHO: "SSAA techo", SSAA_CI: "SSAA × Ci"}.get(self.ssaa_modo, self.ssaa_modo)
 
 
 # ------------------------------------------------------------------- estudio
@@ -217,7 +255,8 @@ class Estudio:
     cliente: str = ""
     cif: str = ""
     fecha: dt.date = None
-    inicio: dt.date = None                 # inicio de suministro (primer día de mes)
+    inicio: dt.date = None                 # mes con el que se calcula (primer día de mes)
+    fecha_inicio: dt.date = None           # inicio real (cualquier día); vacío = «inicio»
     crecimiento: list = field(default_factory=list)          # año 2, 3... (tanto por uno)
     suministros: list = field(default_factory=list)          # [Suministro]
     # mercado: {"AAAA-MM": {"omip", "contrato", "omie_media", "anios_omie"}}; pct_omip
@@ -302,6 +341,7 @@ def estudio_a_dict(e: Estudio) -> dict:
     d = asdict(e)
     d["fecha"] = _fecha_a_texto(e.fecha)
     d["inicio"] = _fecha_a_texto(e.inicio)
+    d["fecha_inicio"] = _fecha_a_texto(e.fecha_inicio)
     d["actual"] = oferta_a_dict(e.actual) if e.actual else None
     d["ofertas"] = [oferta_a_dict(o) for o in e.ofertas]
     d["regulados"] = {str(a): v for a, v in e.regulados.items()}
@@ -314,11 +354,13 @@ def estudio_de_dict(d: dict) -> Estudio:
     d = {k: v for k, v in d.items() if k in validos}
     d["fecha"] = _texto_a_fecha(d.get("fecha"))
     d["inicio"] = _texto_a_fecha(d.get("inicio"))
+    d["fecha_inicio"] = _texto_a_fecha(d.get("fecha_inicio"))
     sv = {f.name for f in fields(Suministro)}
     d["suministros"] = [Suministro(**{k: v for k, v in s.items() if k in sv})
                         for s in d.get("suministros") or []]
     for s in d["suministros"]:
         s.consumo = _meses_int(s.consumo)
+        s.excedentes = _meses_int(s.excedentes)
     for clave in ("ph_dif", "ph_origen", "pico"):
         d[clave] = _meses_int(d.get(clave))
     for clave in ("ap_omie", "ap_ssaa", "ap_origen"):

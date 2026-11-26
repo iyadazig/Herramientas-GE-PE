@@ -208,7 +208,7 @@ def tablas_vigentes(anios: list = None, calculados: list = None, hoy: dt.date = 
         mercado = tabla_mercado(e, n_meses).drop(columns=["SSAA"]).rename(
             columns={"SSAA (€/MWh)": "SSAA estimado (€/MWh)"})
         salida["Mercado"] = mercado
-        avisos.append(f"OMIP: sesión del {dt.date.fromisoformat(cong['sesion_omip']):%d/%m/%Y} "
+        avisos.append(f"OMIP: sesión del {dt.date.fromisoformat(cong['sesion_omip']):%d-%m-%Y} "
                       f"({dm.FUENTE_OMIP}). OMIE: {dm.FUENTE_OMIE}.")
     except dm.DatosMercado as e:
         avisos.append(f"Datos de mercado no disponibles: {e}")

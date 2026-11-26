@@ -188,11 +188,15 @@ def cargar(hoy: dt.date = None, completa: bool = False) -> Fuente:
 
 
 # ------------------------------------------------------------------- de quién es cada cosa
-def mis_nombres(usuario: str, equipo: list) -> dict:
-    """{"tecnico": {nombres}, "auxiliar": {nombres}} del usuario en la tabla del equipo."""
+def mis_nombres(usuario: str, equipo: list, nombre_cuadro: str = "") -> dict:
+    """{"tecnico": {nombres}, "auxiliar": {nombres}} del usuario: los de la tabla del equipo con
+    su usuario o con su nombre en el cuadro (Administración → Usuarios); si no está en la tabla,
+    su nombre en el cuadro vale como técnico y como auxiliar."""
     salida = {"tecnico": set(), "auxiliar": set()}
+    cuadro = _texto(nombre_cuadro).lower()
     for e in equipo:
-        if (e.get("usuario") or "").strip().lower() == (usuario or "").strip().lower():
+        if (e.get("usuario") or "").strip().lower() == (usuario or "").strip().lower() or (
+                cuadro and _texto(e.get("nombre")).lower() == cuadro):
             nombre = _texto(e.get("nombre"))
             if e.get("tecnico"):
                 salida["tecnico"].add(nombre)
@@ -201,6 +205,9 @@ def mis_nombres(usuario: str, equipo: list) -> dict:
             if not e.get("tecnico") and not e.get("auxiliar"):
                 salida["tecnico"].add(nombre)
                 salida["auxiliar"].add(nombre)
+    if cuadro and not (salida["tecnico"] or salida["auxiliar"]):
+        salida["tecnico"].add(_texto(nombre_cuadro))
+        salida["auxiliar"].add(_texto(nombre_cuadro))
     return salida
 
 
@@ -218,7 +225,8 @@ def tiene_nombres(nombres: dict) -> bool:
 # ------------------------------------------------------------------- licitaciones
 def fecha_clave(datos: dict, tipo: str = "Automática", margen: int = 3):
     """(fecha, origen) de la licitación del suministro. Automática: lanzamiento previsto; si
-    falta, denuncia; si falta, fin de contrato menos `margen` meses."""
+    falta, la más temprana entre la denuncia y el fin de contrato menos `margen` meses. Un
+    lanzamiento posterior a la denuncia o al fin de contrato se cambia por la más temprana."""
     lan, den, fin = (fecha(datos.get(F_LANZAMIENTO)), fecha(datos.get(F_DENUNCIA)),
                      fecha(datos.get(F_FIN)))
     if tipo == "Lanzamiento":
@@ -228,12 +236,15 @@ def fecha_clave(datos: dict, tipo: str = "Automática", margen: int = 3):
     if tipo == "Fin de contrato":
         return fin, "Fin de contrato"
     if lan:
-        return lan, "Lanzamiento"
-    if den:
-        return den, "Denuncia"
-    if fin:
-        return restar_meses(fin, margen), f"Fin de contrato − {margen} meses"
-    return None, ""
+        # un lanzamiento previsto después de la denuncia o del fin de contrato no sirve:
+        # la licitación tiene que salir antes de denunciar (o de que acabe el contrato)
+        tope = [(d, o) for d, o in ((den, "Denuncia"), (fin, "Fin de contrato")) if d and d < lan]
+        return min(tope, key=lambda x: x[0]) if tope else (lan, "Lanzamiento")
+    # sin lanzamiento: la más temprana entre la denuncia y el fin de contrato menos el margen
+    # (así nunca se pasa la fecha de denuncia)
+    candidatas = ([(den, "Denuncia")] if den else []) + (
+        [(restar_meses(fin, margen), f"Fin de contrato − {margen} meses")] if fin else [])
+    return min(candidatas, key=lambda x: x[0]) if candidatas else (None, "")
 
 
 def estado_licitacion(cups: set, f_clave: dt.date, solicitudes: list, analisis: list):
@@ -285,6 +296,11 @@ def licitaciones(f: Fuente, hoy: dt.date, u: dict, tipo: str = "Automática") ->
     return pd.DataFrame(filas)
 
 
+def hoy_de(clave: dt.date, dias: int) -> dt.date:
+    """La fecha de hoy con la que se calcularon los días a la fecha clave."""
+    return clave - dt.timedelta(days=int(dias))
+
+
 def agrupar_licitaciones(df: pd.DataFrame, f: Fuente, u: dict) -> pd.DataFrame:
     """Una fila por licitación (mismo cliente y misma fecha clave) con su estado y semáforo."""
     if df.empty:
@@ -296,9 +312,17 @@ def agrupar_licitaciones(df: pd.DataFrame, f: Fuente, u: dict) -> pd.DataFrame:
         dias = int(g["Días"].iloc[0])
         hay = estado not in ("Sin solicitud", "Solicitud cancelada")
         tecs = sorted({t for t in g[TECNICO] if t})
+        # fecha de denuncia y fin de contrato más próximas de la licitación: el semáforo también
+        # avisa si la denuncia está cerca (aunque la fecha clave sea otra, p. ej. un lanzamiento
+        # previsto posterior)
+        den = min((d for d in g["Denuncia"] if pd.notna(d) and d), default=None)
+        fin = min((d for d in g["Fin de contrato"] if pd.notna(d) and d), default=None)
+        dias_den = (den - hoy_de(clave, dias)).days if den else None
+        urgente = min(x for x in (dias, dias_den) if x is not None)
         filas.append({
-            "Semáforo": semaforo(dias, u, hay), CLIENTE: cliente, "Fecha clave": clave,
-            "Días": dias, "Origen de la fecha": g["Origen de la fecha"].iloc[0],
+            "Semáforo": semaforo(urgente, u, hay), CLIENTE: cliente, "Fecha clave": clave,
+            "Días": dias, "Denuncia": den, "Días a la denuncia": dias_den,
+            "Fin de contrato": fin, "Origen de la fecha": g["Origen de la fecha"].iloc[0],
             "Suministros": len(g), "Consumo (MWh)": round(float(g["Consumo (MWh)"].sum()), 1),
             "Tarifas": ", ".join(sorted({t for t in g["Tarifa"] if t})),
             "Comercializadora": ", ".join(sorted({c for c in g["Comercializadora"] if c})),
@@ -581,7 +605,14 @@ def datos_bloque(clave: str, f: Fuente, hoy: dt.date, u: dict, usuario: str, nom
         if lic.empty:
             return []
         lic = lic[(lic["Días"] >= -30) & (lic["Estado"] != "Adjudicada")]
-        return lic.sort_values("Días").to_dict("records")
+        # en el panel: lo importante primero (con la denuncia y el fin de contrato)
+        orden = ["Semáforo", CLIENTE, "Fecha clave", "Días", "Denuncia", "Fin de contrato",
+                 "Estado", "Suministros", "Comercializadora", TECNICO]
+        lic = lic.assign(_urgencia=[min(x for x in (d, dd) if pd.notna(x))
+                                    for d, dd in zip(lic["Días"], lic["Días a la denuncia"])])
+        cols = [c for c in orden if c in lic.columns] + [c for c in lic.columns
+                                                        if str(c).startswith("_")]
+        return lic.sort_values("_urgencia")[cols].to_dict("records")
     if clave == "solicitudes":
         filas = []
         for r in f.solicitudes:

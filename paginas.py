@@ -178,17 +178,15 @@ def pagina_historial():
         "periodo": "Periodo", "clausula": "Cláusula", "lineas": "Líneas",
         "facturado": "Facturado €", "recalculado": "Recalculado €", "diferencia": "Diferencia €",
         "veredicto": "Veredicto"})
-    estilo.tabla_es(vista, hide_index=True, use_container_width=True,
-                    formatos={"Facturado €": 2, "Recalculado €": 2, "Diferencia €": 2},
-                    column_config={"Fecha": st.column_config.DatetimeColumn(
-                        format="DD/MM/YYYY HH:mm")})
-    if len(df):
-        opciones = {int(r["id"]): "Nº %d · %s · %s · %s" % (
-            r["id"], r["fecha"].strftime("%d/%m/%Y %H:%M"),
-            r["denominacion"] or r["cups"] or "—", r["factura"] or "—")
-            for _, r in df.iterrows()}
+    elegido = estilo.tabla_elegir(
+        vista, "ssaa_historial", formatos={"Facturado €": 2, "Recalculado €": 2,
+                                           "Diferencia €": 2},
+        column_config={"Fecha": st.column_config.DatetimeColumn(format="DD-MM-YYYY HH:mm")}) \
+        if len(df) else None
+    if elegido is not None:
+        elegido = int(elegido)
         c1, c2 = st.columns([3, 1])
-        elegido = c1.selectbox("Informe de la revisión", list(opciones), format_func=opciones.get)
+        c1.markdown("**Revisión nº %d**" % elegido)
         datos, cups, factura = almacen.informe_revision(elegido)
         if datos:
             estilo.boton_descarga("Revisión de SSAA", c2, "Descargar informe Excel", datos,
@@ -197,7 +195,7 @@ def pagina_historial():
                                   use_container_width=True)
     estilo.borrar_mios(
         "Revisión de SSAA", df.to_dict("records"), lambda r: "Nº %d · %s · %s · %s" % (
-            r["id"], r["fecha"].strftime("%d/%m/%Y %H:%M"),
+            r["id"], r["fecha"].strftime("%d-%m-%Y %H:%M"),
             r["denominacion"] or r["cups"] or "—", r["factura"] or "—"),
         almacen.borrar_revision, "rev_borrar", que="revisiones")
 
@@ -238,7 +236,7 @@ def pagina_fichas():
         return
     estilo.tabla_es(pd.DataFrame(filas), hide_index=True, use_container_width=True,
                     column_config={"Última modificación": st.column_config.DatetimeColumn(
-                     format="DD/MM/YYYY HH:mm")})
+                     format="DD-MM-YYYY HH:mm")})
     etiquetas = {f["CUPS"]: "%s (%s)" % (f["Denominación suministro"] or "Sin denominación",
                                          f["CUPS"]) for f in filas}
     cups = st.selectbox("Ver los cambios de una ficha", sorted(etiquetas, key=lambda c: (
@@ -253,7 +251,7 @@ def pagina_fichas():
                         "Factor": c.factor})
     estilo.tabla_es(pd.DataFrame(cambios), hide_index=True, use_container_width=True,
                     column_config={"Fecha": st.column_config.DatetimeColumn(
-                        format="DD/MM/YYYY HH:mm")})
+                        format="DD-MM-YYYY HH:mm")})
 
 
 def _referencias(c):
@@ -277,6 +275,11 @@ AYUDA_ROL = ("Decide qué sale por defecto en «Mi panel» (cada usuario puede c
              "Seguimiento y Control (Administración → Seguimiento y Control → Equipo).")
 
 
+AYUDA_CUADRO = ("Cómo aparece en las columnas Técnico / Auxiliar del cuadro de Seguimiento "
+                "(por ejemplo «Noelia»). Con él, Mi panel enseña sus suministros, avisos y "
+                "licitaciones.")
+
+
 def pagina_usuarios():
     if not ss.usuario["admin"]:
         st.warning("Solo los administradores pueden gestionar usuarios.")
@@ -286,12 +289,14 @@ def pagina_usuarios():
         "Usuario": u["usuario"], "Nombre": u["nombre"], "Email": u.get("email") or "",
         "Administrador": "Sí" if u["admin"] else "",
         "Supervisor": "Sí" if u.get("supervisor") else "",
-        "Rol": almacen._rol(u.get("rol")), "Activo": "Sí" if u["activo"] else "No",
+        "Rol": almacen._rol(u.get("rol")),
+        "Nombre en el cuadro": u.get("nombre_cuadro") or "",
+        "Activo": "Sí" if u["activo"] else "No",
         "Alta": pd.to_datetime(u["creado"]),
         "Último acceso": pd.to_datetime(u["ultimo_acceso"]) if u["ultimo_acceso"] else None}
         for u in usuarios]), hide_index=True, use_container_width=True,
-        column_config={"Alta": st.column_config.DatetimeColumn(format="DD/MM/YYYY"),
-                       "Último acceso": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+        column_config={"Alta": st.column_config.DatetimeColumn(format="DD-MM-YYYY"),
+                       "Último acceso": st.column_config.DatetimeColumn(format="DD-MM-YYYY HH:mm")})
 
     if ss.get("clave_mostrada"):
         u, clave = ss.clave_mostrada
@@ -317,11 +322,14 @@ def pagina_usuarios():
             admin = st.checkbox("Administrador (puede gestionar usuarios)")
             supervisor = st.checkbox("Supervisor (ve el panel del trabajo de todo el equipo)")
             rol = st.selectbox("Rol", almacen.ROLES, help=AYUDA_ROL)
+            cuadro = st.text_input("Nombre en el cuadro de Seguimiento", autocomplete="off",
+                                   help=AYUDA_CUADRO)
             if st.form_submit_button("Dar de alta", type="primary"):
                 clave = almacen.clave_temporal()
                 try:
                     almacen.crear_usuario(usuario, nombre, clave, admin=admin, cambiar_clave=True,
-                                          email=email, supervisor=supervisor, rol=rol)
+                                          email=email, supervisor=supervisor, rol=rol,
+                                          nombre_cuadro=cuadro)
                 except ValueError as e:
                     st.error(str(e))
                 else:
@@ -340,10 +348,13 @@ def pagina_usuarios():
             nuevo_rol = st.selectbox("Rol", almacen.ROLES,
                                      index=almacen.ROLES.index(almacen._rol(u.get("rol"))),
                                      key="rol_%s" % elegido, help=AYUDA_ROL)
-            if st.form_submit_button("Guardar nombre, email y rol"):
+            nuevo_cuadro = st.text_input("Nombre en el cuadro de Seguimiento",
+                                         value=u.get("nombre_cuadro") or "", autocomplete="off",
+                                         key="cuadro_%s" % elegido, help=AYUDA_CUADRO)
+            if st.form_submit_button("Guardar nombre, email, rol y nombre en el cuadro"):
                 try:
                     almacen.actualizar_usuario(elegido, nombre=nuevo, email=nuevo_email,
-                                               rol=nuevo_rol)
+                                               rol=nuevo_rol, nombre_cuadro=nuevo_cuadro)
                 except ValueError as e:
                     st.error(str(e))
                 else:

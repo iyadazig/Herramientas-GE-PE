@@ -113,18 +113,42 @@ def fijo(v, decimales: int) -> str:
 
 
 def tabla(df, decimales: int = DECIMALES, sin_miles=("Año", "Mes", "Periodo", "Nº", "ID"),
-          formatos: dict = None):
+          formatos: dict = None, sin_fecha=()):
     """Copia del DataFrame para mostrarlo: las columnas con decimales pasan a texto español
     (1.234,5678); las de años, meses, números de orden e ids no llevan punto de miles.
     formatos: {columna: nº de decimales fijo, o función valor → texto} para las que necesitan
-    otro formato (euros sin decimales, porcentajes…)."""
+    otro formato (euros sin decimales, porcentajes…). Las fechas pasan a dd-mm-aaaa, salvo las
+    de `sin_fecha` (las que ya llevan su DateColumn)."""
     salida = df.copy()
     formatos = formatos or {}
     for c in salida.columns:
         f = formatos.get(c)
         if f is not None and c in salida:
             salida[c] = [f(v) if callable(f) else fijo(v, f) for v in salida[c]]
+        elif c not in sin_fecha and _es_fecha(salida[c]):
+            salida[c] = [fecha_texto(v) for v in salida[c]]
         elif _es_decimal(salida[c]):
             miles = not any(str(c).startswith(x) for x in sin_miles)
             salida[c] = [texto(v, decimales, miles) for v in salida[c]]
     return salida
+
+
+def fecha_texto(v) -> str:
+    """Fecha en dd-mm-aaaa (con hh:mm si lleva hora); vacío si no hay."""
+    import datetime as dt
+    if v is None or (isinstance(v, float) and math.isnan(v)) or str(v) in ("NaT", "None", ""):
+        return ""
+    if isinstance(v, dt.datetime):
+        return v.strftime("%d-%m-%Y %H:%M" if (v.hour, v.minute) != (0, 0) else "%d-%m-%Y")
+    if isinstance(v, dt.date):
+        return v.strftime("%d-%m-%Y")
+    return str(v)
+
+
+def _es_fecha(serie) -> bool:
+    """Columna de fechas: fechas de Python o de pandas (con algún valor)."""
+    import datetime as dt
+    if str(serie.dtype).startswith("datetime64"):
+        return True
+    vals = [v for v in serie if v is not None and str(v) not in ("NaT", "None", "nan", "")]
+    return bool(vals) and all(isinstance(v, dt.date) for v in vals)

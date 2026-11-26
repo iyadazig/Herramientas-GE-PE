@@ -124,11 +124,11 @@ c1, c2, c3 = st.columns(3)
 with c1:
     st.text_input("Comercializadora", key="f_comercializadora")
     st.text_input("Nº de factura", key="f_numero")
-    st.date_input("Fecha de emisión", key="f_emision", format="DD/MM/YYYY")
+    st.date_input("Fecha de emisión", key="f_emision", format="DD-MM-YYYY")
 with c2:
     cups = st.text_input("CUPS", key="f_cups").strip().upper()
-    st.date_input("Inicio del periodo facturado", key="f_inicio", format="DD/MM/YYYY")
-    st.date_input("Fin del periodo facturado (incluido)", key="f_fin", format="DD/MM/YYYY")
+    st.date_input("Inicio del periodo facturado", key="f_inicio", format="DD-MM-YYYY")
+    st.date_input("Fin del periodo facturado (incluido)", key="f_fin", format="DD-MM-YYYY")
 with c3:
     st.selectbox("Tarifa de acceso", motor.TARIFAS, key="f_tarifa")
     estilo.casilla_decimal_ss(st, "Energía activa facturada (kWh)", "f_consumo", minimo=0,
@@ -144,8 +144,8 @@ lineas_df = st.data_editor(
     use_container_width=True, hide_index=True,
     column_config={
         "Concepto": st.column_config.TextColumn(width="large"),
-        "Inicio": st.column_config.DateColumn(format="DD/MM/YYYY"),
-        "Fin": st.column_config.DateColumn(format="DD/MM/YYYY"),
+        "Inicio": st.column_config.DateColumn(format="DD-MM-YYYY"),
+        "Fin": st.column_config.DateColumn(format="DD-MM-YYYY"),
         **{c: st.column_config.TextColumn(help="Con coma decimal (un punto se toma como "
                                                 "coma)")
            for c in ("kWh", "Precio €/kWh", "Importe €")}})
@@ -193,7 +193,7 @@ elif ss.get("f_inicio") and ss.get("f_fin"):
                "Importe €": 0.0}]
     st.info("La factura no trae línea de SSAA: se calculará la regularización que "
             "correspondería al periodo facturado (%s – %s) y se comparará con 0 €."
-            % (ss.f_inicio.strftime("%d/%m/%Y"), ss.f_fin.strftime("%d/%m/%Y")))
+            % (ss.f_inicio.strftime("%d-%m-%Y"), ss.f_fin.strftime("%d-%m-%Y")))
 
 # ==================================================================== contrato
 estilo.seccion(2, "Condiciones de SSAA del contrato", "Ficha guardada por CUPS")
@@ -393,7 +393,7 @@ elif origen == "Gemweb (API)":
     clave_g = (cups, g_ini, g_fin)
     if cups and g_ini and g_fin:
         st.caption("Se descargará del %s al %s (cubre todas las líneas de SSAA)."
-                   % (g_ini.strftime("%d/%m/%Y"), g_fin.strftime("%d/%m/%Y")))
+                   % (g_ini.strftime("%d-%m-%Y"), g_fin.strftime("%d-%m-%Y")))
     if not (cups and g_ini and g_fin):
         st.info("Rellena el CUPS y el periodo de la factura para descargar la curva.")
     elif not gemweb.cargar_credenciales()[0]:
@@ -403,8 +403,8 @@ elif origen == "Gemweb (API)":
         try:
             cliente = gemweb.ClienteGemweb.desde_configuracion()
             c_g, sum_g = cliente.curva(cups, g_ini, g_fin, lambda n, t, a, b: barra.progress(
-                n / t, "Descargando %s – %s (%d/%d)" % (a.strftime("%d/%m/%Y"),
-                                                       b.strftime("%d/%m/%Y"), n, t)))
+                n / t, "Descargando %s – %s (%d/%d)" % (a.strftime("%d-%m-%Y"),
+                                                       b.strftime("%d-%m-%Y"), n, t)))
         except gemweb.GemwebError as e:
             st.error(str(e))
         else:
@@ -526,7 +526,7 @@ def fila_resumen(l, r):
     precio_fact = l["Precio €/kWh"] * 1000 if l["Precio €/kWh"] is not None else (
         l["Importe €"] / r.energia_mwh if r.energia_mwh and l["Importe €"] is not None else None)
     return {"Concepto": l["Concepto"],
-            "Periodo": "%s – %s" % (r.inicio.strftime("%d/%m/%Y"), r.fin.strftime("%d/%m/%Y")),
+            "Periodo": "%s – %s" % (r.inicio.strftime("%d-%m-%Y"), r.fin.strftime("%d-%m-%Y")),
             "MWh": round(r.energia_mwh, 3),
             "Facturado €/MWh": round(precio_fact, 6) if precio_fact is not None else None,
             "Recalculado €/MWh": round(r.precio_efectivo, 6),

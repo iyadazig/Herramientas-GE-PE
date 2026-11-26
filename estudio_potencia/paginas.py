@@ -181,7 +181,7 @@ def _descargar(pot, lista, desde, hasta):
             s.avisos_extra = sv.avisos_gemweb(s.cups, avisos, info[s.cups])
             pot["lectores"][s.cups] = {"lector": lector, "ajustes": dict(AJUSTES_GEMWEB),
                                        "cups": s.cups}
-            s.fuente = f"Gemweb ({desde:%d/%m/%Y} – {hasta:%d/%m/%Y})"
+            s.fuente = f"Gemweb ({desde:%d-%m-%Y} – {hasta:%d-%m-%Y})"
             _leer(pot, s)
 
 
@@ -295,8 +295,8 @@ def _paso_cups(pot):
                          key="pot_cups_texto", height=110, placeholder="ES0000000000000000XX")
     ini, fin = sv.periodo_defecto()
     c1, c2, _ = st.columns([1, 1, 2])
-    desde = c1.date_input("Curva desde", value=ini, format="DD/MM/YYYY", key="pot_desde")
-    hasta = c2.date_input("hasta", value=fin, format="DD/MM/YYYY", key="pot_hasta")
+    desde = c1.date_input("Curva desde", value=ini, format="DD-MM-YYYY", key="pot_desde")
+    hasta = c2.date_input("hasta", value=fin, format="DD-MM-YYYY", key="pot_hasta")
     lista = sv.lista_cups(texto)
     if st.button("Buscar en Gemweb y descargar las curvas", type="primary",
                  disabled=not lista or hasta <= desde):
@@ -308,7 +308,7 @@ def _paso_datos(pot) -> dict:
     st.subheader("2. Datos de los suministros")
     sums, v = pot["suministros"], pot["version"]
     multipunto = _tipo(pot) == MULTIPUNTO
-    st.session_state.setdefault("pot_fecha", date.today().strftime("%d/%m/%Y"))
+    st.session_state.setdefault("pot_fecha", date.today().strftime("%d-%m-%Y"))
     c1, c2 = st.columns([3, 1])
     datos = {"titular": c1.text_input("Titular del estudio" if multipunto else "Titular",
                                       key="pot_titular").strip(),
@@ -382,8 +382,8 @@ def _paso_curvas(pot):
     sums = pot["suministros"]
     st.dataframe(pd.DataFrame([{
         "CUPS": s.cups, "Curva": s.fuente if s.curva is not None else "FALTA",
-        "Periodo": (f"{s.curva.fecha_inicio:%d/%m/%Y} – "
-                    f"{s.curva.fecha_fin - pd.Timedelta(days=1):%d/%m/%Y}") if s.curva is not None
+        "Periodo": (f"{s.curva.fecha_inicio:%d-%m-%Y} – "
+                    f"{s.curva.fecha_fin - pd.Timedelta(days=1):%d-%m-%Y}") if s.curva is not None
         else "", "Avisos": str(len(s.curva.avisos)) if s.curva is not None else ""}
         for s in sums]),
         hide_index=True, use_container_width=True)
@@ -752,7 +752,19 @@ def _informe_y_guardar(pot, datos, res, seleccion, precios):
     estilo.boton_descarga("Estudio de potencia", c2, "Descargar el PDF",
                           data=pot["pdf"] or b"", file_name=nombre,
                           mime="application/pdf", disabled=pot["pdf"] is None)
-    if c3.button("Guardar estudio",
+    cargado = pot.get("cargado")
+    nueva = None
+    if cargado:
+        como = st.radio("Al guardar", [f"Sobrescribir el estudio nº {cargado['id']}",
+                                       "Guardar como una versión nueva"],
+                        key="ep_como_guardar", horizontal=True)
+        if como.startswith("Guardar como"):
+            if "ep_nombre_version" not in st.session_state:
+                st.session_state.ep_nombre_version = ""
+            nueva = st.text_input("Nombre (titular) de la versión nueva", key="ep_nombre_version",
+                                  help="Vacío = el titular del estudio.").strip()
+    if c3.button("Guardar estudio" if not cargado or nueva is not None else
+                 f"Guardar los cambios (nº {cargado['id']})",
                  help="Guarda el estudio (datos, curvas, propuestas y PDF) en el ordenador de la "
                       "plataforma. Se consulta en «Estudios guardados»."):
         if pot["pdf"] is None:
@@ -761,9 +773,18 @@ def _informe_y_guardar(pot, datos, res, seleccion, precios):
                 pot["pdf_firma"] = firma
         usuario = (st.session_state.get("usuario") or {}).get("usuario", "")
         guardar = {"tipo": _tipo(pot), "datos": datos, "anexos": anexos}
-        pot["guardado"] = almacen.guardar_estudio_potencia(
-            usuario, sv.resumen_guardar(_tipo(pot), datos, sums), guardar,
-            sv.empaquetar(sums), pot["pdf"])
+        resumen = sv.resumen_guardar(_tipo(pot), datos, sums)
+        if nueva:
+            resumen["titular"] = nueva
+        if cargado and nueva is None:
+            almacen.actualizar_estudio_potencia(cargado["id"], resumen, guardar,
+                                                sv.empaquetar(sums), pot["pdf"])
+            pot["guardado"] = cargado["id"]
+        else:
+            pot["guardado"] = almacen.guardar_estudio_potencia(
+                usuario, resumen, guardar, sv.empaquetar(sums), pot["pdf"])
+            if cargado:
+                cargado["id"] = pot["guardado"]
     if pot.get("guardado"):
         st.success(f"Estudio guardado con el nº {pot['guardado']}. Está en «Estudio de potencia → "
                    "Estudios guardados».")
@@ -782,9 +803,9 @@ def pagina_nuevo_estudio():
     cargado = pot.get("cargado")
     if cargado:
         st.info(f"Estudio nº {cargado['id']} cargado (guardado por {cargado['usuario']} el "
-                f"{cargado['fecha']}). Cambia lo que necesites; al guardar se crea un estudio "
-                "nuevo y el original no se modifica. Para cambiar los ajustes de lectura de la "
-                "curva, empieza un estudio nuevo.")
+                f"{cargado['fecha']}). Cambia lo que necesites; al guardar eliges si lo "
+                "sobrescribes o lo guardas como una versión nueva. Para cambiar los ajustes de "
+                "lectura de la curva, empieza un estudio nuevo.")
         if st.button("Empezar un estudio nuevo"):
             _reiniciar()
             st.rerun()
@@ -826,7 +847,7 @@ def cargar_en_formulario(estudio: dict) -> None:
 
 
 def _fecha_hora(iso):
-    return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M") if iso else ""
+    return datetime.fromisoformat(iso).strftime("%d-%m-%Y %H:%M") if iso else ""
 
 
 def pagina_estudios_guardados():
@@ -840,24 +861,22 @@ def pagina_estudios_guardados():
     filtrados = [e for e in estudios if not buscar or buscar in " ".join(
         str(e.get(k) or "") for k in ("titular", "cups", "usuario")).lower()
         or buscar in nombres.get(e["usuario"], "").lower()]
-    estilo.tabla_es(pd.DataFrame([{
+    elegido = estilo.tabla_elegir(pd.DataFrame([{
         "Nº": e["id"], "Guardado": _fecha_hora(e["fecha"]),
         "Usuario": nombres.get(e["usuario"], e["usuario"]),
         "Tipo": "Multipunto" if e["tipo"] == MULTIPUNTO else "Individual",
         "Titular": e["titular"], "CUPS": e["cups"], "Tarifa": e["tarifa"],
-        "Ahorro anual (€)": e["ahorro"], "Inversión (€)": e["inversion"]} for e in filtrados]),
-        hide_index=True, use_container_width=True,
-        formatos={"Ahorro anual (€)": 0, "Inversión (€)": 2})
+        "Ahorro anual (€)": e["ahorro"], "Inversión (€)": e["inversion"]} for e in filtrados],
+        columns=["Nº", "Guardado", "Usuario", "Tipo", "Titular", "CUPS", "Tarifa",
+                 "Ahorro anual (€)", "Inversión (€)"]),
+        "ep_lista", formatos={"Ahorro anual (€)": 0, "Inversión (€)": 2})
     estilo.borrar_mios("Estudio de potencia", filtrados, lambda e: "Nº %d · %s · %s" % (
         e["id"], _fecha_hora(e["fecha"]), e["titular"] or e["cups"] or "—"),
         almacen.borrar_estudio_potencia, "ep_borrar", que="estudios")
-    if not filtrados:
+    if not filtrados or elegido is None:
         return
     st.subheader("Detalle")
-    por_id = {e["id"]: e for e in filtrados}
-    elegido = st.selectbox("Estudio", list(por_id), format_func=lambda i: "Nº %d · %s · %s" % (
-        i, _fecha_hora(por_id[i]["fecha"]), por_id[i]["titular"] or por_id[i]["cups"] or "—"))
-    estudio = almacen.estudio_potencia(elegido)
+    estudio = almacen.estudio_potencia(int(elegido))
     c1, c2, c3 = st.columns(3)
     c1.metric("Suministros", estudio["suministros"])
     c2.metric("Ahorro anual (propuesta óptima)",

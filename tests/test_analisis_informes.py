@@ -117,13 +117,14 @@ class Pdf(unittest.TestCase):
             self.assertGreater(z["arriba"], 50)                # el logo
             self.assertGreater(z["izq"], 25)                   # texto del Registro Mercantil
 
-    def test_nombres_cortos_como_la_plantilla(self):
-        f = {"comercializadora": "TOTALENERGIES CLIENTES, S.A.U.", "nombre": "Total PP 24 m",
+    def test_nombre_de_la_oferta_duracion_y_ssaa(self):
+        f = {"comercializadora": "TOTALENERGIES CLIENTES, S.A.U.", "nombre": "Total PP",
              "producto": "", "tipo": "Indexado", "modalidad": mo.PASS_POOL, "duracion": 24,
              "ssaa": "SSAA incluidos", "cierres": ""}
-        self.assertEqual(informe_pdf.cabecera_oferta(f), "TOTAL index. PP 24 M<br/>(SSAA incluidos)")
-        f.update(comercializadora="ENDESA ENERGÍA", tipo="Fijo", duracion=12, nombre="Endesa PF")
-        self.assertEqual(informe_pdf.cabecera_oferta(f), "ENDESA<br/>(SSAA incluidos)")
+        self.assertEqual(informe_pdf.cabecera_oferta(f), "Total PP · 24 meses<br/>(SSAA incluidos)")
+        f.update(nombre="", cierres="Por %")
+        self.assertEqual(informe_pdf.cabecera_oferta(f),
+                         "TOTALENERGIES CLIENTES, S.A.U. · 24 meses<br/>(SSAA incluidos, cierres)")
 
 
 class Rondas(unittest.TestCase):

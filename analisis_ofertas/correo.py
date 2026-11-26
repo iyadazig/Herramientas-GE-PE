@@ -98,10 +98,12 @@ def borrador(e: mo.Estudio, res: dict, ref: str = "", adjuntos=("resumen de ofer
     t = ["Buenos días:", "",
          f"Os enviamos los resultados del estudio de las ofertas de suministro eléctrico "
          f"recibidas para {e.cliente}" + (f", con inicio de suministro el "
-                                         f"{e.inicio:%d/%m/%Y}" if e.inicio else "") + ".", ""]
+                                         f"{(e.fecha_inicio or e.inicio):%d/%m/%Y}" if e.inicio else "")
+         + ".", ""]
     h = [f"<p>Buenos días:</p><p>Os enviamos los resultados del estudio de las ofertas de "
          f"suministro eléctrico recibidas para <b>{escape(e.cliente)}</b>"
-         + (f", con inicio de suministro el {e.inicio:%d/%m/%Y}" if e.inicio else "") + ".</p>"]
+         + (f", con inicio de suministro el {(e.fecha_inicio or e.inicio):%d/%m/%Y}"
+            if e.inicio else "") + ".</p>"]
 
     def seccion(n, titulo):
         t.extend([f"{n}. {titulo.upper()}", ""])

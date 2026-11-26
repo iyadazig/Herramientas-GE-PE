@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS analisis_ofertas (
     mejor TEXT, ahorro REAL, estado TEXT NOT NULL, actualizado TEXT, actualizado_por TEXT,
     datos TEXT NOT NULL, curvas BLOB, excel BLOB, pdf BLOB);
 CREATE INDEX IF NOT EXISTS ix_ao_solicitud ON analisis_ofertas(id_solicitud);
+CREATE TABLE IF NOT EXISTS gestores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, email TEXT,
+    comercializadora TEXT, telefono TEXT, notas TEXT, actualizado TEXT, usuario TEXT);
 CREATE TABLE IF NOT EXISTS preferencias (
     usuario TEXT NOT NULL, clave TEXT NOT NULL, valor TEXT, actualizado TEXT,
     PRIMARY KEY (usuario, clave));
@@ -178,6 +181,8 @@ def _migrar(con):
         con.execute("ALTER TABLE usuarios ADD COLUMN supervisor INTEGER NOT NULL DEFAULT 0")
     if "rol" not in columnas:
         con.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT")
+    if "nombre_cuadro" not in columnas:          # su nombre en el cuadro de Seguimiento
+        con.execute("ALTER TABLE usuarios ADD COLUMN nombre_cuadro TEXT")
     if "obs" not in {r["name"] for r in con.execute("PRAGMA table_info(sgc_cambios_gemweb)")}:
         con.execute("ALTER TABLE sgc_cambios_gemweb ADD COLUMN obs TEXT")
 
@@ -258,7 +263,7 @@ def roles_de(rol):
 
 
 def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email=None,
-                  supervisor=False, rol=None):
+                  supervisor=False, rol=None, nombre_cuadro=None):
     usuario = usuario.strip().lower()
     if not usuario or not nombre.strip():
         raise ValueError("Usuario y nombre son obligatorios.")
@@ -270,9 +275,11 @@ def crear_usuario(usuario, nombre, clave, admin=False, cambiar_clave=True, email
         if con.execute("SELECT 1 FROM usuarios WHERE usuario=?", (usuario,)).fetchone():
             raise ValueError("Ya existe el usuario %s." % usuario)
         con.execute("INSERT INTO usuarios (usuario, nombre, sal, clave, admin, activo, "
-                    "cambiar_clave, creado, email, supervisor, rol) VALUES (?,?,?,?,?,1,?,?,?,?,?)",
+                    "cambiar_clave, creado, email, supervisor, rol, nombre_cuadro) "
+                    "VALUES (?,?,?,?,?,1,?,?,?,?,?,?)",
                     (usuario, nombre.strip(), sal, _hash(clave, sal), int(admin),
-                     int(cambiar_clave), _ahora(), _email(email), int(supervisor), _rol(rol)))
+                     int(cambiar_clave), _ahora(), _email(email), int(supervisor), _rol(rol),
+                     (nombre_cuadro or "").strip() or None))
 
 
 def comprobar(usuario, clave):
@@ -326,7 +333,15 @@ def listar_usuarios():
     with _con() as con:
         return [dict(r) for r in con.execute(
             "SELECT usuario, nombre, email, admin, supervisor, rol, activo, creado, "
-            "ultimo_acceso FROM usuarios ORDER BY nombre")]
+            "ultimo_acceso, nombre_cuadro FROM usuarios ORDER BY nombre")]
+
+
+def nombre_cuadro(usuario):
+    """Nombre del usuario en el cuadro de Seguimiento (Técnico / Auxiliar), o ''."""
+    with _con() as con:
+        fila = con.execute("SELECT nombre_cuadro FROM usuarios WHERE usuario=?",
+                           ((usuario or "").strip().lower(),)).fetchone()
+    return ((fila and fila["nombre_cuadro"]) or "").strip()
 
 
 def _email(email):
@@ -340,7 +355,7 @@ def _email(email):
 
 
 def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None,
-                       supervisor=None, rol=None):
+                       supervisor=None, rol=None, nombre_cuadro=None):
     """Si el cambio dejara sin administradores activos, se deshace y da error. email="" lo
     borra; None lo deja como esta."""
     if nombre is not None and not nombre.strip():
@@ -354,6 +369,9 @@ def actualizar_usuario(usuario, admin=None, activo=None, nombre=None, email=None
             con.execute("UPDATE usuarios SET nombre=? WHERE usuario=?", (nombre.strip(), usuario))
         if rol is not None:
             con.execute("UPDATE usuarios SET rol=? WHERE usuario=?", (_rol(rol), usuario))
+        if nombre_cuadro is not None:
+            con.execute("UPDATE usuarios SET nombre_cuadro=? WHERE usuario=?",
+                        (nombre_cuadro.strip() or None, usuario))
         if admin is not None:
             con.execute("UPDATE usuarios SET admin=? WHERE usuario=?", (int(admin), usuario))
         if supervisor is not None:
@@ -494,6 +512,20 @@ def guardar_solicitud(usuario, resumen, datos, texto, excel, estado="Preparada")
         return cur.lastrowid
 
 
+def actualizar_solicitud(id_solicitud, usuario, resumen, datos, texto, excel):
+    """Sobrescribe una solicitud guardada (queda quién y cuándo)."""
+    with _con(escribir=True) as con:
+        con.execute(
+            "UPDATE solicitudes_ofertas SET ref=?, cliente=?, cups=?, suministros=?, consumo=?, "
+            "recepcion_desde=?, recepcion_hasta=?, datos=?, texto=?, excel=?, actualizado=?, "
+            "actualizado_por=? WHERE id=?",
+            (resumen.get("ref"), resumen.get("cliente"), ", ".join(resumen.get("cups") or []),
+             len(resumen.get("cups") or []), resumen.get("consumo"),
+             resumen.get("recepcion_desde"), resumen.get("recepcion_hasta"),
+             json.dumps(datos, ensure_ascii=False, default=str), texto, excel, _ahora(), usuario,
+             id_solicitud))
+
+
 def listar_solicitudes(limite=1000):
     """Sin datos, Excel ni texto. producto: 'gas' o 'electricidad' (None en las guardadas
     antes de haber solicitudes de gas, que son de electricidad); denominaciones: los alias de
@@ -546,6 +578,18 @@ def guardar_estudio_potencia(usuario, resumen, datos, curvas, pdf):
              resumen.get("tarifa"), resumen.get("ahorro"), resumen.get("inversion"),
              json.dumps(datos, ensure_ascii=False, default=str), curvas, pdf))
         return cur.lastrowid
+
+
+def actualizar_estudio_potencia(id_estudio, resumen, datos, curvas, pdf):
+    """Sobrescribe un estudio de potencia guardado."""
+    with _con(escribir=True) as con:
+        con.execute(
+            "UPDATE estudios_potencia SET tipo=?, titular=?, cups=?, suministros=?, tarifa=?, "
+            "ahorro=?, inversion=?, datos=?, curvas=?, pdf=? WHERE id=?",
+            (resumen.get("tipo"), resumen.get("titular"), ", ".join(resumen.get("cups") or []),
+             len(resumen.get("cups") or []), resumen.get("tarifa"), resumen.get("ahorro"),
+             resumen.get("inversion"), json.dumps(datos, ensure_ascii=False, default=str),
+             curvas, pdf, id_estudio))
 
 
 def listar_estudios_potencia(limite=1000):
@@ -641,6 +685,102 @@ def analisis(id_analisis):
 
 def borrar_analisis(id_analisis, usuario):
     return _borrar_propio("analisis_ofertas", id_analisis, usuario)
+
+
+# ------------------------------------------------------------------- gestores comerciales
+def _gestores_de_analisis():
+    """[(nombre, email, comercializadora)] de los gestores de las ofertas guardadas (el último
+    email y comercializadora de cada nombre)."""
+    vistos = {}
+    for c in [{"gestor": o.get("gestor"), "email": o.get("email_gestor"),
+               "comercializadora": o.get("comercializadora")}
+              for o in _ofertas_guardadas()]:
+        nombre = (c["gestor"] or "").strip()
+        if nombre:
+            vistos[nombre.lower()] = (nombre, (c["email"] or "").strip(),
+                                      (c["comercializadora"] or "").strip())
+    return list(vistos.values())
+
+
+def _ofertas_guardadas():
+    with _con() as con:
+        filas = con.execute("SELECT datos FROM analisis_ofertas ORDER BY COALESCE(actualizado, "
+                            "fecha)").fetchall()
+    for f in filas:
+        try:
+            datos = json.loads(f["datos"])
+        except ValueError:
+            continue
+        estudio = datos.get("estudio", datos)
+        for o in (estudio.get("ofertas") or []) + [estudio.get("actual") or {}]:
+            yield o
+
+
+def listar_gestores():
+    """Gestores comerciales (dicts id, nombre, email, comercializadora, telefono, notas). La
+    primera vez se rellena con los gestores de las ofertas de los análisis guardados."""
+    with _con() as con:
+        vacia = not con.execute("SELECT 1 FROM gestores LIMIT 1").fetchone()
+    if vacia:
+        for nombre, email, com in _gestores_de_analisis():
+            try:
+                guardar_gestor(nombre, email, com, usuario="(análisis guardados)")
+            except ValueError:
+                guardar_gestor(nombre, None, com, usuario="(análisis guardados)")
+    with _con() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, nombre, email, comercializadora, telefono, notas, actualizado, usuario "
+            "FROM gestores ORDER BY nombre COLLATE NOCASE")]
+
+
+def guardar_gestor(nombre, email=None, comercializadora=None, telefono=None, notas=None,
+                   id_=None, usuario=None):
+    """Alta o cambio de un gestor (sin id, si ya hay uno con ese nombre se actualiza)."""
+    nombre = (nombre or "").strip()
+    if not nombre:
+        raise ValueError("El nombre del gestor no puede quedar vacío.")
+    email = _email(email)
+    valores = (nombre, email, (comercializadora or "").strip() or None,
+               (telefono or "").strip() or None, (notas or "").strip() or None, _ahora(), usuario)
+    with _con(escribir=True) as con:
+        if id_ is None:
+            fila = con.execute("SELECT id FROM gestores WHERE lower(nombre)=lower(?)",
+                               (nombre,)).fetchone()
+            id_ = fila["id"] if fila else None
+        if id_ is None:
+            return con.execute("INSERT INTO gestores (nombre, email, comercializadora, telefono, "
+                               "notas, actualizado, usuario) VALUES (?,?,?,?,?,?,?)",
+                               valores).lastrowid
+        con.execute("UPDATE gestores SET nombre=?, email=?, comercializadora=?, telefono=?, "
+                    "notas=?, actualizado=?, usuario=? WHERE id=?", valores + (id_,))
+        return id_
+
+
+def registrar_gestor(nombre, email=None, comercializadora=None, usuario=None):
+    """El gestor de una oferta guardada: se da de alta si no está; si está, se completan el
+    email y la comercializadora que falten o hayan cambiado (no se borra nada)."""
+    nombre = (nombre or "").strip()
+    if not nombre:
+        return
+    with _con() as con:
+        fila = con.execute("SELECT * FROM gestores WHERE lower(nombre)=lower(?)",
+                           (nombre,)).fetchone()
+    try:
+        email = _email(email)
+    except ValueError:
+        email = None
+    if fila is None:
+        guardar_gestor(nombre, email, comercializadora, usuario=usuario)
+    elif (email and email != fila["email"]) or (comercializadora and
+                                                 comercializadora != fila["comercializadora"]):
+        guardar_gestor(fila["nombre"], email or fila["email"],
+                       comercializadora or fila["comercializadora"], fila["telefono"],
+                       fila["notas"], id_=fila["id"], usuario=usuario)
+
+
+def borrar_gestor(id_):
+    with _con(escribir=True) as con:
+        con.execute("DELETE FROM gestores WHERE id=?", (id_,))
 
 
 def contactos_comercializadoras():

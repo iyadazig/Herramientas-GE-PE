@@ -77,12 +77,17 @@ def mis_umbrales() -> dict:
 
 
 def _nombres() -> dict:
-    return P.mis_nombres(_yo().get("usuario"), _fuente().equipo)
+    usuario = _yo().get("usuario")
+    try:
+        cuadro = almacen.nombre_cuadro(usuario)
+    except Exception:                                       # noqa: BLE001
+        cuadro = ""
+    return P.mis_nombres(usuario, _fuente().equipo, cuadro)
 
 
 def _todos_por_defecto(nombres) -> bool:
-    """Sin nombres en la tabla del equipo, un supervisor o administrador ve todo."""
-    return not P.tiene_nombres(nombres) and almacen.puede_supervisar(_yo())
+    """Mi panel empieza siempre con lo del usuario (se puede ver lo de todo el equipo)."""
+    return False
 
 
 def _abrir(ruta: str):
@@ -190,8 +195,9 @@ def pagina_mi_panel():
     c1.markdown(f"**{yo.get('nombre', '')}** · {rol or 'Técnico'} · en el cuadro de "
                 f"Seguimiento: {quien}")
     if not P.tiene_nombres(nombres):
-        c1.caption("No estás en la tabla del equipo de Seguimiento y Control (Administración → "
-                   "Seguimiento y Control → Equipo): no se puede saber qué suministros son tuyos.")
+        c1.warning("No se sabe qué suministros son tuyos: pon tu nombre tal y como aparece en "
+                   "el cuadro de Seguimiento (columnas Técnico / Auxiliar) en Administración → "
+                   "Usuarios → «Nombre en el cuadro de Seguimiento».")
     todos = c2.toggle("Ver lo de todo el equipo", _todos_por_defecto(nombres), key="mi_todos")
     if c2.button("Actualizar datos", icon=":material/refresh:"):
         refrescar()
@@ -331,9 +337,9 @@ def pagina_licitaciones():
                         help="Automática: fecha prevista de lanzamiento; si no hay, la de "
                              f"denuncia; si tampoco, el fin de contrato menos {u['margen']} "
                              "meses.")
-    desde = c2.date_input("Desde", hoy - dt.timedelta(days=30), format="DD/MM/YYYY",
+    desde = c2.date_input("Desde", hoy - dt.timedelta(days=30), format="DD-MM-YYYY",
                           key="lic_desde")
-    hasta = c3.date_input("Hasta", hoy + dt.timedelta(days=365), format="DD/MM/YYYY",
+    hasta = c3.date_input("Hasta", hoy + dt.timedelta(days=365), format="DD-MM-YYYY",
                           key="lic_hasta")
     todos = c4.toggle("Todo el equipo", previos.get("todos", _todos_por_defecto(nombres)),
                       key="lic_todos", help="Si no, solo los suministros donde eres técnico o "
@@ -379,13 +385,11 @@ def pagina_licitaciones():
         st.caption("Una licitación = los suministros del mismo cliente con la misma fecha clave. "
                    "Elige una para ver sus CUPS y crear la solicitud.")
         sel = st.dataframe(_visible(lic), hide_index=True, use_container_width=True,
-                           on_select="rerun", selection_mode="single-row", key="lic_tabla",
-                           column_config={"Fecha clave": st.column_config.DateColumn(
-                               format="DD/MM/YYYY")})
+                           on_select="rerun", selection_mode="single-row", key="lic_tabla")
         filas = sel.selection.rows if sel and sel.selection else []
         if filas:
             x = lic.iloc[filas[0]]
-            st.markdown(f"**{x[P.CLIENTE]}** · {x['Fecha clave']:%d/%m/%Y} · {x['Estado']}")
+            st.markdown(f"**{x[P.CLIENTE]}** · {x['Fecha clave']:%d-%m-%Y} · {x['Estado']}")
             st.dataframe(_visible(base[base["_id"].isin(x["_ids"])]), hide_index=True,
                          use_container_width=True)
             id_sol = x["_id_trabajo"] if x["_origen"] == "solicitud" else None
@@ -539,9 +543,7 @@ def pagina_calendario():
         df = pd.DataFrame(evs)
         st.markdown(f"**{len(evs)} vencimientos en {MESES[mes - 1].lower()} de {anio}**")
         sel = st.dataframe(_visible(df), hide_index=True, use_container_width=True,
-                           on_select="rerun", selection_mode="single-row", key="cal_tabla",
-                           column_config={"Fecha": st.column_config.DateColumn(
-                               format="DD/MM/YYYY")})
+                           on_select="rerun", selection_mode="single-row", key="cal_tabla")
         elegidas = sel.selection.rows if sel and sel.selection else []
         if elegidas and st.button("Abrir", key="cal_abrir", type="primary"):
             e = evs[elegidas[0]]

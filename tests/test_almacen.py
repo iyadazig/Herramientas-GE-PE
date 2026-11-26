@@ -34,6 +34,34 @@ class Almacen(unittest.TestCase):
         almacen._iniciado.clear()
         self.tmp.cleanup()
 
+    def test_sobrescribir_solicitud_y_estudio(self):
+        r = {"ref": "A", "cliente": "C", "cups": ["ES1"], "consumo": 1}
+        i = almacen.guardar_solicitud("ana", r, {"x": 1}, "t", b"e")
+        almacen.actualizar_solicitud(i, "luis", dict(r, ref="B"), {"x": 2}, "t2", b"e2")
+        sol = almacen.solicitud(i)
+        self.assertEqual((sol["ref"], sol["datos"], sol["actualizado_por"]), ("B", {"x": 2}, "luis"))
+        self.assertEqual(len(almacen.listar_solicitudes()), 1)
+        r = {"tipo": "Individual", "titular": "T", "cups": ["ES1"], "tarifa": "6.1TD",
+             "ahorro": 1.0, "inversion": 0.0}
+        j = almacen.guardar_estudio_potencia("ana", r, {"y": 1}, b"c", b"p")
+        almacen.actualizar_estudio_potencia(j, dict(r, titular="T2"), {"y": 2}, b"c", b"p")
+        self.assertEqual(almacen.estudio_potencia(j)["titular"], "T2")
+        self.assertEqual(len(almacen.listar_estudios_potencia()), 1)
+
+    def test_gestores(self):
+        self.assertEqual(almacen.listar_gestores(), [])
+        i = almacen.guardar_gestor("Ana Pérez", "ana@x.es", "EDP")
+        almacen.registrar_gestor("ana pérez", "ana.p@x.es", None)        # mismo nombre
+        g = almacen.listar_gestores()
+        self.assertEqual([(x["id"], x["email"], x["comercializadora"]) for x in g],
+                         [(i, "ana.p@x.es", "EDP")])
+        almacen.registrar_gestor("Luis", "luis@y.es", "Axpo")
+        self.assertEqual(len(almacen.listar_gestores()), 2)
+        almacen.borrar_gestor(i)
+        self.assertEqual([x["nombre"] for x in almacen.listar_gestores()], ["Luis"])
+        with self.assertRaises(ValueError):
+            almacen.guardar_gestor("X", "no-es-email")
+
     def test_importa_fichas_del_json(self):
         self.assertEqual(almacen.cargar_contratos()["ES0000000000000000XX"]["techo"], 18.0)
 

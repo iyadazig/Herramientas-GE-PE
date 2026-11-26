@@ -123,13 +123,13 @@ def selector_fechas(default_dias_atras: int = 90, inicio: date = None, fin: date
         f_ini = st.date_input(
             "Fecha inicio",
             value=inicio or hoy - timedelta(days=default_dias_atras),
-            format="DD/MM/YYYY",
+            format="DD-MM-YYYY",
         )
     with c2:
         f_fin = st.date_input(
             "Fecha fin",
             value=fin or hoy,
-            format="DD/MM/YYYY",
+            format="DD-MM-YYYY",
         )
     return f_ini.isoformat(), f_fin.isoformat()
 
@@ -588,7 +588,7 @@ def pagina_factura_calculada():
     if desde_ultima:
         # solo cuenta la fecha final: tiene que ser posterior al final de la ultima factura
         f_fin = st.date_input("Fecha fin", value=date.today() - timedelta(days=3),
-                              format="DD/MM/YYYY", key="fin_desde_ultima").isoformat()
+                              format="DD-MM-YYYY", key="fin_desde_ultima").isoformat()
         f_ini = None
     else:
         f_ini, f_fin = selector_fechas(*((0,) + mes_anterior()))
@@ -667,9 +667,9 @@ def pagina_simulacion_contrato():
     hoy = date.today()
     c1, c2 = st.columns(2)
     with c1:
-        c_ini = st.date_input("Inicio del contrato", value=date(hoy.year, 1, 1), format="DD/MM/YYYY")
+        c_ini = st.date_input("Inicio del contrato", value=date(hoy.year, 1, 1), format="DD-MM-YYYY")
     with c2:
-        c_fin = st.date_input("Fin del contrato", value=date(hoy.year, 12, 31), format="DD/MM/YYYY")
+        c_fin = st.date_input("Fin del contrato", value=date(hoy.year, 12, 31), format="DD-MM-YYYY")
     st.subheader("Periodo a simular")
     f_ini, f_fin = selector_fechas(inicio=date(hoy.year, 1, 1), fin=mes_anterior()[1])
 

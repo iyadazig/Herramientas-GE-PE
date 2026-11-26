@@ -367,6 +367,7 @@ def traducir():
         let n; while ((n = w.nextNode())) nodo(n);
         raiz.querySelectorAll && raiz.querySelectorAll("input[placeholder], [aria-label]").forEach(e => {
             if (e.placeholder === "DD/MM/YYYY") e.placeholder = "DD/MM/AAAA";
+            if (e.placeholder === "DD-MM-YYYY") e.placeholder = "DD-MM-AAAA";
             const a = e.getAttribute("aria-label");
             if (a && T[a] !== undefined) e.setAttribute("aria-label", T[a]);
         });
@@ -556,7 +557,26 @@ def tabla_es(df, contenedor=None, formatos=None, **kw):
     """st.dataframe con los decimales en formato español (1.234,5678). formatos: como en
     numeros.tabla ({columna: decimales fijos o función})."""
     import numeros
-    return (contenedor or st).dataframe(numeros.tabla(df, formatos=formatos), **kw)
+    propias = tuple((kw.get("column_config") or {}).keys())  # fechas con su DateColumn
+    return (contenedor or st).dataframe(numeros.tabla(df, formatos=formatos, sin_fecha=propias),
+                                        **kw)
+
+
+def tabla_elegir(df, clave, formatos=None, id_col="Nº", **kw):
+    """Listado con una casilla a la izquierda para elegir una fila (como en Mi panel). Devuelve
+    el valor de `id_col` de la fila marcada, o None (con un aviso) si no hay ninguna."""
+    import hashlib
+    huella = hashlib.md5(",".join(str(v) for v in df[id_col]).encode()).hexdigest()[:8] \
+        if id_col in df.columns else "0"
+    kw.setdefault("hide_index", True)
+    kw.setdefault("use_container_width", True)
+    ev = tabla_es(df, formatos=formatos, key=f"{clave}_{huella}", on_select="rerun",
+                  selection_mode="single-row", **kw)
+    filas = list(ev.selection.rows) if ev and ev.selection else []
+    if not filas or filas[0] >= len(df):
+        st.caption("Marca una fila en la casilla de la izquierda para ver su detalle y abrirla.")
+        return None
+    return df.iloc[filas[0]][id_col]
 
 
 def seccion(numero, titulo, subtitulo=""):

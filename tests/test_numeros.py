@@ -72,3 +72,18 @@ class Numeros(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FechasEnTablas(unittest.TestCase):
+    def test_fechas_dd_mm_aaaa(self):
+        import datetime as dt
+        import pandas as pd
+        df = pd.DataFrame({"Fecha": [dt.date(2026, 12, 10), None],
+                           "Hora": pd.to_datetime(["2026-01-05 09:30", "2026-01-06 00:00"]),
+                           "Texto": ["a", "b"]})
+        t = N.tabla(df)
+        self.assertEqual(list(t["Fecha"]), ["10-12-2026", ""])
+        self.assertEqual(list(t["Hora"]), ["05-01-2026 09:30", "06-01-2026"])
+        self.assertEqual(list(t["Texto"]), ["a", "b"])
+        self.assertEqual(list(N.tabla(df, sin_fecha=("Fecha",))["Fecha"])[0],
+                         dt.date(2026, 12, 10))

@@ -79,7 +79,7 @@ def almacen_nombre(usuario):
 
 def _cuando(iso):
     try:
-        return dt.datetime.fromisoformat(iso).strftime("%d/%m/%Y a las %H:%M")
+        return dt.datetime.fromisoformat(iso).strftime("%d-%m-%Y a las %H:%M")
     except (TypeError, ValueError):
         return "fecha desconocida"
 
@@ -118,7 +118,7 @@ def _config_columnas(definiciones, df, listas, equipo, estados=()):
     for c in definiciones:
         k = c["clave"]
         if c["tipo"] == C.FECHA:
-            cfg[k] = st.column_config.DateColumn(k, format="DD/MM/YYYY")
+            cfg[k] = st.column_config.DateColumn(k, format="DD-MM-YYYY")
         elif c["tipo"] == C.NUMERO:                 # texto con coma (ver _numeros_a_texto)
             cfg[k] = st.column_config.TextColumn(k, help="Con coma decimal (un punto escrito "
                                                          "se toma como coma)")
@@ -300,7 +300,7 @@ COLUMNAS_CAMBIOS = {"tecnico": "Técnico", "auxiliar": "Auxiliar", "cups": "CUPS
 TIPO_CAMBIO = {(True, False): "Factura sin indicar → Recibida",
                (True, True): "Factura sin indicar → Recibida + siglas en la Obs",
                (False, True): "Siglas en la Obs"}
-FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD/MM/YYYY")
+FECHAS_LISTADO = {c: st.column_config.DateColumn(format="DD-MM-YYYY")
                   for c in ("Emisión", "Periodo inicio", "Periodo fin")}
 
 
@@ -399,7 +399,7 @@ def _gemweb():
             st.dataframe(_df_cambios(aplicados, aplicados=True), hide_index=True,
                          use_container_width=True, height=220, column_config={
                              "Aplicado": st.column_config.DatetimeColumn(
-                                 format="DD/MM/YYYY HH:mm")})
+                                 format="DD-MM-YYYY HH:mm")})
 
 
 def _cups_fuera(filas):
@@ -421,8 +421,8 @@ def _cups_fuera(filas):
 def _propuesta(G, p):
     fecha = dt.datetime.fromisoformat(p["fecha"])
     st.markdown("**Última búsqueda: %s**, facturas con periodo desde el %s."
-                % (fecha.strftime("%d/%m/%Y a las %H:%M"),
-                   dt.date.fromisoformat(p["inicio"]).strftime("%d/%m/%Y")))
+                % (fecha.strftime("%d-%m-%Y a las %H:%M"),
+                   dt.date.fromisoformat(p["inicio"]).strftime("%d-%m-%Y")))
     m = st.columns(3)
     m[0].metric("Facturas encontradas", p["facturas"])
     m[1].metric("Descartadas", p["descartadas"],
@@ -541,7 +541,7 @@ def pagina_retraso():
     c1, c2 = st.columns([1, 1])
     with c1:
         anio = _anio()
-    hoy = c2.date_input("Fecha de control", dt.date.today(), format="DD/MM/YYYY",
+    hoy = c2.date_input("Fecha de control", dt.date.today(), format="DD-MM-YYYY",
                         key="sgc_ret_hoy",
                         help="Se evalúan los bloques cuya fecha de control (día 1 del mes M+2) "
                              "ya ha llegado en esta fecha.")
@@ -625,7 +625,7 @@ def pagina_retraso():
         key="sgc_ret_tabla", column_config={
             "Mes inicio": st.column_config.DateColumn(format="MMM YYYY"),
             "Mes fin": st.column_config.DateColumn(format="MMM YYYY"),
-            "Fecha control (M+2)": st.column_config.DateColumn(format="DD/MM/YYYY")})
+            "Fecha control (M+2)": st.column_config.DateColumn(format="DD-MM-YYYY")})
     filas = sel.selection.rows if sel else []
     if filas:
         id_ = int(df.iloc[filas[0]]["_id"])
@@ -753,8 +753,8 @@ def pagina_bajas():
                        height=500, on_select="rerun", selection_mode="multi-row",
                        key="sgc_bajas_tabla", column_config={
                            D.ID: None,
-                           "Fecha de baja": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                           "Fecha fin contrato": st.column_config.DateColumn(format="DD/MM/YYYY")})
+                           "Fecha de baja": st.column_config.DateColumn(format="DD-MM-YYYY"),
+                           "Fecha fin contrato": st.column_config.DateColumn(format="DD-MM-YYYY")})
     filas = sel.selection.rows if sel else []
     if filas and st.button("Reactivar %d suministro(s)" % len(filas), icon=":material/undo:"):
         D.dar_de_baja([int(df.iloc[i][D.ID]) for i in filas], _usuario(), baja=False)
