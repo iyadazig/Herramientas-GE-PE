@@ -225,8 +225,8 @@ def tiene_nombres(nombres: dict) -> bool:
 # ------------------------------------------------------------------- licitaciones
 def fecha_clave(datos: dict, tipo: str = "Automática", margen: int = 3):
     """(fecha, origen) de la licitación del suministro. Automática: lanzamiento previsto; si
-    falta, la más temprana entre la denuncia y el fin de contrato menos `margen` meses. Un
-    lanzamiento posterior a la denuncia o al fin de contrato se cambia por la más temprana."""
+    falta, la denuncia; si falta, el fin de contrato menos `margen` meses. Un lanzamiento
+    posterior a la denuncia o al fin de contrato se cambia por la más temprana de ellas."""
     lan, den, fin = (fecha(datos.get(F_LANZAMIENTO)), fecha(datos.get(F_DENUNCIA)),
                      fecha(datos.get(F_FIN)))
     if tipo == "Lanzamiento":
@@ -240,11 +240,12 @@ def fecha_clave(datos: dict, tipo: str = "Automática", margen: int = 3):
         # la licitación tiene que salir antes de denunciar (o de que acabe el contrato)
         tope = [(d, o) for d, o in ((den, "Denuncia"), (fin, "Fin de contrato")) if d and d < lan]
         return min(tope, key=lambda x: x[0]) if tope else (lan, "Lanzamiento")
-    # sin lanzamiento: la más temprana entre la denuncia y el fin de contrato menos el margen
-    # (así nunca se pasa la fecha de denuncia)
-    candidatas = ([(den, "Denuncia")] if den else []) + (
-        [(restar_meses(fin, margen), f"Fin de contrato − {margen} meses")] if fin else [])
-    return min(candidatas, key=lambda x: x[0]) if candidatas else (None, "")
+    # sin lanzamiento: la denuncia; si tampoco hay, el fin de contrato menos el margen
+    if den:
+        return den, "Denuncia"
+    if fin:
+        return restar_meses(fin, margen), f"Fin de contrato − {margen} meses"
+    return None, ""
 
 
 def estado_licitacion(cups: set, f_clave: dt.date, solicitudes: list, analisis: list):

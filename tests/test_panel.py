@@ -65,10 +65,12 @@ class FechaClave(unittest.TestCase):
 
 
 class FechaClaveYNombres(unittest.TestCase):
-    def test_fecha_clave_la_mas_temprana_entre_denuncia_y_fin(self):
+    def test_fecha_clave_la_denuncia_antes_que_el_fin_menos_margen(self):
         D = dt.date
-        d = {P.F_DENUNCIA: "2026-09-01", P.F_FIN: "2026-10-31"}
-        self.assertEqual(P.fecha_clave(d, margen=3), (D(2026, 7, 31), "Fin de contrato − 3 meses"))
+        d = {P.F_DENUNCIA: "2027-01-13", P.F_FIN: "2027-01-28"}
+        self.assertEqual(P.fecha_clave(d, margen=3), (D(2027, 1, 13), "Denuncia"))
+        d = {P.F_FIN: "2027-01-28"}
+        self.assertEqual(P.fecha_clave(d, margen=3), (D(2026, 10, 28), "Fin de contrato − 3 meses"))
         d = {P.F_DENUNCIA: "2026-06-01", P.F_FIN: "2026-12-31"}
         self.assertEqual(P.fecha_clave(d, margen=3), (D(2026, 6, 1), "Denuncia"))
 
