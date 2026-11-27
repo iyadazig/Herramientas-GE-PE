@@ -11,6 +11,9 @@ Hojas (como la plantilla original de análisis de ofertas):
     Parámetros utilizados   impuestos y costes regulados por año natural, peajes y cargos por
                             tarifa, pérdidas, mercado previsto por mes de contrato (OMIP y OMIE)
                             y apuntamientos
+    Gráfica                 evolución del coste mensual del contrato actual y de las ofertas
+                            elegidas (sin IVA), enlazada a la hoja de cada oferta, con la
+                            marca de agua de GE&PE detrás (si se eligen ofertas para la gráfica)
     Contrato actual y una hoja por oferta:
         condiciones de precio (celdas amarillas) y precios por año de contrato
         resultado de la oferta (total, media anual, €/MWh y comparación con el contrato actual)
@@ -40,7 +43,8 @@ from analisis_ofertas import modelo as mo
 from analisis_ofertas.informe_pdf import cabecera_oferta, nombre_corto, texto_mejora
 
 LOGO = config.RECURSOS / "assets" / "logo_geype.png"
-PAR, INFO, RES = "Parámetros utilizados", "Info suministro", "Resumen"
+MARCA_GRAFICA = config.RECURSOS / "assets" / "marca_agua_grafica.png"
+PAR, INFO, RES, GRAF = "Parámetros utilizados", "Info suministro", "Resumen", "Gráfica"
 QP = "'Parámetros utilizados'!"
 QI = "'Info suministro'!"
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
@@ -1054,8 +1058,140 @@ def _resumen(wb, e, res, hojas, actual_h, ref, ronda=None, mejora=None):
 
 
 # ------------------------------------------------------------------- libro
+def _px_a_celda(px: float, anchos: list) -> tuple:
+    """Posición en píxeles desde la columna A (o la fila 1) → (columna o fila 0-based,
+    desplazamiento en EMU), con los anchos (o altos) en píxeles de cada una."""
+    col = 0
+    while col < len(anchos) - 1 and px >= anchos[col]:
+        px -= anchos[col]
+        col += 1
+    return col, int(px * 9525)
+
+
+def hoja_grafica(wb, e: mo.Estudio, res: dict, grafica: list, hojas: dict, actual_h,
+                 ref: str = ""):
+    """Hoja «Gráfica»: tabla del coste mensual (fórmulas que enlazan con el TOTAL € de cada
+    hoja; valores si la oferta no tiene hoja en este Excel) y gráfica de líneas nativa de Excel
+    con la marca de agua de GE&PE detrás (la imagen va en un ancla de dos celdas, que Excel
+    dibuja antes que la gráfica, y la gráfica sin relleno)."""
+    from openpyxl.chart import LineChart, Reference
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.drawing.line import LineProperties
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+    from analisis_ofertas.informe_pdf import COL_SERIES, GRANATE
+
+    datos = resultados.coste_mensual(res, grafica)
+    meses, series = datos["meses"], datos["series"]
+    ws = wb.create_sheet(GRAF)
+    ws.sheet_view.showGridLines = False
+    n_col = 1 + len(series)
+    _titulo(ws, 1, f"EVOLUCIÓN DEL COSTE MENSUAL · {e.cliente or ''}"
+                   + (f" · Ref. {ref}" if ref else ""), 1, max(n_col, 9))
+    _put(ws, "A2", "Coste mensual sin IVA de todos los suministros (energía, potencia, peajes y "
+                   "cargos, SSAA, impuesto eléctrico y servicios). Cada oferta llega hasta donde "
+                   "dura; el contrato actual se proyecta con sus precios. La tabla enlaza con la "
+                   "hoja de cada oferta.", color="7F7F7F", size=9)
+    anchos_car = [12] + [18] * max(len(series), 13)
+    for i, w in enumerate(anchos_car):
+        ws.column_dimensions[CL(1 + i)].width = w
+    anchos_px = [int(w * 7 + 5) for w in anchos_car]
+    alto_cm, ancho_cm = 14.0, min(sum(anchos_px) * 2.54 / 96, 32.0)
+    filas_graf = int(alto_cm / 2.54 * 96 / 20) + 2
+    f_tab = 4 + filas_graf                       # cabecera de la tabla, debajo de la gráfica
+    _hdr(ws, f"A{f_tab}", "Mes")
+    for j, sr in enumerate(series):
+        _hdr(ws, f"{CL(2 + j)}{f_tab}", sr["nombre"], fill="minh" if sr["actual"] else "azul")
+    ws.row_dimensions[f_tab].height = 32
+    for k, am in enumerate(meses):
+        f = f_tab + 1 + k
+        _put(ws, f"A{f}", dt.date(am[0], am[1], 1), "mmm-yy", al="center", borde=True)
+        for j, sr in enumerate(series):
+            r = sr["resultado"]
+            if am not in r.meses:
+                continue                          # celda vacía: la línea se corta
+            h = actual_h if sr["actual"] else hojas.get(resultados.clave(r.oferta))
+            if h is not None and getattr(h, "tot", None):
+                valor = f"='{h.nombre}'!{h.tot['total']}{h.tot['f0'] + r.meses.index(am)}"
+            else:
+                valor = sr["valores"][k]
+            _put(ws, f"{CL(2 + j)}{f}", valor, EUR, borde=True, b=sr["actual"])
+    f_fin = f_tab + len(meses)
+    _put(ws, f"A{f_fin + 1}", "TOTAL", b=True, fill="tot", borde=True)
+    for j in range(len(series)):
+        col = CL(2 + j)
+        _put(ws, f"{col}{f_fin + 1}", f"=SUM({col}{f_tab + 1}:{col}{f_fin})", EUR, b=True,
+             fill="tot", borde=True)
+    ws.freeze_panes = None
+
+    # gráfica de líneas
+    g = LineChart()
+    g.title = None
+    g.y_axis.title = None
+    g.y_axis.number_format = '#,##0 "€"'
+    g.y_axis.majorGridlines.spPr = GraphicalProperties(ln=LineProperties(solidFill="D9D9D9"))
+    valores = [v for sr in series for v in sr["valores"] if v is not None] or [0]
+    margen = (max(valores) - min(valores)) * 0.1 or 1
+    g.y_axis.scaling.min = max(0, round((min(valores) - margen) / 5000) * 5000)
+    g.x_axis.number_format = "mmm-yy"
+    g.x_axis.title = None
+    n = len(meses)
+    g.x_axis.tickLblSkip = 1 if n <= 13 else 2 if n <= 25 else 3
+    g.x_axis.tickMarkSkip = 1
+    g.y_axis.delete = False
+    g.x_axis.delete = False
+    g.legend.position = "r"                       # a la derecha: no pisa los meses
+    g.legend.overlay = False
+    # la zona de las líneas deja a la derecha el sitio de la leyenda
+    from openpyxl.chart.layout import Layout, ManualLayout
+    g.plot_area.layout = Layout(manualLayout=ManualLayout(layoutTarget="inner", xMode="edge",
+                                                          yMode="edge", x=0.07, y=0.05,
+                                                          w=0.70, h=0.82))
+    g.legend.layout = Layout(manualLayout=ManualLayout(xMode="edge", yMode="edge", x=0.79,
+                                                       y=0.1, w=0.2, h=0.8))
+    g.height, g.width = alto_cm, ancho_cm
+    g.add_data(Reference(ws, min_col=2, max_col=n_col, min_row=f_tab, max_row=f_fin),
+               titles_from_data=True)
+    g.set_categories(Reference(ws, min_col=1, min_row=f_tab + 1, max_row=f_fin))
+    otras = iter(COL_SERIES * 3)
+    for j, sr in enumerate(series):
+        color = (GRANATE if sr["actual"] else next(otras)).lstrip("#")
+        linea = g.series[j].graphicalProperties.line
+        linea.solidFill = color
+        linea.width = 22000                                   # EMU, igual en todas
+        if sr["actual"]:
+            linea.prstDash = "dash"                           # el contrato actual, discontinuo
+        g.series[j].smooth = False
+        g.series[j].marker.symbol = "none"
+    # sin relleno: se ve la marca de agua que hay detrás
+    g.graphical_properties = GraphicalProperties(noFill=True, ln=LineProperties(noFill=True))
+    g.plot_area.graphicalProperties = GraphicalProperties(noFill=True)
+    g.anchor = "A4"
+
+    # marca de agua centrada en la zona de la gráfica (ancla de dos celdas: va detrás)
+    if MARCA_GRAFICA.exists():
+        img = XLImage(str(MARCA_GRAFICA))
+        g_w, g_h = ancho_cm / 2.54 * 96, alto_cm / 2.54 * 96
+        esc = min(g_w * 0.7 * 0.75 / img.width, g_h * 0.82 * 0.75 / img.height)
+        w, h = img.width * esc, img.height * esc
+        # alto de las filas en píxeles (la 1 es la del título, de 20 puntos)
+        altos_px = [(ws.row_dimensions[i].height or 15) * 4 / 3 for i in range(1, 200)]
+        x0 = g_w * (0.07 + 0.70 / 2) - w / 2          # centrada en la zona de las líneas
+        y0 = g_h * (0.05 + 0.82 / 2) - h / 2 + sum(altos_px[:3])   # la gráfica va en la fila 4
+        c0, o0 = _px_a_celda(x0, anchos_px)
+        c1, o1 = _px_a_celda(x0 + w, anchos_px)
+        r0, p0 = _px_a_celda(y0, altos_px)
+        r1, p1 = _px_a_celda(y0 + h, altos_px)
+        ancla = TwoCellAnchor(editAs="oneCell")
+        ancla._from = AnchorMarker(col=c0, colOff=o0, row=r0, rowOff=p0)
+        ancla.to = AnchorMarker(col=c1, colOff=o1, row=r1, rowOff=p1)
+        img.anchor = ancla
+        ws.add_image(img)
+    ws.add_chart(g)
+    return ws
+
+
 def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: int = None,
-          mejora: dict = None) -> bytes:
+          mejora: dict = None, grafica: list = None) -> bytes:
     tecnico = tecnico or {}
     ctx = calculo.Contexto(e)
     wb = Workbook()
@@ -1077,7 +1213,10 @@ def excel(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: 
         hojas[resultados.clave(r.oferta)] = h          # no por nombre: puede repetirse
     if actual_h:
         _resumen(wb, e, res, hojas, actual_h, ref, ronda, mejora)
-    orden = [RES, INFO, PAR] + ([actual_h.nombre] if actual_h else []) + [h.nombre for h in hojas.values()]
+    if grafica:
+        hoja_grafica(wb, e, res, grafica, hojas, actual_h, ref)
+    orden = [RES, GRAF, INFO, PAR] + ([actual_h.nombre] if actual_h else []) + \
+        [h.nombre for h in hojas.values()]
     wb._sheets = [wb[n] for n in orden if n in wb.sheetnames]
     salida = io.BytesIO()
     wb.save(salida)

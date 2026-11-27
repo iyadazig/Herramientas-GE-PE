@@ -246,3 +246,33 @@ def rondas(filas: list) -> list:
             salida.append({"comercializadora": lista[0]["comercializadora"],
                            "rondas": sorted(lista, key=lambda f: (f["ronda"], f["duracion"]))})
     return salida
+
+
+def nombre_serie(r: calculo.ResultadoOferta) -> str:
+    """Nombre de una oferta en la gráfica: el guardado (o la comercializadora) · duración."""
+    import re
+    o = r.oferta
+    nombre = (o.nombre or o.comercializadora or "Oferta").strip()
+    # si el nombre ya dice la duración («Endesa PF 12 m», «… 24 meses») no se repite
+    if re.search(rf"\b{r.n_meses}\s*(m|meses)\b", nombre, re.I):
+        return nombre
+    return f"{nombre} · {r.n_meses} M"
+
+
+def coste_mensual(res: dict, elegidas: list) -> dict:
+    """Evolución del coste mensual (sin IVA, todos los CUPS) del contrato actual y de las
+    ofertas elegidas (ResultadoOferta), para la gráfica del PDF y del Excel. Cada serie llega
+    hasta donde dura (None en los meses que no son suyos); el contrato actual va proyectado al
+    horizonte. {"meses": [(año, mes)], "series": [{"nombre", "actual", "resultado",
+    "valores"}]}."""
+    actual = res.get("actual")
+    lista = ([(actual, True)] if actual else []) + [(r, False) for r in elegidas]
+    meses = sorted({am for r, _ in lista for am in r.meses})
+    series = []
+    for r, es_actual in lista:
+        tm = r.total_mes
+        idx = {am: i for i, am in enumerate(r.meses)}
+        series.append({"nombre": "Contrato actual" if es_actual else nombre_serie(r),
+                       "actual": es_actual, "resultado": r,
+                       "valores": [float(tm[idx[am]]) if am in idx else None for am in meses]})
+    return {"meses": meses, "series": series}

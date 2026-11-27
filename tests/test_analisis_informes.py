@@ -272,3 +272,59 @@ class Excel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GraficaCosteMensual(unittest.TestCase):
+    def setUp(self):
+        from analisis_ofertas import resultados
+        self.R = resultados
+        self.e = _ofertas(estudio(n_cups=2))             # duraciones 12 y 24 meses
+        self.res = calculo.calcular(self.e)
+        self.graf = [self.res["ofertas"][0], self.res["ofertas"][1]]
+
+    def test_datos(self):
+        d = self.R.coste_mensual(self.res, self.graf)
+        self.assertEqual([s["nombre"] for s in d["series"]][0], "Contrato actual")
+        self.assertEqual(len(d["series"]), 3)
+        n = len(d["meses"])
+        self.assertEqual(n, 24)
+        corta = d["series"][1]                           # 12 meses: el resto, sin dato
+        self.assertEqual(sum(v is not None for v in corta["valores"]), 12)
+        self.assertAlmostEqual(sum(v for v in corta["valores"] if v), self.graf[0].total, 2)
+        self.assertTrue(all(v is not None for v in d["series"][0]["valores"]))
+
+    def test_nombre_sin_repetir_la_duracion(self):
+        r = self.res["ofertas"][0]
+        r.oferta.nombre = "Endesa PF 12 m"
+        self.assertEqual(self.R.nombre_serie(r), "Endesa PF 12 m")
+        r.oferta.nombre = "Endesa PF"
+        self.assertEqual(self.R.nombre_serie(r), "Endesa PF · 12 M")
+
+    def test_pdf_con_y_sin_grafica(self):
+        sin = _paginas(informes.pdf(self.e, self.res))
+        b = informes.pdf(self.e, self.res, grafica=self.graf)
+        con = _paginas(b)
+        self.assertEqual(len(con), len(sin) + 1)
+        textos = [t for _, _, t in con]
+        orden = [next(i for i, t in enumerate(textos) if c in t)
+                 for c in ("RESUMEN DEL ESTUDIO", "EVOLUCIÓN DEL COSTE MENSUAL", "CONDICIONES DE")]
+        self.assertEqual(orden, sorted(orden))
+        g = textos[orden[1]]
+        self.assertIn("Contrato actual", g)
+        self.assertIn("Fijo 0", g)
+        self.assertEqual(_invade_papel(b), [])
+
+    def test_excel_hoja_grafica_enlazada(self):
+        wb = openpyxl.load_workbook(io.BytesIO(informes.excel(self.e, self.res, "REF",
+                                                              grafica=self.graf)))
+        self.assertEqual(wb.sheetnames[:2], ["Resumen", "Gráfica"])
+        ws = wb["Gráfica"]
+        self.assertEqual(len(ws._charts), 1)
+        self.assertEqual(len(ws._images), 1)                # marca de agua
+        cab = next(r for r in range(1, 60) if ws.cell(r, 1).value == "Mes")
+        self.assertEqual([ws.cell(cab, c).value for c in (2, 3)], ["Contrato actual",
+                                                                   self.R.nombre_serie(self.graf[0])])
+        self.assertTrue(str(ws.cell(cab + 1, 3).value).startswith("='Fijo 0'!"))
+        self.assertIsNone(ws.cell(cab + 13, 3).value)        # la de 12 meses acaba
+        sin = openpyxl.load_workbook(io.BytesIO(informes.excel(self.e, self.res, "REF")))
+        self.assertNotIn("Gráfica", sin.sheetnames)

@@ -11,7 +11,9 @@ Páginas:
     2. «Resumen del estudio de ofertas de renovación»: igual que la hoja «Informe» de la plantilla
        (tablas de precio fijo e indexado con el contrato actual, la mejor oferta, la variación y
        el ranking por la variación; cuadro del precio de mercado por trimestre de cada año y notas).
-    3. «Condiciones de las ofertas».
+    3. «Evolución del coste mensual» (si se eligen ofertas para la gráfica): una línea por oferta
+       y el contrato actual, sin IVA, con la marca de agua de GE&PE detrás.
+    4. «Condiciones de las ofertas».
 Cada página va sobre el papel de GE&PE con su marca de agua (assets/papel_<orientación>_<n>.pdf):
 los datos quedan entre el logo y el «GE&PE» gris, sin pisarlos. En cada orientación se usa el
 papel 1 (logo grande) si los datos caben y si no el 2 (logo pequeño). El tamaño se adapta a
@@ -24,13 +26,16 @@ import io
 from xml.sax.saxutils import escape
 
 from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
-from reportlab.graphics.charts.legends import Legend
+from reportlab.graphics import renderPDF
+from reportlab.graphics.charts.legends import Legend, LineLegend
+from reportlab.graphics.charts.lineplots import LinePlot
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A3, A4, landscape, portrait
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import (BaseDocTemplate, Frame, Image, KeepTogether, NextPageTemplate,
+from reportlab.platypus import (BaseDocTemplate, Flowable, Frame, Image, KeepTogether,
+                                NextPageTemplate,
                                 PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
 
 import config
@@ -39,6 +44,13 @@ from analisis_ofertas import calculo, resultados
 from analisis_ofertas import modelo as mo
 
 LOGO = config.RECURSOS / "assets" / "logo_geype.png"
+MARCA_GRAFICA = config.RECURSOS / "assets" / "marca_agua_grafica.png"
+GRANATE = "#970000"
+# líneas de las ofertas en la gráfica de coste mensual: colores muy distintos entre sí y sin
+# rojos (el contrato actual va en granate y discontinuo, con el mismo grosor que las demás)
+COL_SERIES = ["#0072B2", "#E69F00", "#009E73", "#7B3FBF", "#000000", "#CC79A7", "#56B4E9",
+              "#8C564B", "#7F7F7F", "#808000", "#00CED1", "#9ACD32"]
+DISCONTINUA = [5, 3]                     # trazo del contrato actual (puntos)
 C = {k: colors.HexColor(v) for k, v in {
     "navy": "#002060", "teal": "#31869B", "lteal": "#DCE6F1", "orange": "#FCD5B4",
     "act": "#FFFFCC", "minh": "#215967", "min": "#F2F2F2", "verde": "#C6EFCE",
@@ -500,6 +512,96 @@ def _graficas(s, orden, n, ancho_util, alto=72 * mm) -> Drawing:
     return d
 
 
+# ------------------------------------------------------------------- coste mensual
+def etiqueta_mes(am) -> str:
+    """(2027, 1) → «ene-27»."""
+    return f"{ap.MESES[am[1] - 1][:3].lower()}-{am[0] % 100:02d}"
+
+
+class _LeyendaLineas(LineLegend):
+    """Leyenda con un trozo de línea por serie; la del contrato actual (granate), discontinua."""
+
+    def _defaultSwatch(self, x, thisy, dx, dy, fillColor, strokeWidth, strokeColor):
+        linea = super()._defaultSwatch(x, thisy, dx, dy, fillColor, strokeWidth, strokeColor)
+        linea.strokeWidth = 1.6
+        if fillColor == colors.HexColor(GRANATE):
+            linea.strokeDashArray = DISCONTINUA
+        return linea
+
+
+class _ConMarca(Flowable):
+    """Un dibujo con la marca de agua de GE&PE centrada detrás de la zona de la gráfica."""
+
+    def __init__(self, dibujo: Drawing, caja: tuple, marca=MARCA_GRAFICA):
+        super().__init__()
+        self.dibujo, self.caja, self.marca = dibujo, caja, marca
+
+    def wrap(self, *_):
+        return self.dibujo.width, self.dibujo.height
+
+    def draw(self):
+        x, y, w, h = self.caja
+        if self.marca and self.marca.exists():
+            from reportlab.lib.utils import ImageReader
+            img = ImageReader(str(self.marca))
+            iw, ih = img.getSize()
+            esc = min(w * 0.75 / iw, h * 0.75 / ih)
+            self.canv.drawImage(img, x + (w - iw * esc) / 2, y + (h - ih * esc) / 2,
+                                iw * esc, ih * esc)
+        renderPDF.draw(self.dibujo, self.canv, 0, 0)
+
+
+def grafica_coste_mensual(datos: dict, ancho: float, alto: float) -> Flowable:
+    """Líneas del coste mensual (resultados.coste_mensual): el contrato actual en granate y más
+    gruesa; leyenda debajo y la marca de agua detrás."""
+    meses, series = datos["meses"], datos["series"]
+    n = len(meses)
+    filas_ley = (len(series) + 2) // 3
+    alto_ley = filas_ley * 4.5 * mm + 4 * mm
+    d = Drawing(ancho, alto)
+    g = LinePlot()
+    g.x, g.y = 22 * mm, alto_ley + 12 * mm
+    g.width, g.height = ancho - g.x - 6 * mm, alto - g.y - 4 * mm
+    g.data = [[(i, v) for i, v in enumerate(s["valores"]) if v is not None] or [(0, 0)]
+              for s in series]
+    otras = iter(COL_SERIES * 3)
+    colores = [colors.HexColor(GRANATE) if s["actual"] else colors.HexColor(next(otras))
+               for s in series]
+    for i, s in enumerate(series):
+        g.lines[i].strokeColor = colores[i]
+        g.lines[i].strokeWidth = 1.6
+        if s["actual"]:
+            g.lines[i].strokeDashArray = DISCONTINUA
+    paso = 1 if n <= 13 else 2 if n <= 25 else 3
+    g.xValueAxis.valueMin, g.xValueAxis.valueMax = 0, max(n - 1, 1)
+    g.xValueAxis.valueSteps = list(range(0, n, paso))
+    g.xValueAxis.labelTextFormat = lambda v: etiqueta_mes(meses[int(round(v))]) \
+        if 0 <= int(round(v)) < n else ""
+    g.xValueAxis.labels.angle, g.xValueAxis.labels.dy = 45, -2
+    g.xValueAxis.labels.boxAnchor = "ne"
+    valores = [v for s in series for v in s["valores"] if v is not None] or [0]
+    bajo, alto_v = min(valores), max(valores)
+    margen = (alto_v - bajo) * 0.1 or abs(alto_v) * 0.1 or 1
+    g.yValueAxis.valueMin = max(0, bajo - margen)
+    g.yValueAxis.valueMax = alto_v + margen
+    g.yValueAxis.labelTextFormat = lambda v: f"{v:,.0f} €".replace(",", ".")
+    g.yValueAxis.visibleGrid = 1
+    g.yValueAxis.gridStrokeColor = C["linea"]
+    g.yValueAxis.gridStrokeWidth = 0.3
+    for eje in (g.xValueAxis, g.yValueAxis):
+        eje.labels.fontName, eje.labels.fontSize = "Helvetica", 7
+    d.add(g)
+    ley = _LeyendaLineas()
+    ley.x, ley.y = g.x, alto_ley - 2 * mm
+    ley.alignment, ley.columnMaximum, ley.fontSize, ley.fontName = "right", filas_ley, 7.5, \
+        "Helvetica"
+    ley.dx, ley.dy, ley.deltax, ley.deltay = 22, 3, g.width / 3, 4.5 * mm
+    ley.strokeWidth = 1.6
+    ley.colorNamePairs = [(colores[i], s["nombre"]) for i, s in enumerate(series)]
+    d.add(ley)
+    return _ConMarca(d, (g.x, g.y, g.width, g.height))
+
+
 # ------------------------------------------------------------------- condiciones
 def _condiciones(e: mo.Estudio, res: dict, ancho_util: float) -> Table:
     s_h = _st("ch", 7.5, True, colors.white)
@@ -776,7 +878,7 @@ def _alto(flujos, ancho) -> float:
 
 
 def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: int = None,
-        mejora: dict = None) -> bytes:
+        mejora: dict = None, grafica: list = None) -> bytes:
     """Ficha del suministro (o relación de suministros con gráficas) → resumen de ofertas →
     condiciones. Cada página lleva debajo el papel con la marca de agua de GE&PE. ronda: informe
     de una ronda (va en el título del resumen y de las condiciones); mejora: fila «Mejora frente
@@ -816,6 +918,18 @@ def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: in
     def informe(ancho, con_logo, extra=0):
         return _pagina_informe(e, res, ref, n_cols, ancho_of, ancho, con_logo, sufijo, mejora)
 
+    datos_graf = resultados.coste_mensual(res, grafica) if grafica else None
+
+    def evolucion(ancho, con_logo, extra=0):
+        nota = Paragraph("Coste mensual sin IVA de todos los suministros (energía, potencia, "
+                         "peajes y cargos, SSAA, impuesto eléctrico y servicios). Cada oferta "
+                         "llega hasta donde dura; el contrato actual se proyecta con sus precios.",
+                         _st("nota_graf", 7.5, color=C["gris"], alin=0, cursiva=True))
+        return _cabecera(e, ancho, "EVOLUCIÓN DEL COSTE MENSUAL" + sufijo, ref, con_logo) + \
+            [nota, Spacer(1, 2 * mm),
+             grafica_coste_mensual(datos_graf, ancho,
+                                   min(ancho * 0.4, 105 * mm) + extra)]
+
     def condiciones(ancho, con_logo, extra=0):
         return _cabecera(e, ancho, "CONDICIONES DE LAS OFERTAS" + sufijo, ref, con_logo) + \
             [_condiciones(e, res, ancho)]
@@ -824,8 +938,10 @@ def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: in
     # (A4 con el papel 1, A4 con el 2, A3 con el 1, A3 con el 2); si no caben en ninguna, A4
     # con el papel de más sitio y los datos siguen en las hojas siguientes
     bloques = []
-    for nombre, tam, hacer in (("ficha", tam_fic, ficha), ("informe", tam_inf, informe),
-                               ("condiciones", tam_cond, condiciones)):
+    partes = [("ficha", tam_fic, ficha), ("informe", tam_inf, informe)] + (
+        [("grafica", landscape(A4), evolucion)] if datos_graf else []) + [
+        ("condiciones", tam_cond, condiciones)]
+    for nombre, tam, hacer in partes:
         o = orientacion(tam)
         rutas = [r for r in (papel(o, 1), papel(o, 2)) if r] or [None]
         tamanos = [tam] + ([landscape(A3)] if tam == landscape(A4) else [])
@@ -866,6 +982,11 @@ def pdf(e: mo.Estudio, res: dict, ref: str = "", tecnico: dict = None, ronda: in
         if nombre == "ficha" and sobra > 10 * mm:
             # en la ficha el sitio que sobra agranda primero las gráficas (hasta 1,8 veces)
             flujos = hacer(ancho, ruta is None, extra=min(sobra * 0.6, 55 * mm))
+        elif nombre == "grafica" and sobra > 10 * mm:
+            # la gráfica de coste mensual ocupa el sitio libre (sin pasar de 0,6 × el ancho)
+            base = min(ancho * 0.4, 105 * mm)
+            flujos = hacer(ancho, ruta is None, extra=max(0, min(sobra - 6 * mm,
+                                                                 ancho * 0.6 - base)))
         h += _repartir(flujos, ancho, alto)
 
     paginas = []

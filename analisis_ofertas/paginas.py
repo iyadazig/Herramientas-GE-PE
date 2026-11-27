@@ -997,8 +997,14 @@ NUEVO_GESTOR = "➕ Nuevo gestor…"
 
 def _gestor(o: mo.Oferta, c2, c3, k: str):
     """Gestor de la comercializadora: desplegable con los gestores de ESA comercializadora en
-    la base de datos de gestores (escribiendo se busca) que rellena su email; «Nuevo gestor…» para escribir uno nuevo (se
-    guarda en la base de datos al guardar el análisis)."""
+    la base de datos de gestores (escribiendo se busca) que rellena su email; «Nuevo gestor…»
+    para escribir uno nuevo, con «Guardar gestor» para darlo de alta ya en la base de datos y
+    dejarlo elegido en la oferta (si no, se guarda al guardar el análisis)."""
+    pendiente = st.session_state.pop(k + "gestor_pend", None)
+    if pendiente:                            # recién guardado: queda elegido en el desplegable
+        st.session_state[k + "gestor"] = pendiente
+        st.session_state[k + "gestor_prev"] = pendiente
+        st.session_state.pop(k + "gestor_nuevo", None)
     try:
         lista = almacen.listar_gestores()
     except Exception:                                       # noqa: BLE001
@@ -1009,7 +1015,9 @@ def _gestor(o: mo.Oferta, c2, c3, k: str):
                      key=str.lower)
     if o.comercializadora and not nombres:
         c2.caption(f"Aún no hay gestores de {o.comercializadora}: elige «Nuevo gestor…».")
-    if o.gestor and o.gestor not in nombres:
+    # el gestor de la oferta, aunque no sea de la lista; pero no el que se está escribiendo
+    # como nuevo (cambiaría las opciones, Streamlit rehace el desplegable y se pierde)
+    if o.gestor and o.gestor not in nombres and st.session_state.get(k + "gestor") != NUEVO_GESTOR:
         nombres.insert(0, o.gestor)
     opciones = [""] + nombres + [NUEVO_GESTOR]
 
@@ -1023,7 +1031,8 @@ def _gestor(o: mo.Oferta, c2, c3, k: str):
                    format_func=ver, help="Escribe para buscar. Se rellena su email. Los "
                                          "gestores se gestionan en Ofertas → Gestores "
                                          "comerciales.")
-    if elegido == NUEVO_GESTOR:
+    nuevo = elegido == NUEVO_GESTOR
+    if nuevo:
         o.gestor = _txt(c2, "Nombre del nuevo gestor", "", k + "gestor_nuevo").strip()
     else:
         o.gestor = elegido
@@ -1031,8 +1040,39 @@ def _gestor(o: mo.Oferta, c2, c3, k: str):
             st.session_state[k + "email"] = por_nombre[elegido].get("email") or ""
     st.session_state[k + "gestor_prev"] = elegido
     o.email_gestor = _txt(c3, "Email del gestor", o.email_gestor, k + "email").strip()
-    if o.email_gestor and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", o.email_gestor):
+    valido = not o.email_gestor or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", o.email_gestor)
+    if not valido:
         c3.caption(":red[Email no válido]")
+    aviso = st.session_state.pop(k + "gestor_ok", None)
+    if aviso:
+        c2.success(aviso, icon=":material/check_circle:")
+    if nuevo and c2.button("Guardar gestor", key=k + "gestor_guardar", type="primary",
+                           icon=":material/person_add:",
+                           help="Lo da de alta en Ofertas → Gestores comerciales con esta "
+                                "comercializadora y lo deja elegido en la oferta."):
+        if not o.gestor:
+            c2.error("Escribe el nombre del gestor.")
+        elif not valido:
+            c3.error("Corrige el email antes de guardar.")
+        else:
+            try:
+                if o.gestor.lower() in {n.lower() for n in por_nombre}:
+                    almacen.registrar_gestor(o.gestor, o.email_gestor, o.comercializadora,
+                                             usuario=_usuario())
+                    texto = f"{o.gestor} ya estaba en la base de datos: queda elegido."
+                else:
+                    almacen.guardar_gestor(o.gestor, o.email_gestor or None, o.comercializadora,
+                                           usuario=_usuario())
+                    texto = f"Gestor {o.gestor} guardado y elegido en la oferta."
+            except ValueError as err:
+                c2.error(str(err))
+            else:
+                # el nombre tal y como está en la base de datos (por si cambian mayúsculas)
+                o.gestor = next((n for n in por_nombre if n.lower() == o.gestor.lower()),
+                                o.gestor)
+                st.session_state[k + "gestor_pend"] = o.gestor
+                st.session_state[k + "gestor_ok"] = texto
+                st.rerun()
 
 
 def _pegar_precios(o: mo.Oferta, concepto: str, tabla: pd.DataFrame, clave: str):
@@ -1818,6 +1858,26 @@ def _ronda_del_informe(res: dict) -> tuple:
     return resultados.solo_ofertas(res, elegidas), (None if ronda == "Todas" else ronda), mejora
 
 
+def _ofertas_grafica(res: dict, res_inf: dict) -> list:
+    """Ofertas (ResultadoOferta) de la gráfica de evolución del coste mensual del PDF y del
+    Excel, elegidas aparte (de todas las del estudio); al principio, las del informe."""
+    todas = list(range(len(res["ofertas"])))
+    del_informe = [i for i, r in enumerate(res["ofertas"])
+                   if any(r is x for x in res_inf["ofertas"])]
+    nombre_de = {i: resultados.nombre_serie(r) + (f" · {int(r.oferta.ronda or 1)}ª ronda"
+                                                  if len(resultados.rondas_con_ofertas(res)) > 1
+                                                  else "")
+                 for i, r in enumerate(res["ofertas"])}
+    elegidas = st.multiselect(
+        "Ofertas de la gráfica de coste mensual (PDF y Excel)", todas, default=del_informe,
+        key="ao_inf_grafica_" + "_".join(map(str, del_informe)), format_func=nombre_de.get,
+        help="Una línea por oferta y otra del contrato actual con el coste de cada mes (sin "
+             "IVA). Se elige aparte de las ofertas del informe. Vacío: sin gráfica.")
+    if len(elegidas) > 8:
+        st.caption(":orange[Con más de 8 líneas la gráfica se lee peor.]")
+    return [res["ofertas"][i] for i in elegidas]
+
+
 def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
     st.markdown("#### Informes y correo")
     if "ao_ref_pendiente" in st.session_state:          # nombre de la versión recién guardada
@@ -1826,15 +1886,16 @@ def _guardar_y_descargas(e: mo.Estudio, res: dict, filas: list):
                help=AY["referencia"])
     st.session_state.ao_ref = ref
     res_inf, ronda_inf, mejora = _ronda_del_informe(res)
+    grafica = _ofertas_grafica(res, res_inf)
     if st.button("Preparar informes (Excel y PDF) y borrador del correo",
                  disabled=not res_inf["ofertas"]):
         with st.spinner("Generando…"):
             from analisis_ofertas import informe_pdf
             tecnico = informe_pdf.tecnico_de(_usuario())
             st.session_state.ao_excel = informes.excel(e, res_inf, ref, tecnico, ronda=ronda_inf,
-                                                       mejora=mejora)
+                                                       mejora=mejora, grafica=grafica)
             st.session_state.ao_pdf = informes.pdf(e, res_inf, ref, tecnico, ronda=ronda_inf,
-                                                   mejora=mejora)
+                                                   mejora=mejora, grafica=grafica)
             st.session_state.ao_correo = correo.borrador(e, res_inf, ref)
             st.session_state.ao_inf_sufijo = f"_ronda{ronda_inf}" if ronda_inf else ""
     nombre = re.sub(r"[^\w-]", "_", ref or e.cliente or "analisis")[:40] + \
